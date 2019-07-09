@@ -1,5 +1,7 @@
 module GuillotineModels
 
-greet() = print("Hello World!")
+export greet
+
+greet() = print("Hello World 3!")
 
 end # module
