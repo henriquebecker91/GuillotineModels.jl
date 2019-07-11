@@ -55,29 +55,8 @@ function becker2019_discretize(
   cuts
 end
 
-function herz_discretize(d, D)
-  P = 
-  c = zeros(size(D+1))
-
-  for i = 1:length(d) 
-    for j = d[i]:D 
-      if c[j+1] < c[j+1-d[i]] + d[i] 
-        c[j+1] = c[j+1-d[i]] + d[i]
-      end
-    end
-  end
-
-  for j = 1:D 
-    if c[j+1] == j 
-      push!(P, j)
-    end
-  end
-
-  c
-end
-
-function mock_discretize(d :: Vector{T}, D :: T) where {T}
-  return collect(one(T):D), D
+function mock_discretize(l :: Vector{S}, L :: S) where {S}
+  collect(one(S):L)
 end
 
 function build(model, l, w, d, L, W; p = nothing) 
@@ -85,8 +64,10 @@ function build(model, l, w, d, L, W; p = nothing)
   T = length(l)
   N = 2*T + 1
   a = l .* w # area of the piece types
-  dl, DL = discretize(l, L)
-  dw, DW = discretize(w, W)
+  dl = discretize(l, L)
+  DL = length(dl)
+  dw = discretize(w, W)
+  DW = length(dw)
 
   @variables model begin
     x[1:N, 1:T], Bin  # true if piece type is placed at node, false otherwise
