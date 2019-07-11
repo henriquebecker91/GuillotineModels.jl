@@ -49,7 +49,7 @@ function becker2019_discretize(
 
   cuts = Vector{S}()
   sizehint!(cuts, L)
-  for (position, is_marked) in enumerate(b)
+  for (position, is_marked) in enumerate(marks)
     is_marked && push!(cuts, position)
   end
   cuts
