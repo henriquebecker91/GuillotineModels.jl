@@ -1,49 +1,33 @@
 # Variables:
 #
-# `x[pli, pii, fci, lci]`: Integer. The number of subplates of type
-# `pli` which have a piece of type `pii` cut from them and create the frontal
-# and lateral childs `fci` and `lci`.
+# `hvcuts[n1, n2, n3]`: Integer. The number of subplates of type
+# `n1` that are cut into subplates `n2` and `n3` (horizontal and
+# vertical cuts are together for now).
+# `picuts[n, p]`: Integer. The number of subplates of type `n` that
+# were used to generate piece `p`.
 #
 # Objective function:
 #
 # Maximize the profit of the pieces cut.
-#   sum(p[pii] * x[_, pii, _, _])
-#
+#   sum(p[pii] * picuts[_, pii])
 #
 # Constraints:
 #
-# There is just one of the original plate.
-#   sum(x[1, _, _, _]) <= 1
+# There is exactly one of the original plate, which may be used for cutting
+# or extracting a piece.
+#   sum(picuts[1, _]) + sum(hvcuts[1, _,  _]) = 1
 # The number of subplates available depends on the number of plates that have
-# it as children. Note: the below works because fci and pli are always
-# different subplates.
-#   sum(x[pli>1, _, _, _]) <= sum(x[_, _, fci, lci]) (fci or lci equals to pli)
+# it as children.
+#   sum(picuts[n1>1, _]) + sum(hvcuts[n1>1, _, _]) <= sum(hvcuts[_, n2, n3])
+#     where n2 == n1 or n3 == n1, double hvcuts[_, n2, n3] if n2 == n3 
 # The number of pieces of some type is always less than or equal to the demand.
-#   sum(x[_, pii, _, _]) <= d[pii]
-#
+#   sum(picuts[_, pii]) <= d[pii]
 #
 # Unnecessary constraints:
 #
 # The number of times a pair pli-pii appear is at most the min between: 1)
 # d[pii] and the number of subplates pli that fit in the original plate.
-#   sum(x[pli>1, pii, _, _]) <= min(d[pii], max_fits[pli])
-#
-#
-# The ideal pre-processing:
-# 
-# Given the constraints format to build the model with zero overhead we need:
-#   An array of bounds 1:num_of_plate_types with arrays inside. The inner
-#   arrays have a variable number of tuples (pii, fci, lci) in which
-#   pii is unique (inside the inner vector).
-#   The method will iterate this structure (inner first, outer second) and
-#   for each element it will:
-#     1) be added to the future lhs of constraint 1 or 2, the specific line
-#        (and constraint family) will be given by pli.
-#     2) be added to the future lhs of constraint 3, the specific line
-#        will be given by pii;
-#     3) be added to the future rhs of constraint 2, the specific lines will
-#        be given by fci and lci;
-#
+#   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
 
 module AllSubplatesModel
 
@@ -51,9 +35,6 @@ using JuMP
 push!(LOAD_PATH, "./")
 using GuillotinePlatesDP
 
-# TODO: allow passing the partitions as parameters, decouple the generation
-# of the inverse indexes and allow the the user to just generate the inverse
-# indexes.
 function build(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
   L :: S, W :: S
@@ -61,56 +42,66 @@ function build(
   @assert length(d) == length(l) && length(l) == length(w)
   num_piece_types = convert(D, length(d))
 
-  num_plate_types, parts = partitions(D, P, l, w, L, W)
-  num_parts = length(parts)
+  ilwb, nnn, np = partitions(P, d, l, w, L, W)
+  num_plate_types = length(ilwb)
 
   # A Vector of the same length as the number of plate types, in which the values
   # are Vectors of partition indexes in which the plate cut is the outer Vector
   # index.
-  c1and2lhss = [Vector{P}() for _ = 1:num_plate_types]
+  pli2pair = [Vector{P}() for _ = 1:num_plate_types]
   # A Vector of the same length as the number of plate types, in which the values
   # are Vectors of partition indexes in which one of the child plates is the
   # outer Vector index.
-  c2rhss = [Vector{P}() for _ = 1:num_plate_types]
+  child2cut = [Vector{P}() for _ = 1:num_plate_types]
+  parent2cut = [Vector{P}() for _ = 1:num_plate_types]
   # A Vector of length equal to the number of piece types, in which the values
   # are Vectors of the indexes of the partitions that cut such piece type.
-  c3lhss = [Vector{P}() for _ = 1:num_piece_types]
+  pii2pair = [Vector{P}() for _ = 1:num_piece_types]
 
-  # Fills the three structures below. The three of them are just inverted indexes.
-  for pai in 1:num_parts
-    pli, pii, fci, lci = parts[pai]
-    push!(c1and2lhss[pli], pai)
-    push!(c3lhss[pii], pai)
-    !iszero(fci) && push!(c2rhss[fci], pai)
-    !iszero(lci) && push!(c2rhss[lci], pai)
+  # Fills the three structures below.
+  # The three of them are just inverted indexes.
+  for i in eachindex(nnn)
+    n1, n2, n3 = nnn[i]
+    push!(parent2cut[n1], i)
+    push!(child2cut[n2], i)
+    push!(child2cut[n3], i)
   end
-  # @assert explanation: No partition can have a child plate with the
-  # dimensions of the original plate.
-  @assert iszero(length(c2rhss[1]))
+  for i in eachindex(np)
+    pli, pii = np[i]
+    push!(pli2pair[pli], i)
+    push!(pii2pair[pii], i)
+  end
 
-  @variable(model, x[1:num_parts], Int)
+  # @assert explanation: No cut can generate a child plate with the
+  # dimensions of the original plate.
+  @assert iszero(length(child2cut[1]))
+
+  @variables model begin
+    picuts[1:length(np)] >= 0, Int
+    hvcuts[1:length(nnn)] >= 0, Int
+  end
 
   @objective(model, Max,
-    sum(p[pii] * sum(x[c3lhss[pii]]) for pii = 1:num_piece_types)
+    sum(p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
   )
 
   # ub0: trivial area upper bound
   #@constraint(model, sum(a[j] * x[i, j] for i = 1:N, j = 1:T) <= L*W)
 
   # c1: 
-  @constraint(model, sum(x[c1and2lhss[1]]) <= 1)
+  @constraint(model, sum(picuts[pli2pair[1]]) + sum(hvcuts[parent2cut[1]]) == 1)
 
   # c2: 
   for pli in 2:num_plate_types
-    @constraint(model, sum(x[c1and2lhss[pli]]) <= sum(x[c2rhss[pli]]))
+    @constraint(model, sum(picuts[pli2pair[pli]]) + sum(hvcuts[parent2cut[pli]]) <= sum(hvcuts[child2cut[pli]]))
   end
 
   # c3: 
   for pii in 1:num_piece_types
-    @constraint(model, sum(x[c3lhss[pii]]) <= d[pii])
+    @constraint(model, sum(picuts[pii2pair[pii]]) <= d[pii])
   end
   
-  model, x
+  model
 end # build
 
 end # module

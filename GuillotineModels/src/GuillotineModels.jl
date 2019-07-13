@@ -2,73 +2,14 @@ module GuillotineModels
 
 using JuMP
 
-# d: piece demand (d)
-# l: piece dimension (l or w)
-# L: plate dimension (L or W)
-function becker2019_discretize(
-  d :: Vector{D}, l :: Vector{S}, L :: S
-) where {D, S}
-  # If two pieces have the same dimension they should be merged into a single
-  # piece (summing their demands) for performance reasons.
-  @assert l == unique(l)
-  # Each piece in 1:N has a demand and a dimension.
-  @assert length(d) == length(l)
-  N = length(d)
-  # marks: for each unit of the plate dimension, if there can be a cut there 
-  # (considering the pieces available) or not.
-  marks = fill(false, L)
-  # Mark the cuts of the first piece.
-  marks[l[1]] = true
-  y = l[1] # y: used to iterate capacity, inherited from knapsack papers
-  for _ = 2:d[1]
-    marks[y += l[1]] = true
-  end
-  # Mark the cuts of all other pieces.
-  for pii = 2:N # PIece Index
-    li = l[pii] # length of i
-    di = d[pii] # demand of i
-    for y = (L - li):-1:1
-      if marks[y]
-        yrli = y + li # yrli: y + repeated lengths of i
-        marks[yrli] = true
-        for r = 2:di
-          yrli += li
-          yrli > L && break
-          marks[yrli] = true
-        end
-      end
-    end
-    # Mark cuts considering the pieces began to (could be done using a dummy cut at
-    # index zero with value true, but the array has no index zero). 
-    y = li
-    marks[y] = true
-    for _ = 2:di
-      marks[y += li] = true
-    end
-  end
-
-  cuts = Vector{S}()
-  sizehint!(cuts, L)
-  for (position, is_marked) in enumerate(marks)
-    is_marked && push!(cuts, position)
-  end
-  cuts
-end
-
-function mock_discretize(l :: Vector{S}, L :: S) where {S}
-  collect(one(S):L)
-end
-
-function build(model, l, w, d, L, W; p = nothing) 
+function build(
+  model, ::Type{P}, d :: Vector{D}, l :: Vector{S}, w :: Vector{S},
+  L :: S, W :: S
+) where {D, S, P}
   @assert length(l) == length(w) && length(w) == length(d)
-  T = length(l)
-  N = 2*T + 1
   a = l .* w # area of the piece types
-  dl = discretize(l, L)
-  DL = length(dl)
-  dw = discretize(w, W)
-  DW = length(dw)
-
+  
+  partitions(P, d, l, w, L, W)
   @variables model begin
     x[1:N, 1:T], Bin  # true if piece type is placed at node, false otherwise
     v[1:N, 1:DL], Bin # true if node is a vertical cut, false otherwise
