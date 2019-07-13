@@ -101,7 +101,7 @@ function build(
     @constraint(model, sum(picuts[pii2pair[pii]]) <= d[pii])
   end
   
-  model
+  model, ilwb, nnn, np
 end # build
 
 end # module
