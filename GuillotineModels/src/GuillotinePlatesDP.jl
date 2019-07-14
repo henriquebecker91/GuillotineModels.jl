@@ -165,7 +165,8 @@ function partitions(
   # If (n1, n2, n3) is in nnn, then n1 may be partitioned in n2 and n3.
   # Not every possible partition is present, just the ones which
   # each child plate can fit at least one piece.
-  nnn = Vector{NTuple{3, P}}()
+  hnnn = Vector{NTuple{3, P}}()
+  vnnn = Vector{NTuple{3, P}}()
   # If the piece fits the plate size and the plate does not allow any other
   # piece by its side (i.e., there is no second piece that can be placed in the
   # same plate vertically or horizontally) then (plate, piece) is in np.
@@ -209,7 +210,7 @@ function partitions(
         push!(next, (pll - y, plw, n += 1))
         plis[pll - y, plw] = n
       end
-      push!(nnn, (pli, plis[y, plw], plis[pll - y, plw]))
+      push!(hnnn, (pli, plis[y, plw], plis[pll - y, plw]))
     end
     #for x in dw
     for x in becker2019_discretize(d, w, l, plw ÷ 2, pll)
@@ -225,11 +226,11 @@ function partitions(
         push!(next, (pll, plw - x, n += 1))
         plis[pll, plw - x] = n
       end
-      push!(nnn, (pli, plis[pll, x], plis[pll, plw - x]))
+      push!(vnnn, (pli, plis[pll, x], plis[pll, plw - x]))
     end
   end
 
-  return ilwb, nnn, np
+  return ilwb, hnnn, vnnn, np
 end
 
 end # module
