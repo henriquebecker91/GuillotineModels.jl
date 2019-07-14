@@ -158,8 +158,8 @@ function partitions(
   @assert length(d) == length(w)
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W)
-  dl = becker2019_discretize(d, l, L ÷ 2)
-  dw = becker2019_discretize(d, w, W ÷ 2)
+  #dl = becker2019_discretize(d, l, L ÷ 2)
+  #dw = becker2019_discretize(d, w, W ÷ 2)
   min_pil = minimum(l)
   min_piw = minimum(w)
   # If (n1, n2, n3) is in nnn, then n1 may be partitioned in n2 and n3.
@@ -195,8 +195,9 @@ function partitions(
         push!(np, (pli, pii))
       end
     end
-    for y in dl
-      y > pll ÷ 2 && break
+    #for y in dl
+    for y in becker2019_discretize(d, l, w, pll ÷ 2, plw)
+      #y > pll ÷ 2 && break
       @assert plw >= min_piw
       @assert y >= min_pil
       @assert pll - y >= min_pil
@@ -210,8 +211,9 @@ function partitions(
       end
       push!(nnn, (pli, plis[y, plw], plis[pll - y, plw]))
     end
-    for x in dw
-      x > plw ÷ 2 && break
+    #for x in dw
+    for x in becker2019_discretize(d, w, l, plw ÷ 2, pll)
+      #x > plw ÷ 2 && break
       @assert pll >= min_pil
       @assert x >= min_piw
       @assert plw - x >= min_piw
