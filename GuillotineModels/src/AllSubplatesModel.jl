@@ -42,13 +42,13 @@ function build(
   @assert length(d) == length(l) && length(l) == length(w)
   num_piece_types = convert(D, length(d))
 
-  ilwb, nnn, np = partitions(P, d, l, w, L, W)
+  ilwb, hnnn, vnnn, np = partitions(P, d, l, w, L, W)
   num_plate_types = length(ilwb)
   ilwb_ = Vector{Tuple{S, S, D}}(undef, num_plate_types)
   for (pli, pll, plw, plb) in ilwb
     ilwb_[pli] = (pll, plw, plb)
   end
-
+  nnn = vcat(hnnn, vnnn)
 
   # A Vector of the same length as the number of plate types, in which the values
   # are Vectors of partition indexes in which the plate cut is the outer Vector
