@@ -1,4 +1,11 @@
 #!/bin/bash
 
-julia run_allsubplates_model.jl ./instances/{gcut1,gcut2,gcut3,gcut4,gcut5,gcut6,gcut7,gcut8,gcut9,gcut10,gcut11,gcut12,A5,CHL1s,CU1,CU2,CW1,CW2,CW3,CW4,CW5,CW6,CW7,CW8,CW9,CW10,CW11,okp1} | tee experiment_`date -Iminutes`.log
+echo "ROUND 1"
+julia run_allsubplates_model.jl ./instances/gcut{2,3,4,5,6,7,8,9,10,11,12} ./instances/A5 ./instances/Hchl{2,3s,4s,6s,7s} ./instances/CW{1,2,3} ./instances/CHL{1,1s,6,7} ./instances/CU{1,2} ./instances/okp{1,2,3,4,5} | tee experiment_`date -Iminutes`.log
+
+echo "ROUND 2"
+julia run_allsubplates_model.jl --disable-cplex-tricks ./instances/gcut{2,3,4,5,6,7,8,9,10,11,12} ./instances/A5 ./instances/Hchl{2,3s,4s,6s,7s} ./instances/CW{1,2,3} ./instances/CHL{1,1s,6,7} ./instances/CU{1,2} ./instances/okp{1,2,3,4,5} | tee experiment_`date -Iminutes`.log
+
+echo "ROUND 3"
+julia run_allsubplates_model.jl --threads 2 ./instances/gcut{2,3,4,5,6,7,8,9,10,11,12} ./instances/A5 ./instances/Hchl{2,3s,4s,6s,7s} ./instances/CW{1,2,3} ./instances/CHL{1,1s,6,7} ./instances/CU{1,2} ./instances/okp{1,2,3,4,5} | tee experiment_`date -Iminutes`.log
 

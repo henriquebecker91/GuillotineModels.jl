@@ -1,6 +1,5 @@
 module GuillotinePlatesDP
 
-using DelimitedFiles, StructArrays
 push!(LOAD_PATH, "./")
 using GC2DInstanceReader
 

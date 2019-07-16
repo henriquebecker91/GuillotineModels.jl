@@ -1,7 +1,16 @@
+# Check if the necessary packages are installed and define the project
+# to make them available to importation by "using".
+using Pkg
+Pkg.activate("..")
+Pkg.instantiate()
+
+# Load the necessary packages. The ones after the `push!` are from this
+# repository.
 using JuMP, CPLEX, ArgParse
-push!(LOAD_PATH, "../src")
+push!(LOAD_PATH, "../src/")
 using AllSubplatesModel, GC2DInstanceReader
 
+# Create a new CPLEX model and set its configurations.
 function new_empty_and_configured_model(p_args; disable_output = false)
   @assert isone(length(p_args["threads"]))
   threads = first(p_args["threads"])
@@ -14,12 +23,14 @@ function new_empty_and_configured_model(p_args; disable_output = false)
       CPX_PARAM_HEURFREQ = -1,
       CPX_PARAM_REPEATPRESOLVE = -1,
       CPX_PARAM_DIVETYPE = 1,
+      CPX_PARAM_TILIM = 3600,
       CPX_PARAM_SCRIND = disable_output ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
       CPX_PARAM_RANDOMSEED = seed
     ))
   else
     m = JuMP.Model(with_optimizer(CPLEX.Optimizer,
+      CPX_PARAM_TILIM = 3600,
       CPX_PARAM_SCRIND = disable_output ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
       CPX_PARAM_RANDOMSEED = seed
@@ -29,6 +40,7 @@ function new_empty_and_configured_model(p_args; disable_output = false)
   return m
 end
 
+# Read the instance, build the model, solve the model, and print related stats.
 function read_build_solve_and_print(
   p_args, instfname_idx; disable_output = false
 )
@@ -38,15 +50,31 @@ function read_build_solve_and_print(
   m = new_empty_and_configured_model(p_args; disable_output = disable_output)
   _, ilwb, nnn, np = AllSubplatesModel.build(m, d, p, l, w, L, W)
   time_to_build_model = time() - before_model_build 
-  !disable_output && @show instfname
-  !disable_output && @show time_to_build_model
+  if !disable_output
+    @show instfname
+    @show time_to_build_model
+    num_vars = num_variables(m)
+    @show num_vars
+    num_constrs = num_constraints(m)
+    @show num_constrs
+  end
   time_to_solve_model = @elapsed optimize!(m)
-  !disable_output && @show time_to_solve_model
-  !disable_output && @show objective_value(m)
+  if !disable_output
+    @show time_to_solve_model
+    if primal_status(m) == MOI.FEASIBLE_POINT
+      obj_value = objective_value(m)
+    else
+      obj_value = 0
+    end
+    @show obj_value
+    obj_bound = objective_bound(m)
+    @show obj_bound
+  end
 
   return nothing
 end
 
+# Definition of the command line arguments.
 function parse_script_args(args = ARGS)
     s = ArgParseSettings()
     @add_arg_table s begin
@@ -76,6 +104,7 @@ function parse_script_args(args = ARGS)
     return parse_args(args, s)
 end
 
+# Parse the command line arguments, and call the solve for each instance.
 function run_batch(args = ARGS)
   @show args
   p_args = parse_script_args(args)
