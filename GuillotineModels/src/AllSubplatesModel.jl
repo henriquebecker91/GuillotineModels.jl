@@ -87,8 +87,17 @@ function build(
     @variable(model, picuts[1:length(np)], Bin)
   else
     @variable(model, picuts[1:length(np)] >= 0, Int)
+    #@variable(model,
+    #  0 <= picuts[i = 1:length(np)] <= min(ilwb_[np[i][1]][3], d[np[i][2]]),
+    #Int)
   end
-  @variable(model, hvcuts[1:length(nnn)] >= 0, Int)
+  @variable(model,
+    0 <= hvcuts[1:length(nnn)]
+  , Int)
+
+  #@variable(model,
+  #  0 <= hvcuts[i = 1:length(nnn)] <= ilwb_[nnn[i][1]][3]
+  #, Int)
 
   @objective(model, Max,
     sum(p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
