@@ -4,6 +4,17 @@ using Pkg
 Pkg.activate("..")
 Pkg.instantiate()
 
+# JuMP has no method for getting all constraints, you need to get the
+# types of constraints used in the model and then query the number for
+# specific type.
+function num_all_constraints(m) :: Int64
+  sum = 0 :: Int64
+  for (ftype, stype) in list_of_constraint_types(m)
+    sum += num_constraints(m, ftype, stype)
+  end
+  return sum
+end
+
 # Load the necessary packages. The ones after the `push!` are from this
 # repository.
 using JuMP, CPLEX, ArgParse
@@ -16,6 +27,8 @@ function new_empty_and_configured_model(p_args; disable_output = false)
   threads = first(p_args["threads"])
   @assert isone(length(p_args["seed"]))
   seed = first(p_args["seed"])
+  @assert isone(length(p_args["det-time-limit"]))
+  det_time_limit = first(p_args["det-time-limit"])
 
   if p_args["disable-cplex-tricks"]
     m = JuMP.Model(with_optimizer(CPLEX.Optimizer,
@@ -23,14 +36,16 @@ function new_empty_and_configured_model(p_args; disable_output = false)
       CPX_PARAM_HEURFREQ = -1,
       CPX_PARAM_REPEATPRESOLVE = -1,
       CPX_PARAM_DIVETYPE = 1,
-      CPX_PARAM_TILIM = 3600,
+      CPX_PARAM_DETTILIM = det_time_limit,
+      #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
       CPX_PARAM_SCRIND = disable_output ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
       CPX_PARAM_RANDOMSEED = seed
     ))
   else
     m = JuMP.Model(with_optimizer(CPLEX.Optimizer,
-      CPX_PARAM_TILIM = 3600,
+      CPX_PARAM_DETTILIM = det_time_limit,
+      #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
       CPX_PARAM_SCRIND = disable_output ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
       CPX_PARAM_RANDOMSEED = seed
@@ -55,10 +70,13 @@ function read_build_solve_and_print(
     @show time_to_build_model
     num_vars = num_variables(m)
     @show num_vars
-    num_constrs = num_constraints(m)
+    num_constrs = num_all_constraints(m)
     @show num_constrs
+    @show m # just in case there is something here I did not output
   end
+  flush(stdout) # guarantee all messages will be flushed before calling cplex
   time_to_solve_model = @elapsed optimize!(m)
+  sleep(0.01) # shamefully needed to avoid out of order messages from cplex
   if !disable_output
     @show time_to_solve_model
     if primal_status(m) == MOI.FEASIBLE_POINT
@@ -83,6 +101,11 @@ function parse_script_args(args = ARGS)
         arg_type = Int
         default = [1]
         nargs = 1
+      "--det-time-limit"
+        help = "deterministic time limit for CPLEX (not model building)"
+        arg_type = Float64
+        default = [1.0E+75]
+        nargs = 1
       "--seed"
         help = "seed used by CPLEX (model building is deterministic)"
         arg_type = Int
@@ -97,8 +120,7 @@ function parse_script_args(args = ARGS)
       "instfnames"
         help = "the paths to the instances to be solved"
         action = :store_arg
-        nargs = '+'
-        required = true
+        nargs = '*' # can pass no instances to call "-h"
     end
 
     return parse_args(args, s)
@@ -109,7 +131,7 @@ function run_batch(args = ARGS)
   @show args
   p_args = parse_script_args(args)
 
-  if !p_args["do-not-mock-first-for-compilation"] 
+  if !p_args["do-not-mock-first-for-compilation"] && !isempty(p_args["instfnames"])
     read_build_solve_and_print(p_args, 1, disable_output = true)
   end
   for inst_idx in eachindex(p_args["instfnames"])

@@ -170,9 +170,9 @@ function partitions(
   # piece by its side (i.e., there is no second piece that can be placed in the
   # same plate vertically or horizontally) then (plate, piece) is in np.
   np = Vector{Tuple{P, D}}()
-  # The list of plates attributes: plate index, plate length, plate width,
-  # and plate bound.
-  ilwb = Vector{Tuple{P, S, S, P}}()
+  # The list of plates attributes: plate length, plate width, and plate bound.
+  # The plate index is the same as the index in pli_lwb.
+  pli_lwb = Vector{Tuple{S, S, P}}()
   # plis: matrix of the plate dimensions in which zero means "never seen that
     # plate before" and nonzero means "this nonzero number is the plate index".
   plis = zeros(P, L, W)
@@ -181,14 +181,18 @@ function partitions(
   # Storing the index as the third value is not necessary (as it could be
   # queried from plis) but this is probably more efficient this way.
   next = Vector{Tuple{S, S, P}}()
+  next_idx = one(P)
   #sizehint!(next, max_num_plates)
   push!(next, (L, W, one(P)))
   # n: The amount of plates (the index of the highest plate type).
   n = one(P) # there is already the original plate
-  while !isempty(next)
-    pll, plw, pli = pop!(next) # PLate Length, Width, and Index
+  while next_idx <= length(next)
+    pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
+    next_idx += 1
     plb = (L ÷ pll) * (W ÷ plw) # PLate Bound
-    push!(ilwb, (pli, pll, plw, plb))
+    # It is not necessary to store the plate id in pli_lwb because they are added
+    # in order (a queue is used), so the array index is the plate index.
+    push!(pli_lwb, (pll, plw, plb))
     for pii in 1:max_piece_type # pii: PIece Index
       pil, piw = l[pii], w[pii] # PIece Length and Width (homophones, I know)
       if is_leaf_plate(pil, piw, pll, plw, min_pil, min_piw)
@@ -229,7 +233,7 @@ function partitions(
     end
   end
 
-  return ilwb, hnnn, vnnn, np
+  return pli_lwb, hnnn, vnnn, np
 end
 
 end # module
