@@ -4,6 +4,12 @@ using Pkg
 Pkg.activate("..")
 Pkg.instantiate()
 
+# Load the necessary packages. The ones after the `push!` are from this
+# repository.
+using JuMP, CPLEX, ArgParse
+push!(LOAD_PATH, "../src/")
+using AllSubplatesModel, GC2DInstanceReader
+
 # JuMP has no method for getting all constraints, you need to get the
 # types of constraints used in the model and then query the number for
 # specific type.
@@ -14,12 +20,6 @@ function num_all_constraints(m) :: Int64
   end
   return sum
 end
-
-# Load the necessary packages. The ones after the `push!` are from this
-# repository.
-using JuMP, CPLEX, ArgParse
-push!(LOAD_PATH, "../src/")
-using AllSubplatesModel, GC2DInstanceReader
 
 # Create a new CPLEX model and set its configurations.
 function new_empty_and_configured_model(p_args; disable_output = false)
@@ -87,6 +87,8 @@ function read_build_solve_and_print(
     @show obj_value
     obj_bound = objective_bound(m)
     @show obj_bound
+    stop_reason = termination_status(m)
+    @show stop_reason
   end
 
   return nothing

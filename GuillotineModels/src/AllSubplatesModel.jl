@@ -119,7 +119,7 @@ function build(
   #@constraint(model, sum(a[j] * x[i, j] for i = 1:N, j = 1:T) <= L*W)
 
   # c1: 
-  @constraint(model, sum(picuts[pli2pair[1]]) + sum(hvcuts[parent2cut[1]]) == 1)
+  @constraint(model, sum(picuts[pli2pair[1]]) + sum(hvcuts[parent2cut[1]]) <= 1)
 
   # c2: 
   for pli in 2:num_plate_types
