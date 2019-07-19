@@ -63,7 +63,10 @@ function read_build_solve_and_print(
   L, W, l, w, p, d = GC2DInstanceReader.read_instance(instfname)
   before_model_build = time()
   m = new_empty_and_configured_model(p_args; disable_output = disable_output)
-  _, ilwb, nnn, np = AllSubplatesModel.build(m, d, p, l, w, L, W)
+  _, ilwb, nnn, np = AllSubplatesModel.build(m, d, p, l, w, L, W;
+    break_hvcut_symm = p_args["break-hvcut-symmetry"],
+    only_binary = p_args["only-binary-variables"]
+  )
   time_to_build_model = time() - before_model_build 
   if !disable_output
     @show instfname
@@ -73,6 +76,7 @@ function read_build_solve_and_print(
     num_constrs = num_all_constraints(m)
     @show num_constrs
     @show m # just in case there is something here I did not output
+    #print(m) # just in case there is something here I did not output
   end
   flush(stdout) # guarantee all messages will be flushed before calling cplex
   time_to_solve_model = @elapsed optimize!(m)
@@ -118,6 +122,12 @@ function parse_script_args(args = ARGS)
         nargs = 0
       "--do-not-mock-first-for-compilation"
         help = "if passed then the first instance will not be solved twice"
+        nargs = 0
+      "--break-hvcut-symmetry"
+        help = "will double the number of variables, and reduce symmetry"
+        nargs = 0
+      "--only-binary-variables"
+        help = "CAUTION DO NOT GUARANTEE OPTIMALITY FOR NOW, IS HEURISTIC"
         nargs = 0
       "instfnames"
         help = "the paths to the instances to be solved"
