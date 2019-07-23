@@ -42,8 +42,17 @@ function build(
   @assert length(d) == length(l) && length(l) == length(w)
   num_piece_types = convert(D, length(d))
 
-  pli_lwb, hnnn, vnnn, np = partitions(P, d, l, w, L, W)
-  nnn = vcat(hnnn, vnnn)
+  sllw = SortedLinkedLW(D, l, w)
+  if break_hvcut_symm
+    pli2lwsb, hcuts, vcuts, pii2plis, pli2piis = partitions_no_symm(
+      P, d, sllw, L, W
+    )
+    num_plate_types = length(pli2lwsb)
+  else
+    pli_lwb, hcuts, vcuts, np = partitions(P, d, sllw, L, W)
+    num_plate_types = length(pli_lwb)
+  end
+  hvcuts = vcat(hcuts, vcuts)
 
   # Order the plate-piece pairs by my ranking of importance: how much
   # absolute are is wasted. Other rankings include: how much relative area
@@ -58,64 +67,38 @@ function build(
     convert(P, pli2l - pii2l) * (pli2w - pii2w))
   end)=#
 
-  num_plate_types = length(pli_lwb)
-
-  # pli2pair: inverse index which given a plate index will return a list of all
-  # picuts indexes (np variable) that cut some piece from some plate.
-  pli2pair = [Vector{P}() for _ = 1:num_plate_types]
-  # pii2pair: the same as pli2pair but for piece indexes.
-  pii2pair = [Vector{P}() for _ = 1:num_piece_types]
+  if !break_hvcut_symm
+    # pli2pair: inverse index which given a plate index will return a list of
+    # all picuts indexes (np variable) that cut some piece from some plate.
+    pli2pair = [Vector{P}() for _ = 1:num_plate_types]
+    # pii2pair: the same as pli2pair but for piece indexes.
+    pii2pair = [Vector{P}() for _ = 1:num_piece_types]
+  end
 
   # The vectors below all have the same length as the number of plate types (to
   # allow indexing by plate type). The value of a position is a vector of
   # arbitrary length and irrelevant index, the values of this inner vector are
   # cut indexes. Such cut indexes are related to the plate that is the index of
   # the outer vector.
-  if break_hvcut_symm
-    # fchild_vcut[10], for example, has a vector of cut indexes in which the
-    # plate type 10 appears as the first child of a vertical cut.
-    # First CHILD of Horizontal CUT
-    fchild_hcut = [Vector{P}() for _ = 1:num_plate_types]
-    # First CHILD of Vertical CUT
-    fchild_vcut = [Vector{P}() for _ = 1:num_plate_types]
-    # Second CHILD of Any CUT
-    schild_acut = [Vector{P}() for _ = 1:num_plate_types]
-    # PARENT in an Horizontal CUT
-    parent_hcut = [Vector{P}() for _ = 1:num_plate_types]
-    # PARENT in a Vertical CUT
-    parent_vcut = [Vector{P}() for _ = 1:num_plate_types]
-    for i in eachindex(hnnn)
-      n1, n2, n3 = hnnn[i]
-      push!(parent_hcut[n1], i)
-      push!(fchild_hcut[n2], i)
-      push!(schild_acut[n3], i)
-    end
-    len_hnnn = length(hnnn)
-    for i in eachindex(vnnn)
-      n1, n2, n3 = vnnn[i]
-      j = len_hnnn + i
-      push!(parent_vcut[n1], j)
-      push!(fchild_vcut[n2], j)
-      push!(schild_acut[n3], j)
-    end
-  else
-    # any CHILD plate to respective CUT indexes
-    child2cut = [Vector{P}() for _ = 1:num_plate_types]
-    # any PARENT plate to respective CUT indexes
-    parent2cut = [Vector{P}() for _ = 1:num_plate_types]
+  # any CHILD plate to respective CUT indexes
+  child2cut = [Vector{P}() for _ = 1:num_plate_types]
+  # any PARENT plate to respective CUT indexes
+  parent2cut = [Vector{P}() for _ = 1:num_plate_types]
 
-    # Initialize all inverse indexes.
-    for i in eachindex(nnn)
-      n1, n2, n3 = nnn[i]
-      push!(parent2cut[n1], i)
-      push!(child2cut[n2], i)
-      push!(child2cut[n3], i)
-    end
+  # Initialize all inverse indexes.
+  for i in eachindex(hvcuts)
+    parent, fchild, schild = hvcuts[i]
+    push!(parent2cut[parent], i)
+    push!(child2cut[fchild], i)
+    !iszero(schild) && push!(child2cut[schild], i)
   end
-  for i in eachindex(np)
-    pli, pii = np[i]
-    push!(pli2pair[pli], i)
-    push!(pii2pair[pii], i)
+
+  if !break_hvcut_symm
+    for i in eachindex(np)
+      pli, pii = np[i]
+      push!(pli2pair[pli], i)
+      push!(pii2pair[pii], i)
+    end
   end
 
   #@variable(model,
@@ -126,46 +109,39 @@ function build(
   naturally_only_binary = all(di -> di <= 1, d)
   if naturally_only_binary
     if break_hvcut_symm
-      @variable(model, picuts[1:length(np), 1:2], Bin)
+      @variable(model, pieces_sold[1:num_piece_types], Bin)
     else
       @variable(model, picuts[1:length(np)], Bin)
     end
-  elseif only_binary
+  elseif only_binary # is the same as naturally_only_binary, but only for now
     if break_hvcut_symm
-      @variable(model, picuts[1:length(np), 1:2], Bin)
+      @variable(model, pieces_sold[1:num_piece_types], Bin)
     else
       @variable(model, picuts[1:length(np)], Bin)
     end
   else
-    # TODO: check if we can break the symmetry without doubling the number
-    # of picut variables. This would need some change in the flow constraints.
-    # Having two separate arbitrary variables for the same picut probably
-    # creates the symmetries we are exactly trying to solve.
     if break_hvcut_symm
-      @variable(model, picuts[1:length(np), 1:2] >= 0, Int)
+      @variable(model,
+        0 <= pieces_sold[pii = 1:num_piece_types] <= d[pii],
+      Int)
     else
       @variable(model, picuts[1:length(np)] >= 0, Int)
+      #@variable(model,
+      #  0 <= picuts[i = 1:length(np)] <=
+      #    min(pli_lwb[np[i][1]][3], d[np[i][2]]),
+      #Int)
     end
-    #@variable(model,
-    #  0 <= picuts[i = 1:length(np)] <= min(pli_lwb[np[i][1]][3], d[np[i][2]]),
-    #Int)
   end
 
   if only_binary
-    @variable(model, hvcuts[1:length(nnn)], Bin)
-    if break_hvcut_symm
-      @variable(model, hcuts[1:length(nnn)], Bin)
-    end
+    @variable(model, cuts_made[1:length(hvcuts)], Bin)
   else
-    @variable(model, hvcuts[1:length(nnn)] >= 0, Int)
-    if break_hvcut_symm
-      @variable(model, hcuts[1:length(nnn)] >= 0, Int)
-    end
+    @variable(model, cuts_made[1:length(hvcuts)] >= 0, Int)
   end
 
   if break_hvcut_symm
     @objective(model, Max,
-      sum(p[pii] * sum(picuts[pii2pair[pii], :]) for pii = 1:num_piece_types)
+      sum(p[pii] * sum(pieces_sold[pii]) for pii = 1:num_piece_types)
     )
   else
     @objective(model, Max,
@@ -179,12 +155,11 @@ function build(
   # c1: 
   if break_hvcut_symm
     @constraint(model,
-      sum(picuts[pli2pair[1], :]) +
-      sum(hvcuts[vcat(parent_hcut[1], parent_vcut[1])]) == 1
+      sum(pieces_sold[pli2piis[1]]) + sum(cuts_made[parent2cut[1]]) <= 1
     )
   else
     @constraint(model,
-      sum(picuts[pli2pair[1]]) + sum(hvcuts[parent2cut[1]]) <= 1
+      sum(picuts[pli2pair[1]]) + sum(cuts_made[parent2cut[1]]) <= 1
     )
   end
 
@@ -192,46 +167,41 @@ function build(
   for pli in 2:num_plate_types
     if break_hvcut_symm
       @constraints model begin
-        sum(hcuts[schild_acut[pli]]) <= sum(hvcuts[schild_acut[pli]])
-        sum(picuts[pli2pair[pli], 1]) + sum(hvcuts[parent_hcut[pli]]) <= (sum(hvcuts[fchild_vcut[pli]]) + sum(hvcuts[schild_acut[pli]]) - sum(hcuts[schild_acut[pli]]))
-        sum(picuts[pli2pair[pli], 2]) + sum(hvcuts[parent_vcut[pli]]) <= (sum(hvcuts[fchild_hcut[pli]]) + sum(hcuts[schild_acut[pli]]))
+        sum(cuts_made[parent2cut[pli]]) <= sum(cuts_made[child2cut[pli]])
       end
     else
       @constraint(model,
-        sum(picuts[pli2pair[pli]]) + sum(hvcuts[parent2cut[pli]]) <=
-        sum(hvcuts[child2cut[pli]])
+        sum(picuts[pli2pair[pli]]) + sum(cuts_made[parent2cut[pli]]) <=
+        sum(cuts_made[child2cut[pli]])
       )
     end
   end
 
   # c2.5: The amount of each plate type generated by cuts is bounded by the
   # amount that can be cut from the original plate.
-  for pli in 2:num_plate_types
+  #=for pli in 2:num_plate_types
     if break_hvcut_symm
       @constraint(model,
-        sum(hvcuts[
-          vcat(fchild_hcut[pli], fchild_vcut[pli], schild_acut[pli])
-        ]) <= pli_lwb[pli][3]
+        sum(cuts_made[child2cut[pli]]) <= pli2lwsb[pli][4]
       )
     else
       @constraint(model,
-        sum(hvcuts[child2cut[pli]]) <= pli_lwb[pli][3]
+        sum(cuts_made[child2cut[pli]]) <= pli_lwb[pli][3]
       )
     end
-  end
+  end=#
 
   # c3: 
   for pii in 1:num_piece_types
     if break_hvcut_symm
-      @show pii
-      @show pii2pair[pii]
-      @constraint(model, sum(picuts[pii2pair[pii], :]) <= d[pii])
+      @constraint(model, pieces_sold[pii] <= sum(cuts_made[vcat(child2cut[pii2plis[pii]]...)]) - sum(cuts_made[vcat(parent2cut[pii2plis[pii]]...)]))
     else
       @constraint(model, sum(picuts[pii2pair[pii]]) <= d[pii])
     end
   end
   
-  model, pli_lwb, nnn, np
+  #model, hvcuts, pli_lwb, np
+  model, hvcuts, pli2lwsb
 end # build
 
 end # module

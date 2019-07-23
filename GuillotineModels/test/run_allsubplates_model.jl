@@ -63,7 +63,8 @@ function read_build_solve_and_print(
   L, W, l, w, p, d = GC2DInstanceReader.read_instance(instfname)
   before_model_build = time()
   m = new_empty_and_configured_model(p_args; disable_output = disable_output)
-  _, ilwb, nnn, np = AllSubplatesModel.build(m, d, p, l, w, L, W;
+  #_, hvcuts, pli_lwb, np = AllSubplatesModel.build(m, d, p, l, w, L, W;
+  _, hvcuts, pli2lwsb = AllSubplatesModel.build(m, d, p, l, w, L, W;
     break_hvcut_symm = p_args["break-hvcut-symmetry"],
     only_binary = p_args["only-binary-variables"]
   )
@@ -75,7 +76,7 @@ function read_build_solve_and_print(
     @show num_vars
     num_constrs = num_all_constraints(m)
     @show num_constrs
-    @show m # just in case there is something here I did not output
+    #@show m # just in case there is something here I did not output
     #print(m) # just in case there is something here I did not output
   end
   flush(stdout) # guarantee all messages will be flushed before calling cplex
@@ -93,6 +94,44 @@ function read_build_solve_and_print(
     @show obj_bound
     stop_reason = termination_status(m)
     @show stop_reason
+    if p_args["break-hvcut-symmetry"]
+      ps = m[:pieces_sold]
+      cm = m[:cuts_made]
+      ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if value(ps[i]) > 0.001]
+      cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if value(cm[i]) > 0.001]
+      @show ps_nz
+      @show cm_nz
+      foreach(ps_nz) do e
+        pii, _ = e
+        println((l[pii], w[pii]) => (pii, d[pii], p[pii]))
+      end
+      foreach(cm_nz) do e
+        i, _ = e
+        parent, fchild, schild = hvcuts[i]
+        if iszero(schild)
+          println((pli2lwsb[parent][1], pli2lwsb[parent][2]) => ((pli2lwsb[fchild][1], pli2lwsb[fchild][2]), (0, 0)))
+        else
+          println((pli2lwsb[parent][1], pli2lwsb[parent][2]) => ((pli2lwsb[fchild][1], pli2lwsb[fchild][2]), (pli2lwsb[schild][1], pli2lwsb[schild][2])))
+        end
+      end
+    else
+      ps = m[:picuts]
+      cm = m[:cuts_made]
+      ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if value(ps[i]) > 0.001]
+      cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if value(cm[i]) > 0.001]
+      @show ps_nz
+      @show cm_nz
+      foreach(ps_nz) do e
+        i, _ = e
+        pli, pii = np[i]
+        println((pli_lwb[pli][1], pli_lwb[pli][2]) => (l[pii], w[pii]))
+      end
+      foreach(cm_nz) do e
+        i, _ = e
+        parent, fchild, schild = hvcuts[i]
+        println((pli_lwb[parent][1], pli_lwb[parent][2]) => ((pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[schild][1], pli_lwb[schild][2])))
+      end
+    end
   end
 
   return nothing
