@@ -145,7 +145,8 @@ function becker2019_discretize(
   # If the lengths of the single pieces are not marked, the pairs are needed.
   if !mark_single_piece
     for pii = 2:N, pij = 1:(pii - 1) # PIece `j` (as opposed to `i`)
-      mark[l[pii] + l[pij]] = true
+      lij = l[pii] + l[pij]
+      lij <= L && (marks[lij] = true)
     end
   end
   # Mark the cuts of all other pieces.
@@ -249,7 +250,7 @@ function partitions_no_symm(
   @assert length(d) == length(w)
   l_not_single = becker2019_discretize(
     d, l, w, L, W; mark_single_piece = false
-  ) where {D, S}
+  )
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W) * 3
   #dl = becker2019_discretize(d, l, L ÷ 2)
