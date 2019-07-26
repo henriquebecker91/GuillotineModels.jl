@@ -5,6 +5,9 @@ using GC2DInstanceReader
 
 export all_plates, nibnn, write_nibnn, partitions, partitions_no_symm, SortedLinkedLW
 
+# Structure for keeping the piece lengths and widths both in the original order
+# and sorted order, and allow to access the piece index or the width (length)
+# counterpart when iterating the sorted lengths (widths).
 struct SortedLinkedLW{D, S}
   l :: Vector{S}
   w :: Vector{S}
@@ -16,6 +19,13 @@ struct SortedLinkedLW{D, S}
   pii2swi :: Vector{D} # piece index to sorted width index
 end
 
+# IMPORTANT: this constructor does not copy l and w, so any changes to l or w
+# will reflect in it, silently and completely invalidating the structure.
+# The first parameter is the type of integer to be used in the indexes.
+# This constructor basically creates a sorted copy of both vectors, then
+# create the four inverse indexes, and return them all in a single structure.
+# This constructor is not implemente in the most efficient way but it is
+# called one single time for each instance, so, irrelevant.
 function SortedLinkedLW(::Type{D}, l :: Vector{S}, w :: Vector{S}) where {D, S}
   @assert length(l) == length(w)
   n = length(l)
@@ -32,83 +42,22 @@ function SortedLinkedLW(::Type{D}, l :: Vector{S}, w :: Vector{S}) where {D, S}
   SortedLinkedLW(l, w, sl, sw, sli2pii, swi2pii, pii2sli, pii2swi)
 end
 
-function fits(l :: S, w :: S, L :: S, W :: S) :: Bool where {S}
-  l <= L && w <= W
-end
-
+# Intelligent discretization method that: (1) takes demand into account;
+# (2) takes the dimension that is not being discretized into account. It can
+# also be used to discover which lengths are only shared by single pieces
+# and not linear combinations of two or more pieces.
 # d: piece demand (d)
-# l: piece dimension (l or w)
-# L: plate dimension (L or W)
-function becker2019_discretize(
-  d :: Vector{D}, l :: Vector{S}, L :: S
-) where {D, S}
-  # If two pieces have the same dimension they should be merged into a single
-  # piece (summing their demands) for performance reasons.
-  #@assert l == unique(l)
-  # Each piece in 1:N has a demand and a dimension.
-  @assert length(d) == length(l)
-  N = length(d)
-  # Remove items that cannot fit into L anyway.
-  d_, l_ = similar(d), similar(l)
-  j = 0
-  for i in 1:N
-    if l[i] <= L
-      j += 1
-      d_[j] = d[i]
-      l_[j] = l[i]
-    end
-  end
-  resize!(d_, j)
-  resize!(l_, j)
-  d, l = d_, l_
-  N = j
-  iszero(N) && return S[]
-  # marks: for each unit of the plate dimension, if there can be a cut there 
-  # (considering the pieces available) or not.
-  marks = fill(false, L)
-  # Mark the cuts of the first piece.
-  marks[l[1]] = true
-  y = l[1] # y: used to iterate capacity, inherited from knapsack papers
-  for _ = 2:min(d[1], L ÷ l[1])
-    marks[y += l[1]] = true
-  end
-  # Mark the cuts of all other pieces.
-  for pii = 2:N # PIece Index
-    li = l[pii] # length of i
-    di = d[pii] # demand of i
-    for y = (L - li):-1:1
-      if marks[y]
-        yrli = y + li # yrli: y + repeated lengths of i
-        marks[yrli] = true
-        for r = 2:di
-          yrli += li
-          yrli > L && break
-          marks[yrli] = true
-        end
-      end
-    end
-    # Mark cuts considering the pieces began to (could be done using a dummy cut at
-    # index zero with value true, but the array has no index zero). 
-    y = li
-    marks[y] = true
-    for _ = 2:min(di, L ÷ li)
-      marks[y += li] = true
-    end
-  end
-
-  cuts = Vector{S}()
-  sizehint!(cuts, L)
-  for (position, is_marked) in enumerate(marks)
-    is_marked && push!(cuts, position)
-  end
-  cuts
-end
-
-# TODO: check the possibility to use SortedLinkedLW to avoid creating
-# tw new vectors every time
+# l: piece dimensions for dim that is being discretized (may be `l` or `w`)
+# w: piece dimensions for dim that is NOT being discretized (may be `l` or `w`)
+# L: plate dimension for dim that is being discretized (may be `L` or `W)`
+# W: plate dimension for dim that is NOT being discretized (may be `L` or `W`)
+# mark_single_piece: instead of discretizing the plate dimension, give all
+#   the piece dimensions (for the dimension being discretized) that are shared
+#   only by single pieces and not by two or more pieces (even of the same type)
+#   combinations.
 function becker2019_discretize(
   d :: Vector{D}, l :: Vector{S}, w :: Vector{S}, L :: S, W :: S;
-  mark_single_piece = true
+  only_single_pieces = false
 ) where {D, S}
   # If two pieces have the same dimension they should be merged into a single
   # piece (summing their demands) for performance reasons.
@@ -137,13 +86,13 @@ function becker2019_discretize(
   # (considering the pieces available) or not.
   marks = fill(false, L)
   # Mark the cuts of the first piece.
-  mark_single_piece && (marks[l[1]] = true)
+  !only_single_pieces && (marks[l[1]] = true)
   y = l[1] # y: used to iterate capacity, inherited from knapsack papers
   for _ = 2:min(d[1], L ÷ l[1])
     marks[y += l[1]] = true
   end
   # If the lengths of the single pieces are not marked, the pairs are needed.
-  if !mark_single_piece
+  if only_single_pieces
     for pii = 2:N, pij = 1:(pii - 1) # PIece `j` (as opposed to `i`)
       lij = l[pii] + l[pij]
       lij <= L && (marks[lij] = true)
@@ -168,7 +117,7 @@ function becker2019_discretize(
     # done using a dummy cut at index zero with value true, but the array has
     # no index zero). 
     y = li
-    mark_single_piece && (marks[y] = true)
+    !only_single_pieces && (marks[y] = true)
     for _ = 2:min(di, L ÷ li)
       marks[y += li] = true
     end
@@ -176,8 +125,15 @@ function becker2019_discretize(
 
   cuts = Vector{S}()
   sizehint!(cuts, L)
-  for (position, is_marked) in enumerate(marks)
-    is_marked && push!(cuts, position)
+  if only_single_pieces
+    usl = unique!(sort(l))
+    for y in usl
+      !marks[y] && push!(cuts, position)
+    end
+  else
+    for (position, is_marked) in enumerate(marks)
+      is_marked && push!(cuts, position)
+    end
   end
   cuts
 end
@@ -247,7 +203,7 @@ function partitions_no_symm(
   @assert length(d) == length(l)
   @assert length(d) == length(w)
   l_not_single = becker2019_discretize(
-    d, l, w, L, W; mark_single_piece = false
+    d, l, w, L, W; only_single_pieces = true
   )
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W) * 3
