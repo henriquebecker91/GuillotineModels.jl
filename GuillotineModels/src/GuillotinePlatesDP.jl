@@ -182,62 +182,60 @@ function becker2019_discretize(
   cuts
 end
 
+# Check if such piece should be extracted from a plate. This method may be used
+# from both symmetry-breaking and non-symmetry-breaking contexts, because
+# the default value of parameter symm is the allow-any-cut-direction value.
+# A piece should be extracted from a plate if:
+# (1) The plate allows the piece size.
+# (2) The plate will not be cut in a way that leaves a second child large
+#     enough to allow the piece size (i.e., if the piece extraction may be
+#     postponed to be done in a second child of the current plate, it will be
+#     postponed).
 function should_extract_piece_from_plate(
-  pii :: D, L :: S, W :: S, symm :: UInt8, sllw :: SortedLinkedLW{D, S}
+  pii :: D, L :: S, W :: S, sllw :: SortedLinkedLW{D, S}, symm :: UInt8 = 3
 ) :: Bool where {D, S}
   li = sllw.l[pii]
   wi = sllw.w[pii]
+  # If the piece does not fit the plate, then it is not even possible to
+  # extract the piece from the plate.
   (li > L || wi > W) && return false
 
   n = length(sllw.l)
 
+  # If we cut the plate by the length of the piece (a horizontal cut), does
+  # this leaves space for another piece? If it does then we postpone to extract
+  # the piece from a child of the current plate. Note that we can only do that
+  # if the plate is marked to allow horizontal cuts or any cuts.
+  # (The 'f' in the variables is from 'frontal'.)
   if symm == 1 || symm == 3
     fl = L - li
     fw = W
 
-    for sli = 1:n
+    for sli = 1:n # for the pieces in increase-or-stay order of their length
+      # if the current piece does not fit the length none after it will fit
       sllw.sl[sli] > fl && break
+      # if a piece fits the frontal child, then postpone extraction
       sllw.w[sllw.sli2pii[sli]] <= fw && return false
     end
   end
 
   if symm == 2 || symm == 3
+    # The same as above but for the width of the piece (a vertical cut).
+    # (The 'l' in the variables is from 'lateral'.)
     ll = L
     lw = W - wi
 
+    # the same comments of the last loop are valid for this one
     for swi = 1:n
       sllw.sw[swi] > lw && break
       sllw.l[sllw.swi2pii[swi]] <= ll && return false
     end
   end
 
-  return true
-end
-
-function should_extract_piece_from_plate(
-  pii :: D, L :: S, W :: S, sllw :: SortedLinkedLW{D, S}
-) :: Bool where {D, S}
-  li = sllw.l[pii]
-  wi = sllw.w[pii]
-  (li > L || wi > W) && return false
-
-  fl = L - li
-  fw = W
-
-  n = length(sllw.l)
-  for sli = 1:n
-    sllw.sl[sli] > fl && break
-    sllw.w[sllw.sli2pii[sli]] <= fw && return false
-  end
-
-  ll = L
-  lw = W - wi
-
-  for swi = 1:n
-    sllw.sw[swi] > lw && break
-    sllw.l[sllw.swi2pii[swi]] <= ll && return false
-  end
-
+  # If no piece is small enough to make the plate-parameter be cut in a length
+  # (or width) that leaves a second child large enough for extracting the
+  # piece-parameter, then we cannot postpone and should allow extracting the
+  # piece-parameter from the plate-parameter.
   return true
 end
 
@@ -305,7 +303,7 @@ function partitions_no_symm(
         # the list of plate codes that correspond to a piece.
         push!(pii2plis[pii], pli)
         push!(pli2piis[pli], pii)
-      elseif should_extract_piece_from_plate(pii, pll, plw, pls, sllw)
+      elseif should_extract_piece_from_plate(pii, pll, plw, sllw, pls)
         # If there is no way to cut the current piece from the current plate
         # except if we cut after the half of the plate... (i.e., the most
         # unbalanced cut possible, that is, making a cut with the minimal
