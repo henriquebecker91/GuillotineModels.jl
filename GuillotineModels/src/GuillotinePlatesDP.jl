@@ -1,9 +1,7 @@
 module GuillotinePlatesDP
 
-push!(LOAD_PATH, "./")
-using GC2DInstanceReader
-
-export all_plates, nibnn, write_nibnn, partitions, partitions_no_symm, SortedLinkedLW
+export SortedLinkedLW
+export becker2019_discretize, partitions, partitions_no_symm
 
 # Structure for keeping the piece lengths and widths both in the original order
 # and sorted order, and allow to access the piece index or the width (length)
@@ -126,6 +124,10 @@ function becker2019_discretize(
   cuts = Vector{S}()
   sizehint!(cuts, L)
   if only_single_pieces
+    # If we just want to check if the piece lengths cannot be obtained from
+    # linear combinations of other pieces, we just iterate the unique piece
+    # lengths in increasing order, and if they are not marked, then there is
+    # no linear combination of other pieces that give the same length.
     usl = unique!(sort(l))
     for y in usl
       !marks[y] && push!(cuts, position)
