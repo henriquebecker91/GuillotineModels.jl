@@ -249,6 +249,7 @@ function gen_cuts_sb(
   push!(next, (L, W, 3, one(P)))
   # n: The amount of plates (the index of the highest plate type).
   n = one(P) # there is already the original plate
+  piece_cuts_avoided_by_symmb = 0
   while next_idx <= length(next)
     # PLate Length, Width, Symmetry, and Index
     pll, plw, pls :: UInt8, pli = next[next_idx]
@@ -291,8 +292,7 @@ function gen_cuts_sb(
           end
           push!(vcuts, (pli, plis[pll, piw, 1], 0))
         else
-          #error("pls value is $(pls) but should be in [1,3]")
-          println("happened")
+          piece_cuts_avoided_by_symmb += 1
         end
       end
     end
@@ -362,6 +362,7 @@ function gen_cuts_sb(
       end
     end
   end
+  #@show piece_cuts_avoided_by_symmb
 
   # For each possible subplatex size, same_size_plis groups the plate indexes
   # that refer to the plates with the same size, and distinct symmetry tags.
