@@ -63,11 +63,17 @@ function read_build_solve_and_print(
   L, W, l, w, p, d = GC2DInstanceReader.read_instance(instfname)
   before_model_build = time()
   m = new_empty_and_configured_model(p_args; disable_output = disable_output)
-  #_, hvcuts, pli_lwb, np = AllSubplatesModel.build(m, d, p, l, w, L, W;
-  _, hvcuts, pli2lwsb = AllSubplatesModel.build(m, d, p, l, w, L, W;
-    break_hvcut_symm = p_args["break-hvcut-symmetry"],
-    only_binary = p_args["only-binary-variables"]
-  )
+  if p_args["break-hvcut-symmetry"]
+    _, hvcuts, pli2lwsb, _, _ = AllSubplatesModel.build_model_with_symmbreak(
+      m, d, p, l, w, L, W;
+      only_binary = p_args["only-binary-variables"]
+    )
+  else
+    _, hvcuts, pli_lwb, np = AllSubplatesModel.build_model_no_symmbreak(
+      m, d, p, l, w, L, W;
+      only_binary = p_args["only-binary-variables"]
+    )
+  end
   time_to_build_model = time() - before_model_build 
   if !disable_output
     @show instfname
@@ -101,10 +107,12 @@ function read_build_solve_and_print(
       cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if value(cm[i]) > 0.001]
       @show ps_nz
       @show cm_nz
+      println("(piece length, piece width) => (piece index, amount in solution, profit of single piece, total profit contributed in solution) ")
       foreach(ps_nz) do e
-        pii, _ = e
-        println((l[pii], w[pii]) => (pii, d[pii], p[pii]))
+        pii, v = e
+        println((l[pii], w[pii]) => (pii, v, p[pii], v * p[pii]))
       end
+      println("(parent plate length, parent plate width) => ((first child plate length, first child plate width), (second child plate length, second child plate width))")
       foreach(cm_nz) do e
         i, _ = e
         parent, fchild, schild = hvcuts[i]
@@ -121,11 +129,13 @@ function read_build_solve_and_print(
       cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if value(cm[i]) > 0.001]
       @show ps_nz
       @show cm_nz
+      println("(plate length, plate width) => (number of times this extraction happened, piece length, piece width)")
       foreach(ps_nz) do e
-        i, _ = e
+        i, v = e
         pli, pii = np[i]
-        println((pli_lwb[pli][1], pli_lwb[pli][2]) => (l[pii], w[pii]))
+        println((pli_lwb[pli][1], pli_lwb[pli][2]) => (v, l[pii], w[pii]))
       end
+      println("(parent plate length, parent plate width) => ((first child plate length, first child plate width), (second child plate length, second child plate width))")
       foreach(cm_nz) do e
         i, _ = e
         parent, fchild, schild = hvcuts[i]

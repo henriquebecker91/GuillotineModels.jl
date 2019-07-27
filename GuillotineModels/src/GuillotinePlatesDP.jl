@@ -150,7 +150,7 @@ end
 #     postponed to be done in a second child of the current plate, it will be
 #     postponed).
 function should_extract_piece_from_plate(
-  pii :: D, L :: S, W :: S, sllw :: SortedLinkedLW{D, S}, symm :: UInt8 = 3
+  pii :: D, L :: S, W :: S, sllw :: SortedLinkedLW{D, S}, symm :: UInt8 = 0x03
 ) :: Bool where {D, S}
   li = sllw.l[pii]
   wi = sllw.w[pii]
@@ -197,6 +197,8 @@ function should_extract_piece_from_plate(
   return true
 end
 
+# TODO: internal change. The symmetry tag dimension of plis should be the
+# first one, given how columnwise memory layout works.
 function partitions_no_symm(
   ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S
 ) where {D, S, P}
@@ -204,9 +206,9 @@ function partitions_no_symm(
   w = sllw.w
   @assert length(d) == length(l)
   @assert length(d) == length(w)
-  l_not_single = becker2019_discretize(
-    d, l, w, L, W; only_single_pieces = true
-  )
+  #l_not_single = becker2019_discretize(
+  #  d, l, w, L, W; only_single_pieces = true
+  #)
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W) * 3
   #dl = becker2019_discretize(d, l, L ÷ 2)
@@ -246,7 +248,7 @@ function partitions_no_symm(
   n = one(P) # there is already the original plate
   while next_idx <= length(next)
     # PLate Length, Width, Symmetry, and Index
-    pll, plw, pls, pli = next[next_idx]
+    pll, plw, pls :: UInt8, pli = next[next_idx]
     next_idx += 1
     plb = (L ÷ pll) * (W ÷ plw) # PLate Bound
     # It is not necessary to store the plate id in pli2lwsb because they are
@@ -327,7 +329,23 @@ function partitions_no_symm(
     end
   end
 
-  return pli2lwsb, hcuts, vcuts, pii2plis, pli2piis
+  # For each possible subplatex size, same_size_plis groups the plate indexes
+  # that refer to the plates with the same size, and distinct symmetry tags.
+  same_size_plis = Vector{Vector{P}}()
+  # The length of same_size_plis may be as low as one third of length(pli2lwsb)
+  # and as high as length(pli2lwsb).
+  sizehint!(same_size_plis, length(pli2lwsb))
+  for j = 1:W, i = 1:L # column-major for performance
+    temp = Vector{P}()
+    !iszero(plis[i, j, 1]) && push!(temp, plis[i, j, 1])
+    !iszero(plis[i, j, 2]) && push!(temp, plis[i, j, 2])
+    !iszero(plis[i, j, 3]) && push!(temp, plis[i, j, 3])
+    !iszero(length(temp)) && (push!(same_size_plis, temp); temp = Vector{P}())
+  end
+  @assert last(same_size_plis) == P[1]
+  pop!(same_size_plis)
+
+  return pli2lwsb, hcuts, vcuts, pii2plis, pli2piis, same_size_plis
 end
 
 function partitions(
