@@ -45,7 +45,7 @@ function build_model_no_symmbreak(
   num_piece_types = convert(D, length(d))
 
   sllw = SortedLinkedLW(D, l, w)
-  pli_lwb, hcuts, vcuts, np = partitions(P, d, sllw, L, W)
+  pli_lwb, hcuts, vcuts, np = gen_cuts(P, d, sllw, L, W)
   num_plate_types = length(pli_lwb)
   hvcuts = vcat(hcuts, vcuts)
 
@@ -210,7 +210,7 @@ function build_model_with_symmbreak(
 
   sllw = SortedLinkedLW(D, l, w)
   pli2lwsb, hcuts, vcuts, pii2plis, pli2piis, same_size_plis =
-    partitions_no_symm(P, d, sllw, L, W)
+    gen_cuts_sb(P, d, sllw, L, W)
   num_plate_types = length(pli2lwsb)
   hvcuts = vcat(hcuts, vcuts)
 

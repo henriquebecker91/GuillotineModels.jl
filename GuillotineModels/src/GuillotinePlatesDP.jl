@@ -1,7 +1,7 @@
 module GuillotinePlatesDP
 
 export SortedLinkedLW
-export becker2019_discretize, partitions, partitions_no_symm
+export becker2019_discretize, gen_cuts, gen_cuts_sb
 
 # Structure for keeping the piece lengths and widths both in the original order
 # and sorted order, and allow to access the piece index or the width (length)
@@ -130,7 +130,7 @@ function becker2019_discretize(
     # no linear combination of other pieces that give the same length.
     usl = unique!(sort(l))
     for y in usl
-      !marks[y] && push!(cuts, position)
+      !marks[y] && push!(cuts, y)
     end
   else
     for (position, is_marked) in enumerate(marks)
@@ -199,16 +199,19 @@ end
 
 # TODO: internal change. The symmetry tag dimension of plis should be the
 # first one, given how columnwise memory layout works.
-function partitions_no_symm(
+function gen_cuts_sb(
   ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S
 ) where {D, S, P}
   l = sllw.l
   w = sllw.w
   @assert length(d) == length(l)
   @assert length(d) == length(w)
-  #l_not_single = becker2019_discretize(
-  #  d, l, w, L, W; only_single_pieces = true
-  #)
+  only_single_l = becker2019_discretize(
+    d, l, w, L, W; only_single_pieces = true
+  )
+  only_single_w = becker2019_discretize(
+    d, w, l, W, L; only_single_pieces = true
+  )
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W) * 3
   #dl = becker2019_discretize(d, l, L ÷ 2)
@@ -293,7 +296,24 @@ function partitions_no_symm(
         end
       end
     end
-    if pls == 1 || pls == 3
+    # TODO: after is working, refactor the code below to use a single loop
+    # using a vector saved in a variable, or an inner function
+    sorted_in(a, v) = searchsortedfirst(a, v) <= length(a)
+    if pls == 1 && sorted_in(only_single_w, plw)
+      indexes = filter(i -> w[i] == plw && l[i] < pll, collect(1:max_piece_type))
+      #@assert !isempty(indexes)
+      for y in l[indexes]
+        if iszero(plis[y, plw, 2])
+          push!(next, (y, plw, 2, n += 1))
+          plis[y, plw, 2] = n
+        end
+        if iszero(plis[pll - y, plw, 3])
+          push!(next, (pll - y, plw, 3, n += 1))
+          plis[pll - y, plw, 3] = n
+        end
+        push!(hcuts, (pli, plis[y, plw, 2], plis[pll - y, plw, 3]))
+      end
+    elseif pls == 1 || pls == 3
       for y in becker2019_discretize(d, l, w, pll ÷ 2, plw)
         #y > pll ÷ 2 && break
         @assert plw >= min_piw
@@ -310,7 +330,21 @@ function partitions_no_symm(
         push!(hcuts, (pli, plis[y, plw, 2], plis[pll - y, plw, 3]))
       end
     end
-    if pls == 2 || pls == 3
+    if pls == 2 && sorted_in(only_single_l, pll)
+      indexes = filter(i -> l[i] == pll && w[i] < plw, collect(1:max_piece_type))
+      #@assert !isempty(indexes)
+      for x in w[indexes]
+        if iszero(plis[pll, x, 1])
+          push!(next, (pll, x, 1, n += 1))
+          plis[pll, x, 1] = n
+        end
+        if iszero(plis[pll, plw - x, 3])
+          push!(next, (pll, plw - x, 3, n += 1))
+          plis[pll, plw - x, 3] = n
+        end
+        push!(vcuts, (pli, plis[pll, x, 1], plis[pll, plw - x, 3]))
+      end
+    elseif pls == 2 || pls == 3
       for x in becker2019_discretize(d, w, l, plw ÷ 2, pll)
         #x > plw ÷ 2 && break
         @assert pll >= min_pil
@@ -348,7 +382,7 @@ function partitions_no_symm(
   return pli2lwsb, hcuts, vcuts, pii2plis, pli2piis, same_size_plis
 end
 
-function partitions(
+function gen_cuts(
   ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S
 ) where {D, S, P}
   l = sllw.l
