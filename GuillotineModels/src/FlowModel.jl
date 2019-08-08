@@ -1,8 +1,10 @@
 module FlowModel
 
 using JuMP
-include("FlowDP.jl")
-using .FlowDP
+push!(LOAD_PATH, "./")
+using FlowDP
+#include("FlowDP.jl")
+#using .FlowDP
 
 # HIGH LEVEL EXPLANATION OF THE MODEL
 #
@@ -105,6 +107,10 @@ function build_model(
     @constraint(model,
       sum(edge[head2indxs[i]]) == sum(edge[tail2indxs[i]])
     )
+  end
+
+  for i = 1:num_piece_types # respect demand
+    @constraint(model, edge[i] <= d[i])
   end
 
   # Not all edges are cir_edges, however, we do not have a separate list at

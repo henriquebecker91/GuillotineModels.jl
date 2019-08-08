@@ -117,6 +117,29 @@ function reduce_dlw(
   d_, l_, w_, j
 end
 
+# TODO: this could be O(n log n) instead of pseudopolynomial
+function merge_duplicates(
+  d :: Vector{D}, per :: Vector{S}
+) :: Tuple{Vector{D}, Vector{S}} where {D, S}
+  @assert length(d) == length(per)
+
+  y2d = fill(zero(D), maximum(per))
+  for i in eachindex(d)
+    y2d[per[i]] += d[i] 
+  end
+
+  per_ = Vector{S}()
+  d_ = Vector{D}()
+  for (y, dy) in enumerate(y2d)
+    if !iszero(dy)
+      push!(d_, dy)
+      push!(per_, y)
+    end
+  end
+
+  d_, per_
+end
+
 # Takes the y2node_idx discretization and globalize it (i.e., change the ones
 # to the global node indexes). Create a list of discretized positions as sub-
 # product. Create a list of globalized forward edges based on the list of
@@ -191,6 +214,36 @@ function globalize!(
   per_dim_disc, glo_fow_edges, lgni, lgei
 end
 
+# TODO: this is generating all unrestricted arcs again, solve this
+function gen_u_fow_edges(
+  last_gedge_idx :: E,
+  y2node_idx     :: Vector{N},
+  per_dim_disc   :: Vector{S},
+) :: Tuple{Vector{Edge{N, E}}, E} where {S, N, E}
+  @assert length(per_dim_disc) <= length(y2node_idx)
+  @assert length(y2node_idx) == last(per_dim_disc) # the sink is always last
+  lgei = last_gedge_idx
+  u_fow_edges = Vector{Edge{N, E}}()
+  for y = @view per_dim_disc[1:end-1]
+    edge = Edge(lgei += 1, y2node_idx[per_dim_disc[1]] - 1, y2node_idx[y], zero(E))
+    (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
+    push!(u_fow_edges, edge)
+  end
+  for i = 1:(length(per_dim_disc)-1)
+    for j = (i+1):(length(per_dim_disc)-1)
+      y1 = per_dim_disc[i]
+      y2 = per_dim_disc[j]
+      y2 - y1 > y1 && continue
+      edge = Edge(
+        lgei += 1, y2node_idx[y1], y2node_idx[y2], zero(E)
+      )
+      (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
+      push!(u_fow_edges, edge)
+    end
+  end
+  u_fow_edges, lgei
+end
+
 function gen_w_fow_edges(
   last_gedge_idx :: E,
   y2node_idx     :: Vector{N},
@@ -248,6 +301,8 @@ function gen_closed_flow(
 
   # Reduce the pieces considered to just the ones that fit the flow/plate.
   d, par, per, n = reduce_dlw(d, par, per, PAR, PER)
+  d, per = merge_duplicates(d, per)
+  par = nothing # not used anymore after here
   # y2node_idx: the sparse discretization vector.
   #   If y2node_idx[y] is zero, then there is no way to reach that position y
   #   with a piece combination, otherwise, there is a way. A reachable position
@@ -272,6 +327,7 @@ function gen_closed_flow(
   )
 
   w_fow_edges, lgei = gen_w_fow_edges(lgei, y2node_idx, disc_per)
+
   # TODO: make the first version without the unrestricted edges and check if
   # it get the same values as the old_bender. Execute against A5 and
   # check if it get the restricted value, then implement the unrestricted
@@ -286,9 +342,8 @@ function gen_closed_flow(
   # reached after traversing e1, may be used.
   # gen_u_fow_edges()
 
-  # I think both sets of arcs below may be generated already globalized.
-  # GENERATE ALL NON-RESTRICTED EDGES
-  # GENERATE ALL WASTE EDGES
+  #u_fow_edges, lgei = gen_w_fow_edges(lgei, y2node_idx, disc_per)
+  #disc_per, y2node_idx, vcat(r_fow_edges, w_fow_edges, u_fow_edges), lgni, lgei
   disc_per, y2node_idx, append!(r_fow_edges, w_fow_edges), lgni, lgei
 end
 
@@ -360,14 +415,14 @@ function gen_all_edges(
   vflows_by_L[L] = y2vroot_nodes
   hflows_by_W[W] = y2hroot_nodes
 
-  for L_ in @view disc_L[1:end-1]
+  for L_ in @view disc_L[1:end-1]#setdiff(unique(l), L)#
     origin_vf_by_L[L_] = lgni + 1 # NOT lgni += 1, here we predict the origin
     _, vflows_by_L[L_], vedges, lgni, lgei = gen_closed_flow(
       lgni, lgei, lw2pii, ppo2gbedge_idx, d, l, w, 0x01, L_, W
     )
     append!(edges, vedges)
   end
-  for W_ in @view disc_W[1:end-1]
+  for W_ in @view disc_W[1:end-1]#setdiff(unique(w), W)#
     origin_hf_by_W[W_] = lgni + 1 # NOT lgni += 1, here we predict the origin
     _, hflows_by_W[W_], hedges, lgni, lgei = gen_closed_flow(
       lgni, lgei, lw2pii', ppo2gbedge_idx, d, w, l, 0x02, W_, L
@@ -378,28 +433,32 @@ function gen_all_edges(
   # TO CREATE THE CIRCULATION EDGES AT THE END, WE NEED TO KNOW THE NAME OF
   # THE NODES FOR THE ORIGIN OF EVERY FLOW WITH PAR WITH SOME SIZE, AND THE
   # INTERNAL NODE 
-  #@show vflows_by_L
-  #@show origin_vf_by_L
-  #@show hflows_by_W
-  #@show origin_hf_by_W
+  @show vflows_by_L
+  @show origin_vf_by_L
+  @show hflows_by_W
+  @show origin_hf_by_W
   for ppo in CartesianIndices(ppo2gbedge_idx)
     pari, peri, orii = ppo[1], ppo[2], ppo[3]
     iszero(ppo2gbedge_idx[ppo]) && continue
+    @show ppo
     if orii == 0x01
+      while !iszero(peri) && iszero(vflows_by_L[pari][peri]); peri -= 1; end
+      @assert !iszero(peri)
       push!(edges, Edge{N, E}(
         ppo2gbedge_idx[ppo], vflows_by_L[pari][peri], origin_vf_by_L[pari],
         zero(N)
       ))
       edge = last(edges)
-      (iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, @__LINE__
+      (iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, peri, @__LINE__
     else
       @assert orii == 0x02
+      while !iszero(peri) && iszero(hflows_by_W[pari][peri]); peri -= 1; end
       push!(edges, Edge{N, E}(
         ppo2gbedge_idx[ppo], hflows_by_W[pari][peri], origin_hf_by_W[pari],
         zero(N)
       ))
       edge = last(edges)
-      (iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, @__LINE__
+      (iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, peri, @__LINE__
     end
   end
   
