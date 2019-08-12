@@ -1,5 +1,10 @@
 module Flow2Format
 
+# CONSIDER MIGRATING TO GraphRecipes
+# (https://github.com/JuliaPlots/GraphRecipes.jl/blob/master/README.md)
+# pros: seems more mature, use the Plots library
+# cons: seems even less documented
+
 import LightGraphs, TikzGraphs, TikzPictures
 
 push!(LOAD_PATH, "./")
@@ -22,9 +27,10 @@ function flow2digraph(
 end
 
 function flow2tikzpic(
-  num_nodes :: N,
+  nodes :: Vector{Node{S, N}},
   edges :: Vector{Edge{N, E}}
-) :: TikzPictures.TikzPicture where {N, E}
+) :: TikzPictures.TikzPicture where {S, N, E}
+  @assert issorted(nodes, by = n -> n.idx)
   d = Dict{Tuple{E, E}, String}()
   for e in edges
     arc = convert.(E, (e.head, e.tail))
@@ -36,27 +42,29 @@ function flow2tikzpic(
   end
   
   TikzGraphs.plot(
-    flow2digraph(num_nodes, edges), TikzGraphs.Layouts.SimpleNecklace(),
+    flow2digraph(length(nodes), edges),
+    labels = map(n -> "$(n.idx):$(n.par):$(n.per):$(n.ori)", nodes),
+    TikzGraphs.Layouts.SimpleNecklace(),
     options="scale=3, every node/.style={align=center}",
     edge_labels = d
   )
 end
 
 function flow2file(
-  num_nodes :: N,
+  nodes :: Vector{Node{S, N}},
   edges :: Vector{Edge{N, E}},
   out :: TikzPictures.SaveType
-) :: Nothing where {N, E}
-  TikzPictures.save(out, flow2tikzpic(num_nodes, edges))
+) :: Nothing where {S, N, E}
+  TikzPictures.save(out, flow2tikzpic(nodes, edges))
   nothing
 end
 
 function flow2pdf(
-  num_nodes :: N,
+  nodes :: Vector{Node{S, N}},
   edges :: Vector{Edge{N, E}},
   fname :: String
-) :: Nothing where {N, E}
-  flow2file(num_nodes, edges, TikzPictures.PDF(fname))
+) :: Nothing where {S, N, E}
+  flow2file(nodes, edges, TikzPictures.PDF(fname))
   nothing
 end
 

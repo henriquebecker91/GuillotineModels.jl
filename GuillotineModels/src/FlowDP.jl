@@ -1,17 +1,13 @@
 module FlowDP
 
-export Edge, gen_all_edges
+export Node, Edge, FlowModel, gen_all_edges
 
-#=
- Not really necessary for the model building.
- May be useful in the future to help the decoding.
 struct Node{S, N}
   idx :: N # The node index in the universe of nodes.
-  per :: S # 
   par :: S # 
+  per :: S # 
   ori :: UInt8 # 
 end
-=#
 
 struct Edge{N, E}
   indx :: E # The indx index in the universe of edges.
@@ -21,11 +17,16 @@ struct Edge{N, E}
 end
 
 #=
- Not really necessary for the model building.
- May be useful in to store the whole model and avoid using tuples.
-struct Flow{S, N, E}
+struct FlowModel{S, N, E}
   nodes :: Vector{Node{S, N}}
   edges :: Vector{Edge{N, E}}
+end
+
+function append!(
+  lhs :: FlowModel{S, N, E}, rhs :: FlowModel{S, N, E}
+) :: FlowModel{S, N, E}
+  append!(lhs.nodes, rhs.nodes)
+  append!(lhs.edges, rhs.edges)
 end
 =#
 
@@ -33,12 +34,12 @@ end
 # Take the pieces demand, the pieces length (or width), and the plate
 # corresponding dimension. Returns: (1) a vector with the same size as the
 # plate dimension where vector[y] == 1 if there is a linear combination
-# os piece sizes that give `y` and zero otherwise; (2) every pair of such
+# of piece sizes that give `y` and zero otherwise; (2) every pair of such
 # "one-positions" for which there exists a piece with the same exact size as
 # the distance between the two positions.
 # NOTE: N is the type of the node indexes, to allow the method to already
 # create one of the returned structures with the right element type.
-# NOTE: THIS ASSUMES ALL PIECES GIVEN FIT THE PLATE ON BOTH DIMENSIONS.
+# NOTE: THIS ASSUMES ALL PIECES FIT THE PLATE ON BOTH DIMENSIONS.
 function gen_rr_fow_edges!(
   ::Type{N}, # eltype of the marked vector
   d :: Vector{D}, l :: Vector{S}, L :: S
@@ -122,6 +123,7 @@ function merge_duplicates(
   d :: Vector{D}, per :: Vector{S}
 ) :: Tuple{Vector{D}, Vector{S}} where {D, S}
   @assert length(d) == length(per)
+  #isempty(d) && return d, per
 
   y2d = fill(zero(D), maximum(per))
   for i in eachindex(d)
@@ -154,19 +156,19 @@ function globalize!(
   ppo2gbedge_idx :: Array{E, 3},
   ori            :: UInt8,
   PAR            :: S
-) :: Tuple{Vector{S}, Vector{Edge{N, E}}, N, E} where {D, S, N, E}
+) :: Tuple{Vector{Node{S, N}}, Vector{Edge{N, E}}, N, E} where {D, S, N, E}
   # The first node of a flow is the point zero, that does not appear in a
   # discretization because the array has no position zero.
   lgni = origin = last_gnode_idx + one(N)
   lgei = last_gedge_idx
 
-  # per_dim_disc: vector in which the values are the discretized positions of
-  #   the perpendicular dimension in increasing order.
-  per_dim_disc = Vector{S}()
+  glo_nodes = Vector{Node{S, N}}()
+  push!(glo_nodes, Node{S, N}(origin, PAR, zero(S), ori))
+
   for y in one(S):length(y2node_idx)
     if !iszero(y2node_idx[y])
-      push!(per_dim_disc, y)
       y2node_idx[y] = (lgni += one(N))
+      push!(glo_nodes, Node{S, N}(lgni, PAR, y, ori))
     end
   end
 
@@ -211,31 +213,44 @@ function globalize!(
     end
   end
 
-  per_dim_disc, glo_fow_edges, lgni, lgei
+  glo_nodes, glo_fow_edges, lgni, lgei
 end
 
 # TODO: this is generating all unrestricted arcs again, solve this
 function gen_u_fow_edges(
+  glo_nodes :: Vector{Node{S, N}},
   last_gedge_idx :: E,
-  y2node_idx     :: Vector{N},
-  per_dim_disc   :: Vector{S},
+  ppo2gbedge_idx :: Array{E, 3}
 ) :: Tuple{Vector{Edge{N, E}}, E} where {S, N, E}
-  @assert length(per_dim_disc) <= length(y2node_idx)
-  @assert length(y2node_idx) == last(per_dim_disc) # the sink is always last
-  lgei = last_gedge_idx
   u_fow_edges = Vector{Edge{N, E}}()
-  for y = @view per_dim_disc[1:end-1]
-    edge = Edge(lgei += 1, y2node_idx[per_dim_disc[1]] - 1, y2node_idx[y], zero(E))
+  isempty(glo_nodes) && return u_fow_edges, last_gedge_idx
+  @assert iszero(glo_nodes[1].per)
+  @assert isone(unique!(map(gn -> gn.par, glo_nodes)))
+  @assert isone(unique!(map(gn -> gn.ori, glo_nodes)))
+  lgei = last_gedge_idx
+  for node in @view glo_nodes[2:end-1]
+    bedge_ppo = (node.per, node.par, 0x03 - node.ori)
+    if iszero(ppo2gbedge_idx[bedge_ppo...])
+      ppo2gbedge_idx[bedge_ppo...] = (lgei += one(E))
+    end
+    back = ppo2gbedge_idx[bedge_ppo...]
+
+    edge = Edge(lgei += 1, glo_nodes[1].idx, node.idx, back)
     (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
     push!(u_fow_edges, edge)
   end
-  for i = 1:(length(per_dim_disc)-1)
-    for j = (i+1):(length(per_dim_disc)-1)
-      y1 = per_dim_disc[i]
-      y2 = per_dim_disc[j]
-      y2 - y1 > y1 && continue
+  for i = 2:(length(glo_nodes)-1)
+    for j = (i+1):length(glo_nodes)
+      @assert node[j].per > node[i].per
+      bedge_ppo = (node[j].per - node[i].per, node.par, 0x03 - node.ori)
+      if iszero(ppo2gbedge_idx[bedge_ppo...])
+        ppo2gbedge_idx[bedge_ppo...] = (lgei += one(E))
+      end
+      back = ppo2gbedge_idx[bedge_ppo...]
+
       edge = Edge(
-        lgei += 1, y2node_idx[y1], y2node_idx[y2], zero(E)
+        # TODO: this does not work, those are waste edges, not use edges
+        lgei += 1, node[i].idx, node[j].idx, back
       )
       (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
       push!(u_fow_edges, edge)
@@ -245,17 +260,18 @@ function gen_u_fow_edges(
 end
 
 function gen_w_fow_edges(
-  last_gedge_idx :: E,
-  y2node_idx     :: Vector{N},
-  per_dim_disc   :: Vector{S},
+  glo_nodes :: Vector{Node{S, N}},
+  last_gedge_idx :: E
 ) :: Tuple{Vector{Edge{N, E}}, E} where {S, N, E}
-  @assert length(per_dim_disc) <= length(y2node_idx)
-  @assert length(y2node_idx) == last(per_dim_disc) # the sink is always last
-  lgei = last_gedge_idx
-  sink_idx = last(y2node_idx)
   w_fow_edges = Vector{Edge{N, E}}()
-  for i = 1:(length(per_dim_disc) - 1)
-    edge = Edge(lgei += 1, y2node_idx[per_dim_disc[i]], sink_idx, zero(E))
+  lgei = last_gedge_idx
+  isempty(glo_nodes) && return w_fow_edges, lgei
+  @assert iszero(glo_nodes[1].per)
+  @assert isone(length(unique!(map(gn -> gn.par, glo_nodes))))
+  @assert isone(length(unique!(map(gn -> gn.ori, glo_nodes))))
+  sink_idx = glo_nodes[end].idx
+  for node = @view glo_nodes[2:end-1]
+    edge = Edge(lgei += 1, node.idx, sink_idx, zero(E))
     (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
     push!(w_fow_edges, edge)
   end
@@ -294,7 +310,7 @@ function gen_closed_flow(
     # the cuts made.
   PER :: S # The size of the flow/plate in the dimension that is perpendicular
     # to the cuts made.
-) :: Tuple{Vector{S}, Vector{N}, Vector{Edge{N, E}}, N, E} where {D, S, N, E}
+) :: Tuple{Vector{Node{S, N}}, Vector{N}, Vector{Edge{N, E}}, N, E} where {D, S, N, E}
   # Abbreviate.
   lgni = last_gnode_idx
   lgei = last_gedge_idx
@@ -322,11 +338,11 @@ function gen_closed_flow(
   end
 
   # rr_fow_edges: not raw anymore, but yet restricted
-  disc_per, r_fow_edges, lgni, lgei = globalize!(
+  glo_nodes, r_fow_edges, lgni, lgei = globalize!(
     y2node_idx, rr_fow_edges, lgni, lgei, lw2pii, ppo2gbedge_idx, ori, PAR
   )
 
-  w_fow_edges, lgei = gen_w_fow_edges(lgei, y2node_idx, disc_per)
+  w_fow_edges, lgei = gen_w_fow_edges(glo_nodes, lgei)
 
   # TODO: make the first version without the unrestricted edges and check if
   # it get the same values as the old_bender. Execute against A5 and
@@ -340,24 +356,43 @@ function gen_closed_flow(
   # NOTE: symmetries may be broken with extra constraints. If some edge e1 is
   # used, then no edge e2, that is both "larger" than that e1 and that may be
   # reached after traversing e1, may be used.
-  # gen_u_fow_edges()
 
-  #u_fow_edges, lgei = gen_w_fow_edges(lgei, y2node_idx, disc_per)
-  #disc_per, y2node_idx, vcat(r_fow_edges, w_fow_edges, u_fow_edges), lgni, lgei
-  disc_per, y2node_idx, append!(r_fow_edges, w_fow_edges), lgni, lgei
+  #=
+  u_fow_edges, lgei = gen_u_fow_edges(
+    glo_nodes, lgei, ppo2gbedge_idx
+  )
+  glo_nodes, vcat(r_fow_edges, w_fow_edges, u_fow_edges), lgni, lgei
+  =#
+  glo_nodes, y2node_idx, append!(r_fow_edges, w_fow_edges), lgni, lgei
 end
+
+#= Completely inutile. We need to be able to traverse the per dimension.
+function add_nodes_to_dict(
+  d :: Dict{Tuple{S, S, UInt8}, N},
+  nodes :: Vector{Node{S, N}}
+) :: Dict{Tuple{S, S, UInt8}, N}
+  for node in nodes
+    ppo = (node.par, node.per, node.ori)
+    @assert !haskey(d, ppo)
+    d[ppo] = node.idx
+  end
+
+  d
+end
+=#
 
 function gen_all_edges(
   ::Type{N}, ::Type{E},
   d :: Vector{D}, l :: Vector{S}, w :: Vector{S},
   L :: S, W :: S
-) :: Tuple{Vector{Edge{N, E}}, N, E} where {D, S, N, E} 
+) :: Tuple{Vector{Node{S, N}}, Vector{Edge{N, E}}, N, E} where {D, S, N, E} 
   @assert length(d) == length(l)
   @assert length(d) == length(w)
   n = length(d)
   lgni = zero(N)
   lgei = convert(E, n + 3) # the first n + 2 edge indexes are reserved
   edges = Vector{Edge{N, E}}()
+  nodes = Vector{Node{S, N}}()
   lw2pii = fill(zero(E), L, W)
   for pii = 1:n
     @assert iszero(lw2pii[l[pii], w[pii]])
@@ -365,24 +400,28 @@ function gen_all_edges(
   end
   max_LW = max(L, W)
   ppo2gbedge_idx = fill(zero(E), max_LW, max_LW, 2)
+  origin_vf_by_L = fill(zero(N), L)
+  origin_hf_by_W = fill(zero(N), W)
+  vflows_by_L = [Vector{N}() for _ = 1:L]
+  hflows_by_W = [Vector{N}() for _ = 1:W]
 
   # Mark the two root backward edges to be created at the end
   ppo2gbedge_idx[L, W, 0x01] = n + 1
   ppo2gbedge_idx[W, L, 0x02] = n + 3
 
-  origin_vf_by_L = fill(zero(N), L)
-  origin_hf_by_W = fill(zero(N), W)
   # Create the cutting of the root plate with the default orientation
   # (vertical).
-  # NOTE: disc_W always have W at the end (even if it is not a linear
-  # combination of the pieces, and never have zero at the start, even
-  # if it is the empty combination).
-  origin_vf_by_L[L] = lgni + 1 # NOT lgni += 1, this is a prediction
-  disc_W, y2vroot_nodes, vroot_edges, lgni, lgei = gen_closed_flow(
+  vroot_nodes, vflows_by_L[L], vroot_edges, lgni, lgei = gen_closed_flow(
     lgni, lgei, lw2pii, ppo2gbedge_idx, d, l, w, 0x01, L, W
   )
+  @assert !isempty(vroot_nodes)
+  @assert iszero(vroot_nodes[1].per)
+  @assert vroot_nodes[1].par == L
+  origin_vf_by_L[L] = vroot_nodes[1].idx
+  disc_W = map(n -> n.per, vroot_nodes)
   #@show vroot_edges
   append!(edges, vroot_edges)
+  append!(nodes, vroot_nodes)
 
   #for ppo in CartesianIndices(ppo2gbedge_idx) # DEBUG PRINT FOR
   #  iszero(ppo2gbedge_idx[ppo]) && continue
@@ -397,12 +436,14 @@ function gen_all_edges(
   ))
   #@show last(edges), @__LINE__
 
-  origin_hf_by_W[W] = lgni + 1 # NOT lgni += 1, this is a prediction
-  disc_L, y2hroot_nodes, hroot_edges, lgni, lgei = gen_closed_flow(
+  hroot_nodes, hflows_by_W[W], hroot_edges, lgni, lgei = gen_closed_flow(
     lgni, lgei, lw2pii', ppo2gbedge_idx, d, w, l, 0x02, W, L
   )
+  origin_hf_by_W[W] = hroot_nodes[1].idx
+  disc_L = map(n -> n.per, hroot_nodes)
   #@show hroot_edges
   append!(edges, hroot_edges)
+  append!(nodes, hroot_nodes)
 
   #for ppo in CartesianIndices(ppo2gbedge_idx) # DEBUG PRINT FOR
   #  iszero(ppo2gbedge_idx[ppo]) && continue
@@ -410,33 +451,30 @@ function gen_all_edges(
   #  @show ppo2gbedge_idx[ppo]
   #end
   
-  vflows_by_L = [Vector{N}() for _ = 1:L]
-  hflows_by_W = [Vector{N}() for _ = 1:W]
-  vflows_by_L[L] = y2vroot_nodes
-  hflows_by_W[W] = y2hroot_nodes
-
-  for L_ in @view disc_L[1:end-1]#setdiff(unique(l), L)#
-    origin_vf_by_L[L_] = lgni + 1 # NOT lgni += 1, here we predict the origin
-    _, vflows_by_L[L_], vedges, lgni, lgei = gen_closed_flow(
+  for L_ in @view disc_L[2:end-1]#setdiff(unique(l), L)#
+    vnodes, vflows_by_L[L_], vedges, lgni, lgei = gen_closed_flow(
       lgni, lgei, lw2pii, ppo2gbedge_idx, d, l, w, 0x01, L_, W
     )
+    origin_vf_by_L[L_] = vnodes[1].idx
     append!(edges, vedges)
+    append!(nodes, vnodes)
   end
-  for W_ in @view disc_W[1:end-1]#setdiff(unique(w), W)#
-    origin_hf_by_W[W_] = lgni + 1 # NOT lgni += 1, here we predict the origin
-    _, hflows_by_W[W_], hedges, lgni, lgei = gen_closed_flow(
+  for W_ in @view disc_W[2:end-1]#setdiff(unique(w), W)#
+    hnodes, hflows_by_W[W_], hedges, lgni, lgei = gen_closed_flow(
       lgni, lgei, lw2pii', ppo2gbedge_idx, d, w, l, 0x02, W_, L
     )
+    origin_hf_by_W[W_] = hnodes[1].idx
     append!(edges, hedges)
+    append!(nodes, hnodes)
   end
 
   # TO CREATE THE CIRCULATION EDGES AT THE END, WE NEED TO KNOW THE NAME OF
   # THE NODES FOR THE ORIGIN OF EVERY FLOW WITH PAR WITH SOME SIZE, AND THE
   # INTERNAL NODE 
-  @show vflows_by_L
-  @show origin_vf_by_L
-  @show hflows_by_W
-  @show origin_hf_by_W
+  #@show vflows_by_L
+  #@show origin_vf_by_L
+  #@show hflows_by_W
+  #@show origin_hf_by_W
   for ppo in CartesianIndices(ppo2gbedge_idx)
     pari, peri, orii = ppo[1], ppo[2], ppo[3]
     iszero(ppo2gbedge_idx[ppo]) && continue
@@ -487,7 +525,7 @@ function gen_all_edges(
   #   (and the second is always the source), but none of those peculiarities
   #   prevent us of modeling the same way waste arcs are modeled.
   #
-  edges, lgni, lgei
+  nodes, edges, lgni, lgei
 end
 
 end # module

@@ -60,6 +60,7 @@ function build_model(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
   L :: S, W :: S
 ) where {D, S, P}
+  # TODO: fix (L, W, l, w, d) = (20, 5, [20, 4, 18], [4, 5, 2], [1, 1, 1])
   @assert length(d) == length(l)
   @assert length(d) == length(w)
   @assert length(d) == length(p)
@@ -69,7 +70,7 @@ function build_model(
   # TODO: check if N and E will be bubbled up.
   # NOTE: the profits are not needed, the first num_piece_types edges will
   # be dummy edges that have the profit value in the objective function.
-  edges_data, last_gnode_idx, last_gedge_idx = gen_all_edges(
+  nodes_data, edges_data, last_gnode_idx, last_gedge_idx = gen_all_edges(
     N, E, d, l, w, L, W
   )
   #@show edges_data
@@ -133,7 +134,7 @@ function build_model(
   # Order the edges by their index.
   sort!(edges_data, by = e -> e.indx)
 
-  model, edges_data
+  model, nodes_data, edges_data
 end # build_model_no_symmbreak
 
 end # module
