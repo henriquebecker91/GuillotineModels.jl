@@ -49,12 +49,18 @@ using FlowDP
 # NOTE: let us define the following special plate codes:
 #   0 - The plate is waste. This may only appear at the CP index of cut_edges.
 #   1:n - The plate is a final plate corresponding to a piece index.
-#   n+1 - The original plate default cutting (vertical) backward edge.
-#   n+2 - The original plate vertical forward edge that takes the whole plate
+#   n+1 - A dummy edge that is upper bounded at one and allows one extra flow
+#     to the original plate default cutting (vertical) backward edge (i.e.,
+#     n+2). Necessary to avoid n+2 to be restricted by a possible edge that
+#     cuts the whole original plate alternative cutting (horizontal). In other
+#     words, without this, if a piece has the same length as the plate, then
+#     the model has a deadlock problem, and will give a zero objective problem.
+#   n+2 - The original plate default cutting (vertical) backward edge.
+#   n+3 - The original plate vertical forward edge that takes the whole plate
 #     and allows it to be horizontally (i.e., allow more flow to n+3).
-#   n+3 - The original plate alternative cutting (horizontal) backward edge.
+#   n+4 - The original plate alternative cutting (horizontal) backward edge.
 #     It is allowed by cutting n+2.
-#   n+4:m - The remaining intermediary plates.
+#   n+5:m - The remaining intermediary plates.
 #
 function build_model(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
@@ -88,6 +94,12 @@ function build_model(
     push!(tail2indxs[e.tail], e.indx)
     !iszero(e.back) && push!(back2indxs[e.back], e.indx)
   end
+  # Create the dummy edge that enables the "original plate default orientation
+  # backward edge" to pass one unit of flow.
+  dummy_vroot_enabler = num_piece_types + one(D)
+  vroot_back_edge = dummy_vroot_enabler + one(D)
+  #@assert isempty(back2indxs[vroot_back_edge])
+  push!(back2indxs[vroot_back_edge], dummy_vroot_enabler)
 
   @variable(model, edge[1:last_gedge_idx] >= 0, Int)
 
@@ -95,9 +107,12 @@ function build_model(
     sum(p[pii] * edge[pii] for pii = 1:num_piece_types)
   )
 
-  vroot_cir_edge_idx = num_piece_types + one(D)
+  # There is just one of the original plate. Sets the dummy edge to one and
+  # consequently allow one unit of flow to the original plate default
+  # orientation
+  # backward edge.
+  @constraint(model, edge[dummy_vroot_enabler] == 1)
 
-  @constraint(model, edge[vroot_cir_edge_idx] == 1)
   for i = 1:last_gnode_idx
     if isempty(head2indxs[i]) || isempty(tail2indxs[i])
       @show i
@@ -131,6 +146,10 @@ function build_model(
   for i = 1:num_piece_types
     push!(edges_data, Edge{N, E}(i, zero(N), zero(N), zero(E)))
   end
+  # Create the dummy edge for the number of original plates.
+  push!(edges_data, Edge{N, E}(
+    num_piece_types + 1, zero(N), zero(N), num_piece_types + 2
+  ))
   # Order the edges by their index.
   sort!(edges_data, by = e -> e.indx)
 

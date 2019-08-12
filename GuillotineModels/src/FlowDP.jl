@@ -225,8 +225,8 @@ function gen_u_fow_edges(
   u_fow_edges = Vector{Edge{N, E}}()
   isempty(glo_nodes) && return u_fow_edges, last_gedge_idx
   @assert iszero(glo_nodes[1].per)
-  @assert isone(unique!(map(gn -> gn.par, glo_nodes)))
-  @assert isone(unique!(map(gn -> gn.ori, glo_nodes)))
+  @assert isone(length(unique!(map(gn -> gn.par, glo_nodes))))
+  @assert isone(length(unique!(map(gn -> gn.ori, glo_nodes))))
   lgei = last_gedge_idx
   for node in @view glo_nodes[2:end-1]
     bedge_ppo = (node.per, node.par, 0x03 - node.ori)
@@ -241,8 +241,12 @@ function gen_u_fow_edges(
   end
   for i = 2:(length(glo_nodes)-1)
     for j = (i+1):length(glo_nodes)
-      @assert node[j].per > node[i].per
-      bedge_ppo = (node[j].per - node[i].per, node.par, 0x03 - node.ori)
+      @assert glo_nodes[j].per > glo_nodes[i].per
+      bedge_ppo = (
+        glo_nodes[j].per - glo_nodes[i].per,
+        glo_nodes[1].par, # all par are the same
+        0x03 - glo_nodes[1].ori # all ori are the same
+      )
       if iszero(ppo2gbedge_idx[bedge_ppo...])
         ppo2gbedge_idx[bedge_ppo...] = (lgei += one(E))
       end
@@ -250,7 +254,7 @@ function gen_u_fow_edges(
 
       edge = Edge(
         # TODO: this does not work, those are waste edges, not use edges
-        lgei += 1, node[i].idx, node[j].idx, back
+        lgei += 1, glo_nodes[i].idx, glo_nodes[j].idx, back
       )
       (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
       push!(u_fow_edges, edge)
@@ -356,12 +360,11 @@ function gen_closed_flow(
   # NOTE: symmetries may be broken with extra constraints. If some edge e1 is
   # used, then no edge e2, that is both "larger" than that e1 and that may be
   # reached after traversing e1, may be used.
-
   #=
   u_fow_edges, lgei = gen_u_fow_edges(
     glo_nodes, lgei, ppo2gbedge_idx
   )
-  glo_nodes, vcat(r_fow_edges, w_fow_edges, u_fow_edges), lgni, lgei
+  glo_nodes, y2node_idx, vcat(r_fow_edges, w_fow_edges, u_fow_edges), lgni, lgei
   =#
   glo_nodes, y2node_idx, append!(r_fow_edges, w_fow_edges), lgni, lgei
 end
@@ -390,7 +393,7 @@ function gen_all_edges(
   @assert length(d) == length(w)
   n = length(d)
   lgni = zero(N)
-  lgei = convert(E, n + 3) # the first n + 2 edge indexes are reserved
+  lgei = convert(E, n + 4) # the first n + 4 edge indexes are reserved
   edges = Vector{Edge{N, E}}()
   nodes = Vector{Node{S, N}}()
   lw2pii = fill(zero(E), L, W)
@@ -406,8 +409,8 @@ function gen_all_edges(
   hflows_by_W = [Vector{N}() for _ = 1:W]
 
   # Mark the two root backward edges to be created at the end
-  ppo2gbedge_idx[L, W, 0x01] = n + 1
-  ppo2gbedge_idx[W, L, 0x02] = n + 3
+  ppo2gbedge_idx[L, W, 0x01] = n + 2
+  ppo2gbedge_idx[W, L, 0x02] = n + 4
 
   # Create the cutting of the root plate with the default orientation
   # (vertical).
@@ -432,7 +435,7 @@ function gen_all_edges(
   # Create the forward edge that inverts the default orientation
   # of the root plate.
   push!(edges, Edge{N, E}(
-    n + 2, origin_vf_by_L[L], lgni, n + 3
+    n + 3, origin_vf_by_L[L], lgni, n + 4
   ))
   #@show last(edges), @__LINE__
 
