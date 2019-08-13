@@ -454,7 +454,8 @@ function gen_all_edges(
   #  @show ppo2gbedge_idx[ppo]
   #end
   
-  for L_ in @view disc_L[2:end-1]#setdiff(unique(l), L)#
+  #unique_lw 
+  for L_ in setdiff(unique(l), [L])#@view disc_L[2:end-1]#
     vnodes, vflows_by_L[L_], vedges, lgni, lgei = gen_closed_flow(
       lgni, lgei, lw2pii, ppo2gbedge_idx, d, l, w, 0x01, L_, W
     )
@@ -462,7 +463,7 @@ function gen_all_edges(
     append!(edges, vedges)
     append!(nodes, vnodes)
   end
-  for W_ in @view disc_W[2:end-1]#setdiff(unique(w), W)#
+  for W_ in setdiff(unique(w), [W])#@view disc_W[2:end-1]#
     hnodes, hflows_by_W[W_], hedges, lgni, lgei = gen_closed_flow(
       lgni, lgei, lw2pii', ppo2gbedge_idx, d, w, l, 0x02, W_, L
     )
