@@ -83,7 +83,7 @@ function gen_rr_fow_edges!(
     marked[y] = one(N)
     for _ = 2:min(di, L ÷ li)
       y_ = y
-      push!(edges, (y_, y += l[1]))
+      push!(edges, (y_, y += li))
       marked[y] = one(N)
     end
   end
@@ -206,6 +206,7 @@ function globalize!(
     yd = y2 - y1
     max_par = size(lw2pii, 1)
     max_per = size(lw2pii, 2)
+    #@show PAR, yd, max_par, max_per, ori
     if PAR <= max_par && yd <= max_per && !iszero(lw2pii[PAR, yd])
       indx = (lgei += one(E))
       edge = Edge{N, E}(indx, head, tail, lw2pii[PAR, yd])
@@ -274,10 +275,12 @@ function gen_w_fow_edges(
   @assert isone(length(unique!(map(gn -> gn.par, glo_nodes))))
   @assert isone(length(unique!(map(gn -> gn.ori, glo_nodes))))
   sink_idx = glo_nodes[end].idx
-  for node = @view glo_nodes[2:end-1]
-    edge = Edge(lgei += 1, node.idx, sink_idx, zero(E))
-    (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
-    push!(w_fow_edges, edge)
+  for i = 2:(length(glo_nodes)-1)
+    for j = (i+1):length(glo_nodes)
+      edge = Edge(lgei += 1, glo_nodes[i].idx, glo_nodes[j].idx, zero(E))
+      (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
+      push!(w_fow_edges, edge)
+    end
   end
   w_fow_edges, lgei
 end
@@ -334,6 +337,7 @@ function gen_closed_flow(
   y2node_idx, rr_fow_edges = gen_rr_fow_edges!(
     N, d, per, PER
   )
+  #@show rr_fow_edges
 
   dummy_sink = false
   if iszero(y2node_idx[PER])
@@ -482,7 +486,7 @@ function gen_all_edges(
   for ppo in CartesianIndices(ppo2gbedge_idx)
     pari, peri, orii = ppo[1], ppo[2], ppo[3]
     iszero(ppo2gbedge_idx[ppo]) && continue
-    @show ppo
+    #@show ppo
     if orii == 0x01
       while !iszero(peri) && iszero(vflows_by_L[pari][peri]); peri -= 1; end
       @assert !iszero(peri)
