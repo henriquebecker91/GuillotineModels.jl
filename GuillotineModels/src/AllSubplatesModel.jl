@@ -1,8 +1,8 @@
-module AllSubplatesModel
-
 using JuMP
 include("GuillotinePlatesDP.jl")
 using .GuillotinePlatesDP
+
+module AllSubplatesModel
 
 # HIGH LEVEL EXPLANATION OF THE MODEL
 #

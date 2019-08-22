@@ -220,6 +220,7 @@ end
 # TODO: this is generating all unrestricted arcs again, solve this
 function gen_u_fow_edges(
   glo_nodes :: Vector{Node{S, N}},
+  y2node_idx :: Vector{N},
   last_gedge_idx :: E,
   ppo2gbedge_idx :: Array{E, 3}
 ) :: Tuple{Vector{Edge{N, E}}, E} where {S, N, E}
@@ -243,8 +244,11 @@ function gen_u_fow_edges(
   for i = 2:(length(glo_nodes)-1)
     for j = (i+1):length(glo_nodes)
       @assert glo_nodes[j].per > glo_nodes[i].per
+      per_dist = glo_nodes[j].per - glo_nodes[i].per
+      per_dist > glo_nodes[i].per && break
+      iszero(y2node_idx[per_dist]) && continue
       bedge_ppo = (
-        glo_nodes[j].per - glo_nodes[i].per,
+        per_dist,
         glo_nodes[1].par, # all par are the same
         0x03 - glo_nodes[1].ori # all ori are the same
       )
@@ -252,9 +256,7 @@ function gen_u_fow_edges(
         ppo2gbedge_idx[bedge_ppo...] = (lgei += one(E))
       end
       back = ppo2gbedge_idx[bedge_ppo...]
-
       edge = Edge(
-        # TODO: this does not work, those are waste edges, not use edges
         lgei += 1, glo_nodes[i].idx, glo_nodes[j].idx, back
       )
       (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
@@ -274,13 +276,17 @@ function gen_w_fow_edges(
   @assert iszero(glo_nodes[1].per)
   @assert isone(length(unique!(map(gn -> gn.par, glo_nodes))))
   @assert isone(length(unique!(map(gn -> gn.ori, glo_nodes))))
-  sink_idx = glo_nodes[end].idx
+  #sink_idx = glo_nodes[end].idx
+  # Start from the second position, to avoid wasting the whole plate (if
+  # the whole plate is to be wasted, this should happen at higher level).
+  # Add waste arcs from every node to the next. Maybe it could be smarter
+  # than this, but at least is O(n).
   for i = 2:(length(glo_nodes)-1)
-    for j = (i+1):length(glo_nodes)
-      edge = Edge(lgei += 1, glo_nodes[i].idx, glo_nodes[j].idx, zero(E))
-      (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
-      push!(w_fow_edges, edge)
-    end
+    #for j = (i+1):length(glo_nodes)
+    edge = Edge(lgei += 1, glo_nodes[i].idx, glo_nodes[i+1].idx, zero(E))
+    (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
+    push!(w_fow_edges, edge)
+    #end
   end
   w_fow_edges, lgei
 end
@@ -364,13 +370,13 @@ function gen_closed_flow(
   # NOTE: symmetries may be broken with extra constraints. If some edge e1 is
   # used, then no edge e2, that is both "larger" than that e1 and that may be
   # reached after traversing e1, may be used.
-  #=
   u_fow_edges, lgei = gen_u_fow_edges(
-    glo_nodes, lgei, ppo2gbedge_idx
+    glo_nodes, y2node_idx, lgei, ppo2gbedge_idx
   )
   glo_nodes, y2node_idx, vcat(r_fow_edges, w_fow_edges, u_fow_edges), lgni, lgei
-  =#
+  #=
   glo_nodes, y2node_idx, append!(r_fow_edges, w_fow_edges), lgni, lgei
+  =#
 end
 
 #= Completely inutile. We need to be able to traverse the per dimension.
@@ -459,7 +465,9 @@ function gen_all_edges(
   #end
   
   #unique_lw 
-  for L_ in setdiff(unique(l), [L])#@view disc_L[2:end-1]#
+  @show disc_L
+  @show disc_W
+  for L_ in @view disc_L[2:end-1]#setdiff(unique(l), [L])#
     vnodes, vflows_by_L[L_], vedges, lgni, lgei = gen_closed_flow(
       lgni, lgei, lw2pii, ppo2gbedge_idx, d, l, w, 0x01, L_, W
     )
@@ -467,7 +475,7 @@ function gen_all_edges(
     append!(edges, vedges)
     append!(nodes, vnodes)
   end
-  for W_ in setdiff(unique(w), [W])#@view disc_W[2:end-1]#
+  for W_ in @view disc_W[2:end-1]#setdiff(unique(w), [W])#
     hnodes, hflows_by_W[W_], hedges, lgni, lgei = gen_closed_flow(
       lgni, lgei, lw2pii', ppo2gbedge_idx, d, w, l, 0x02, W_, L
     )
@@ -475,6 +483,8 @@ function gen_all_edges(
     append!(edges, hedges)
     append!(nodes, hnodes)
   end
+  @show vflows_by_L
+  @show hflows_by_W
 
   # TO CREATE THE CIRCULATION EDGES AT THE END, WE NEED TO KNOW THE NAME OF
   # THE NODES FOR THE ORIGIN OF EVERY FLOW WITH PAR WITH SOME SIZE, AND THE
@@ -486,7 +496,7 @@ function gen_all_edges(
   for ppo in CartesianIndices(ppo2gbedge_idx)
     pari, peri, orii = ppo[1], ppo[2], ppo[3]
     iszero(ppo2gbedge_idx[ppo]) && continue
-    #@show ppo
+    @show ppo
     if orii == 0x01
       while !iszero(peri) && iszero(vflows_by_L[pari][peri]); peri -= 1; end
       @assert !iszero(peri)
