@@ -147,7 +147,7 @@ function build_model_no_symmbreak(
   # amount that can be cut from the original plate.
   for pli in 2:num_plate_types
     @constraint(model,
-      sum(cuts_made[parent2cut[pli]]) <= pli_lwb[pli][3]
+      sum(picuts[pli2pair[pli]]) + sum(cuts_made[parent2cut[pli]]) <= pli_lwb[pli][3]
     )
   end
 
