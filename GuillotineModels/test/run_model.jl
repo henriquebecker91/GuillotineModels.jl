@@ -71,12 +71,14 @@ function read_build_solve_and_print(
     if p_args["break-hvcut-symmetry"]
       _, hvcuts, pli2lwsb, _, _ = AllSubplatesModel.build_model_with_symmbreak(
         m, d, p, l, w, L, W;
-        only_binary = p_args["only-binary-variables"]
+        only_binary = p_args["only-binary-variables"],
+        use_c25 = p_args["use-c25"]
       )
     else
       _, hvcuts, pli_lwb, np = AllSubplatesModel.build_model_no_symmbreak(
         m, d, p, l, w, L, W;
-        only_binary = p_args["only-binary-variables"]
+        only_binary = p_args["only-binary-variables"],
+        use_c25 = p_args["use-c25"]
       )
     end
   end
@@ -208,6 +210,9 @@ function parse_script_args(args = ARGS)
         nargs = 0
       "--only-binary-variables"
         help = "CAUTION DO NOT GUARANTEE OPTIMALITY FOR NOW, IS HEURISTIC"
+        nargs = 0
+      "--use-c25"
+        help = "add the tightening constraints 2.5 (ignored by flow)"
         nargs = 0
       "--flow-model"
         help = "use the flow model instead of subplate model (ignore the --break-hvcut-symmetry and --only-binary-variables flags)"
