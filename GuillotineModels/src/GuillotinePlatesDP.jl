@@ -40,6 +40,8 @@ function SortedLinkedLW(::Type{D}, l :: Vector{S}, w :: Vector{S}) where {D, S}
   SortedLinkedLW(l, w, sl, sw, sli2pii, swi2pii, pii2sli, pii2swi)
 end
 
+# TODO: break this method into two (like it was done for the flow model)
+#       one for reducing the input, other to discretize only over one dimension
 # Intelligent discretization method that: (1) takes demand into account;
 # (2) takes the dimension that is not being discretized into account. It can
 # also be used to discover which lengths are only shared by single pieces
@@ -55,7 +57,7 @@ end
 #   combinations.
 function becker2019_discretize(
   d :: Vector{D}, l :: Vector{S}, w :: Vector{S}, L :: S, W :: S;
-  only_single_pieces = false
+  only_single_pieces = false, ignore_W = false
 ) where {D, S}
   # If two pieces have the same dimension they should be merged into a single
   # piece (summing their demands) for performance reasons.
@@ -67,7 +69,7 @@ function becker2019_discretize(
   d_, l_, w_ = similar.((d, l, w))
   j = 0
   for i in 1:N
-    if l[i] <= L && w[i] <= W
+    if l[i] <= L && (ignore_W || w[i] <= W)
       j += 1
       d_[j] = d[i]
       l_[j] = l[i]
@@ -200,17 +202,18 @@ end
 # TODO: internal change. The symmetry tag dimension of plis should be the
 # first one, given how columnwise memory layout works.
 function gen_cuts_sb(
-  ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S
+  ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
+  ignore_2th_dim = false
 ) where {D, S, P}
   l = sllw.l
   w = sllw.w
   @assert length(d) == length(l)
   @assert length(d) == length(w)
   only_single_l = becker2019_discretize(
-    d, l, w, L, W; only_single_pieces = true
+    d, l, w, L, W; only_single_pieces = true, ignore_2th_dim = ignore_2th_dim
   )
   only_single_w = becker2019_discretize(
-    d, w, l, W, L; only_single_pieces = true
+    d, w, l, W, L; only_single_pieces = true, ignore_2th_dim = ignore_2th_dim
   )
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W) * 3
@@ -314,7 +317,9 @@ function gen_cuts_sb(
         push!(hcuts, (pli, plis[y, plw, 2], plis[pll - y, plw, 3]))
       end
     elseif pls == 1 || pls == 3
-      for y in becker2019_discretize(d, l, w, pll ÷ 2, plw)
+      for y in becker2019_discretize(
+        d, l, w, pll ÷ 2, plw; ignore_2th_dim = ignore_2th_dim
+      )
         #y > pll ÷ 2 && break
         @assert plw >= min_piw
         @assert y >= min_pil
@@ -345,7 +350,9 @@ function gen_cuts_sb(
         push!(vcuts, (pli, plis[pll, x, 1], plis[pll, plw - x, 3]))
       end
     elseif pls == 2 || pls == 3
-      for x in becker2019_discretize(d, w, l, plw ÷ 2, pll)
+      for x in becker2019_discretize(
+        d, w, l, plw ÷ 2, pll; ignore_2th_dim = ignore_2th_dim
+      )
         #x > plw ÷ 2 && break
         @assert pll >= min_pil
         @assert x >= min_piw
@@ -384,7 +391,8 @@ function gen_cuts_sb(
 end
 
 function gen_cuts(
-  ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S
+  ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
+  ignore_2th_dim = false
 ) where {D, S, P}
   l = sllw.l
   w = sllw.w
@@ -434,7 +442,9 @@ function gen_cuts(
       end
     end
     #for y in dl
-    for y in becker2019_discretize(d, l, w, pll ÷ 2, plw)
+    for y in becker2019_discretize(
+      d, l, w, pll ÷ 2, plw; ignore_W = ignore_2th_dim
+    )
       #y > pll ÷ 2 && break
       @assert plw >= min_piw
       @assert y >= min_pil
@@ -450,7 +460,9 @@ function gen_cuts(
       push!(hnnn, (pli, plis[y, plw], plis[pll - y, plw]))
     end
     #for x in dw
-    for x in becker2019_discretize(d, w, l, plw ÷ 2, pll)
+    for x in becker2019_discretize(
+      d, w, l, plw ÷ 2, pll; ignore_W = ignore_2th_dim
+    )
       #x > plw ÷ 2 && break
       @assert pll >= min_pil
       @assert x >= min_piw
