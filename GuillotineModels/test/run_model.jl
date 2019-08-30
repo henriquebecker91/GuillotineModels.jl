@@ -73,14 +73,16 @@ function read_build_solve_and_print(
         m, d, p, l, w, L, W;
         only_binary = p_args["only-binary-variables"],
         use_c25 = p_args["use-c25"],
-        ignore_2th_dim = p_args["ignore-2th-dim"]
+        ignore_2th_dim = p_args["ignore-2th-dim"],
+        ignore_d = p_args["ignore-d"]
       )
     else
       _, hvcuts, pli_lwb, np = AllSubplatesModel.build_model_no_symmbreak(
         m, d, p, l, w, L, W;
         only_binary = p_args["only-binary-variables"],
         use_c25 = p_args["use-c25"],
-        ignore_2th_dim = p_args["ignore-2th-dim"]
+        ignore_2th_dim = p_args["ignore-2th-dim"],
+        ignore_d = p_args["ignore-d"]
       )
     end
   end
@@ -217,7 +219,10 @@ function parse_script_args(args = ARGS)
         help = "add the tightening constraints 2.5 (ignored by flow)"
         nargs = 0
       "--ignore-2th-dim"
-        help = "worsen the discretization, used to measure impact (not used by flow)"
+        help = "ignore the dimension not being discretized during discretization, used to measure impact (does not affect flow)"
+        nargs = 0
+      "--ignore-d"
+        help = "ignore the demand information during discretization, used to measure impact (does not affect flow)"
         nargs = 0
       "--flow-model"
         help = "use the flow model instead of subplate model (ignore the --break-hvcut-symmetry and --only-binary-variables flags)"

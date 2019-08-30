@@ -57,7 +57,7 @@ end
 #   combinations.
 function becker2019_discretize(
   d :: Vector{D}, l :: Vector{S}, w :: Vector{S}, L :: S, W :: S;
-  only_single_pieces = false, ignore_W = false
+  only_single_pieces = false, ignore_W = false, ignore_d = false
 ) where {D, S}
   # If two pieces have the same dimension they should be merged into a single
   # piece (summing their demands) for performance reasons.
@@ -88,7 +88,7 @@ function becker2019_discretize(
   # Mark the cuts of the first piece.
   !only_single_pieces && (marks[l[1]] = true)
   y = l[1] # y: used to iterate capacity, inherited from knapsack papers
-  for _ = 2:min(d[1], L ÷ l[1])
+  for _ = 2:(ignore_d ? L ÷ l[1] : min(d[1], L ÷ l[1]))
     marks[y += l[1]] = true
   end
   # If the lengths of the single pieces are not marked, the pairs are needed.
@@ -106,7 +106,7 @@ function becker2019_discretize(
       if marks[y]
         yrli = y + li # yrli: y + repeated lengths of i
         marks[yrli] = true
-        for r = 2:di
+        for r = 2:(ignore_d ? L : di)
           yrli += li
           yrli > L && break
           marks[yrli] = true
@@ -118,7 +118,7 @@ function becker2019_discretize(
     # no index zero). 
     y = li
     !only_single_pieces && (marks[y] = true)
-    for _ = 2:min(di, L ÷ li)
+    for _ = 2:(ignore_d ? L ÷ li : min(di, L ÷ li))
       marks[y += li] = true
     end
   end
@@ -203,17 +203,20 @@ end
 # first one, given how columnwise memory layout works.
 function gen_cuts_sb(
   ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
-  ignore_2th_dim = false
+  ignore_2th_dim = false, ignore_d = false
 ) where {D, S, P}
+  (ignore_d || ignore_2th_dim) && @error "ignore_2th_dimm and ignore_d are not yet implemented for gen_cuts_sb, also, first improve the performance by memoizing the discretizations"
   l = sllw.l
   w = sllw.w
   @assert length(d) == length(l)
   @assert length(d) == length(w)
   only_single_l = becker2019_discretize(
-    d, l, w, L, W; only_single_pieces = true, ignore_2th_dim = ignore_2th_dim
+    d, l, w, L, W; only_single_pieces = true, ignore_W = ignore_2th_dim,
+    ignore_d = ignore_d
   )
   only_single_w = becker2019_discretize(
-    d, w, l, W, L; only_single_pieces = true, ignore_2th_dim = ignore_2th_dim
+    d, w, l, W, L; only_single_pieces = true, ignore_W = ignore_2th_dim,
+    ignore_d = ignore_d
   )
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W) * 3
@@ -392,7 +395,7 @@ end
 
 function gen_cuts(
   ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
-  ignore_2th_dim = false
+  ignore_2th_dim = false, ignore_d = false
 ) where {D, S, P}
   l = sllw.l
   w = sllw.w
@@ -400,8 +403,6 @@ function gen_cuts(
   @assert length(d) == length(w)
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W)
-  #dl = becker2019_discretize(d, l, L ÷ 2)
-  #dw = becker2019_discretize(d, w, W ÷ 2)
   min_pil = minimum(l)
   min_piw = minimum(w)
   # If (n1, n2, n3) is in nnn, then n1 may be partitioned in n2 and n3.
@@ -429,6 +430,16 @@ function gen_cuts(
   push!(next, (L, W, one(P)))
   # n: The amount of plates (the index of the highest plate type).
   n = one(P) # there is already the original plate
+  # Memoized discretizations. The discretized lengths for every plate width.
+  # The discretized widths for every plate length.
+  dls = [Vector{S}() for _ = 1:W]
+  dws = [Vector{S}() for _ = 1:L]
+  dl = dls[W] = becker2019_discretize(
+    d, l, w, L ÷ 2, W; ignore_W = true, ignore_d = ignore_d
+  )
+  dw = dws[L] = becker2019_discretize(
+    d, w, l, W ÷ 2, L; ignore_W = true, ignore_d = ignore_d
+  )
   while next_idx <= length(next)
     pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
     next_idx += 1
@@ -441,11 +452,14 @@ function gen_cuts(
         push!(np, (pli, pii))
       end
     end
-    #for y in dl
-    for y in becker2019_discretize(
-      d, l, w, pll ÷ 2, plw; ignore_W = ignore_2th_dim
-    )
-      #y > pll ÷ 2 && break
+    if !ignore_2th_dim
+      isempty(dls[plw]) && (dls[plw] = becker2019_discretize(
+        d, l, w, pll ÷ 2, plw; ignore_d = ignore_d
+      ))
+      dl = dls[plw]
+    end
+    for y in dl
+      y > pll ÷ 2 && break
       @assert plw >= min_piw
       @assert y >= min_pil
       @assert pll - y >= min_pil
@@ -459,11 +473,14 @@ function gen_cuts(
       end
       push!(hnnn, (pli, plis[y, plw], plis[pll - y, plw]))
     end
-    #for x in dw
-    for x in becker2019_discretize(
-      d, w, l, plw ÷ 2, pll; ignore_W = ignore_2th_dim
-    )
-      #x > plw ÷ 2 && break
+    if !ignore_2th_dim
+      isempty(dws[pll]) && (dws[pll] = becker2019_discretize(
+        d, w, l, plw ÷ 2, pll; ignore_d = ignore_d
+      ))
+      dw = dws[pll]
+    end
+    for x in dw
+      x > plw ÷ 2 && break
       @assert pll >= min_pil
       @assert x >= min_piw
       @assert plw - x >= min_piw
