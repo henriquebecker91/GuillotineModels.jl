@@ -435,10 +435,10 @@ function gen_cuts(
   dls = [Vector{S}() for _ = 1:W]
   dws = [Vector{S}() for _ = 1:L]
   dl = dls[W] = becker2019_discretize(
-    d, l, w, L ÷ 2, W; ignore_W = true, ignore_d = ignore_d
+    d, l, w, L, W; ignore_W = ignore_2th_dim, ignore_d = ignore_d
   )
   dw = dws[L] = becker2019_discretize(
-    d, w, l, W ÷ 2, L; ignore_W = true, ignore_d = ignore_d
+    d, w, l, W, L; ignore_W = ignore_2th_dim, ignore_d = ignore_d
   )
   while next_idx <= length(next)
     pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
@@ -454,7 +454,7 @@ function gen_cuts(
     end
     if !ignore_2th_dim
       isempty(dls[plw]) && (dls[plw] = becker2019_discretize(
-        d, l, w, pll ÷ 2, plw; ignore_d = ignore_d
+        d, l, w, L, plw; ignore_d = ignore_d
       ))
       dl = dls[plw]
     end
@@ -467,15 +467,18 @@ function gen_cuts(
         push!(next, (y, plw, n += 1))
         plis[y, plw] = n
       end
-      if iszero(plis[pll - y, plw])
-        push!(next, (pll - y, plw, n += 1))
-        plis[pll - y, plw] = n
+      dl_sc_ix = searchsortedlast(dl, pll - y)
+      @assert !iszero(dl_sc_ix)
+      dl_sc = dl[dl_sc_ix]
+      if iszero(plis[dl_sc, plw])
+        push!(next, (dl_sc, plw, n += 1))
+        plis[dl_sc, plw] = n
       end
-      push!(hnnn, (pli, plis[y, plw], plis[pll - y, plw]))
+      push!(hnnn, (pli, plis[y, plw], plis[dl_sc, plw]))
     end
     if !ignore_2th_dim
       isempty(dws[pll]) && (dws[pll] = becker2019_discretize(
-        d, w, l, plw ÷ 2, pll; ignore_d = ignore_d
+        d, w, l, W, pll; ignore_d = ignore_d
       ))
       dw = dws[pll]
     end
@@ -488,11 +491,14 @@ function gen_cuts(
         push!(next, (pll, x, n += 1))
         plis[pll, x] = n
       end
-      if iszero(plis[pll, plw - x])
-        push!(next, (pll, plw - x, n += 1))
-        plis[pll, plw - x] = n
+      dw_sc_ix = searchsortedlast(dw, plw - x)
+      @assert !iszero(dw_sc_ix)
+      dw_sc = dw[dw_sc_ix]
+      if iszero(plis[pll, dw_sc])
+        push!(next, (pll, dw_sc, n += 1))
+        plis[pll, dw_sc] = n
       end
-      push!(vnnn, (pli, plis[pll, x], plis[pll, plw - x]))
+      push!(vnnn, (pli, plis[pll, x], plis[pll, dw_sc]))
     end
   end
 
