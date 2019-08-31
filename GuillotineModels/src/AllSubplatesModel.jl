@@ -40,7 +40,7 @@ using .GuillotinePlatesDP
 function build_model_no_symmbreak(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
   L :: S, W :: S; only_binary = false, use_c25 = false,
-  ignore_2th_dim = false, ignore_d = false
+  ignore_2th_dim = false, ignore_d = false, round2disc = true
 ) where {D, S, P}
   @assert length(d) == length(l) && length(l) == length(w)
   num_piece_types = convert(D, length(d))
@@ -48,7 +48,8 @@ function build_model_no_symmbreak(
   sllw = SortedLinkedLW(D, l, w)
   pli_lwb, hcuts, vcuts, np = gen_cuts(P, d, sllw, L, W;
     ignore_2th_dim = ignore_2th_dim,
-    ignore_d = ignore_d
+    ignore_d = ignore_d,
+    round2disc = round2disc
   )
   num_plate_types = length(pli_lwb)
   hvcuts = vcat(hcuts, vcuts)
@@ -209,7 +210,7 @@ end # build_model_no_symmbreak
 function build_model_with_symmbreak(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
   L :: S, W :: S; only_binary = false, use_c25 = false,
-  ignore_2th_dim = false, ignore_d = false
+  ignore_2th_dim = false, ignore_d = false, round2disc = true
 ) where {D, S, P}
   @assert length(d) == length(l) && length(l) == length(w)
   num_piece_types = convert(D, length(d))
@@ -217,7 +218,8 @@ function build_model_with_symmbreak(
   sllw = SortedLinkedLW(D, l, w)
   pli2lwsb, hcuts, vcuts, pii2plis, pli2piis, same_size_plis =
     gen_cuts_sb(P, d, sllw, L, W; ignore_2th_dim = ignore_2th_dim,
-    ignore_d = ignore_d
+    ignore_d = ignore_d,
+    round2disc = round2disc
   )
   num_plate_types = length(pli2lwsb)
   hvcuts = vcat(hcuts, vcuts)

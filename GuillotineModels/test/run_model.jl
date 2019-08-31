@@ -74,7 +74,8 @@ function read_build_solve_and_print(
         only_binary = p_args["only-binary-variables"],
         use_c25 = p_args["use-c25"],
         ignore_2th_dim = p_args["ignore-2th-dim"],
-        ignore_d = p_args["ignore-d"]
+        ignore_d = p_args["ignore-d"],
+        round2disc = p_args["round2disc"]
       )
     else
       _, hvcuts, pli_lwb, np = AllSubplatesModel.build_model_no_symmbreak(
@@ -82,7 +83,8 @@ function read_build_solve_and_print(
         only_binary = p_args["only-binary-variables"],
         use_c25 = p_args["use-c25"],
         ignore_2th_dim = p_args["ignore-2th-dim"],
-        ignore_d = p_args["ignore-d"]
+        ignore_d = p_args["ignore-d"],
+        round2disc = p_args["round2disc"]
       )
     end
   end
@@ -217,6 +219,9 @@ function parse_script_args(args = ARGS)
         nargs = 0
       "--use-c25"
         help = "add the tightening constraints 2.5 (ignored by flow)"
+        nargs = 0
+      "--round2disc"
+        help = "round the second child size to a discretized position"
         nargs = 0
       "--ignore-2th-dim"
         help = "ignore the dimension not being discretized during discretization, used to measure impact (does not affect flow)"

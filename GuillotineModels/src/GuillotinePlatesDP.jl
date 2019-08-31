@@ -203,9 +203,9 @@ end
 # first one, given how columnwise memory layout works.
 function gen_cuts_sb(
   ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
-  ignore_2th_dim = false, ignore_d = false
+  ignore_2th_dim = false, ignore_d = false, round2disc = true
 ) where {D, S, P}
-  (ignore_d || ignore_2th_dim) && @error "ignore_2th_dimm and ignore_d are not yet implemented for gen_cuts_sb, also, first improve the performance by memoizing the discretizations"
+  (ignore_d || ignore_2th_dim || round2disc) && @error "ignore_2th_dimm, ignore_d, and round2disc are not yet implemented for gen_cuts_sb, also, first improve the performance by memoizing the discretizations"
   l = sllw.l
   w = sllw.w
   @assert length(d) == length(l)
@@ -395,7 +395,7 @@ end
 
 function gen_cuts(
   ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
-  ignore_2th_dim = false, ignore_d = false
+  ignore_2th_dim = false, ignore_d = false, round2disc = true
 ) where {D, S, P}
   l = sllw.l
   w = sllw.w
@@ -467,9 +467,13 @@ function gen_cuts(
         push!(next, (y, plw, n += 1))
         plis[y, plw] = n
       end
-      dl_sc_ix = searchsortedlast(dl, pll - y)
-      @assert !iszero(dl_sc_ix)
-      dl_sc = dl[dl_sc_ix]
+      if round2disc
+        dl_sc_ix = searchsortedlast(dl, pll - y)
+        @assert !iszero(dl_sc_ix)
+        dl_sc = dl[dl_sc_ix]
+      else
+        dl_sc = pll -y
+      end
       if iszero(plis[dl_sc, plw])
         push!(next, (dl_sc, plw, n += 1))
         plis[dl_sc, plw] = n
@@ -491,9 +495,13 @@ function gen_cuts(
         push!(next, (pll, x, n += 1))
         plis[pll, x] = n
       end
-      dw_sc_ix = searchsortedlast(dw, plw - x)
-      @assert !iszero(dw_sc_ix)
-      dw_sc = dw[dw_sc_ix]
+      if round2disc
+        dw_sc_ix = searchsortedlast(dw, plw - x)
+        @assert !iszero(dw_sc_ix)
+        dw_sc = dw[dw_sc_ix]
+      else
+        dw_sc = plw - x
+      end
       if iszero(plis[pll, dw_sc])
         push!(next, (pll, dw_sc, n += 1))
         plis[pll, dw_sc] = n
