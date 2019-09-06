@@ -40,7 +40,8 @@ using .GuillotinePlatesDP
 function build_model_no_symmbreak(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
   L :: S, W :: S; only_binary = false, use_c25 = false,
-  ignore_2th_dim = false, ignore_d = false, round2disc = true
+  ignore_2th_dim = false, ignore_d = false, round2disc = true,
+  lb :: P = zero(P), ub :: P = zero(P)
 ) where {D, S, P}
   @assert length(d) == length(l) && length(l) == length(w)
   num_piece_types = convert(D, length(d))
@@ -161,6 +162,18 @@ function build_model_no_symmbreak(
   # cannot surpass the demand for that piece type.
   for pii in 1:num_piece_types
     @constraint(model, sum(picuts[pii2pair[pii]]) <= d[pii])
+  end
+
+  if !iszero(lb)
+    @constraint(model,
+      sum(p[pii]*sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types) >= (lb + 1)
+    )
+  end
+
+  if !iszero(ub) && ub < sum(d .* p)
+    @constraint(model,
+      sum(p[pii]*sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types) <= ub
+    )
   end
 
   model, hvcuts, pli_lwb, np

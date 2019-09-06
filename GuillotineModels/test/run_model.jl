@@ -84,7 +84,9 @@ function read_build_solve_and_print(
         use_c25 = p_args["use-c25"],
         ignore_2th_dim = p_args["ignore-2th-dim"],
         ignore_d = p_args["ignore-d"],
-        round2disc = p_args["round2disc"]
+        round2disc = p_args["round2disc"],
+        lb = get(p_args["lower-bounds"], instfname_idx, 0),
+        ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p))
       )
     end
   end
@@ -232,13 +234,36 @@ function parse_script_args(args = ARGS)
       "--flow-model"
         help = "use the flow model instead of subplate model (ignore the --break-hvcut-symmetry and --only-binary-variables flags)"
         nargs = 0
+      "--lower-bounds"
+        help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"
+        nargs = 1
+      "--upper-bounds"
+        help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"
+        nargs = 1
       "instfnames"
         help = "the paths to the instances to be solved"
         action = :store_arg
         nargs = '*' # can pass no instances to call "-h"
     end
 
-    return parse_args(args, s)
+    p_args = parse_args(args, s)
+
+    for option in ["lower-bounds", "upper-bounds"]
+      if !isempty(p_args[option])
+        @assert isone(length(p_args[option]))
+        str_list = p_args[option][1]
+        if match(r"^([1-9][0-9]*|0)(,([1-9][0-9]*|0))*$", str_list) === nothing
+          @error "the --$(option) does not follow the desired format: integer,integer,integer,... (no comma after last number)"
+        end
+        num_list = parse.(Int64, split(str_list, ','))
+        if length(num_list) != length(p_args["instfnames"])
+          @error "the length of the list passed to --$(option) should be the exact same size as the number of instances provided"
+        end
+        p_args[option] = num_list
+      end
+    end
+
+    return p_args
 end
 
 # Parse the command line arguments, and call the solve for each instance.
