@@ -41,6 +41,7 @@ function build_model_no_symmbreak(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
   L :: S, W :: S; only_binary = false, use_c25 = false,
   ignore_2th_dim = false, ignore_d = false, round2disc = true,
+  five_piece_reduction = false,
   lb :: P = zero(P), ub :: P = zero(P)
 ) where {D, S, P}
   @assert length(d) == length(l) && length(l) == length(w)
@@ -50,7 +51,8 @@ function build_model_no_symmbreak(
   pli_lwb, hcuts, vcuts, np = gen_cuts(P, d, sllw, L, W;
     ignore_2th_dim = ignore_2th_dim,
     ignore_d = ignore_d,
-    round2disc = round2disc
+    round2disc = round2disc,
+    five_piece_reduction = five_piece_reduction
   )
   num_plate_types = length(pli_lwb)
   hvcuts = vcat(hcuts, vcuts)

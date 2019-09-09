@@ -220,8 +220,6 @@ function gen_cuts_sb(
   )
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W) * 3
-  #dl = becker2019_discretize(d, l, L ÷ 2)
-  #dw = becker2019_discretize(d, w, W ÷ 2)
   min_pil = minimum(l)
   min_piw = minimum(w)
   # If (n1, n2, n3) is in hcut (vcuts), then n1 may be partitioned in n2 and n3
@@ -393,14 +391,85 @@ function gen_cuts_sb(
   return pli2lwsb, hcuts, vcuts, pii2plis, pli2piis, same_size_plis
 end
 
+# Take pieces and a plate, return an upper bound on the number of pieces
+# that fit inside the plate. If cutoff becomes greater than limit, return
+# immediately (does not provide a real upper bound, you just know the real
+# upper bound is greater than cutoff). If ignore_2th_dim is true, then it
+# does not use the information of w and W.
+function ub_num_pieces_fit(
+  d :: Vector{D},
+  l :: Vector{S},
+  w :: Vector{S},
+  a :: Vector{P},
+  L :: S,
+  W :: S,
+  A :: P,
+  cutoff :: D;
+  ignore_2th_dim = false
+) :: D where {D, S, P}
+  idxs = collect(1:length(a))
+  sort!(idxs, by = i -> a[i])
+  ub = zero(D)
+  for i in idxs
+    if l[i] <= L && (ignore_2th_dim || w[i] <= W)
+      for _ = 1:d[i]
+        A < a[i] && return ub
+        A -= a[i]
+        ub += 1
+        ub > cutoff && return ub
+      end
+    end
+  end
+  return ub
+end
+
+function no_chance_to_fit_6_piece(
+  d :: Vector{D},
+  l :: Vector{S},
+  w :: Vector{S},
+  a :: Vector{P},
+  L :: S,
+  W :: S,
+  A :: P;
+  ignore_2th_dim = false
+) :: Bool where {D, S, P}
+  ub = ub_num_pieces_fit(
+    d, l, w, a, L, W, A, 5; ignore_2th_dim = ignore_2th_dim
+  )
+  return ub <= 5
+end
+
+function reduce2fit_usl(
+  sl :: Vector{S},
+  sli2pii :: Vector{D},
+  w :: Vector{S},
+  L :: S,
+  W :: S
+) :: Vector{S} where {D, S, P}
+  xs = empty(sl)
+  for (i, x) in enumerate(sl)
+    x > L && break # stop before the first lenght greater than L
+    !isempty(xs) && last(xs) == x && continue # do not add duplicate lenghts
+    w[sli2pii[i]] <= W && push!(xs, x) # add only if fits BOTH dimensions
+  end
+
+  xs
+end
+
 function gen_cuts(
   ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
-  ignore_2th_dim = false, ignore_d = false, round2disc = true
+  ignore_2th_dim = false, ignore_d = false, round2disc = true,
+  five_piece_reduction = true
 ) where {D, S, P}
   l = sllw.l
   w = sllw.w
   @assert length(d) == length(l)
   @assert length(d) == length(w)
+  # unique versions
+  usl = unique(sllw.sl)
+  usw = unique(sllw.sw)
+  a = l .* w
+  A = L * W
   max_piece_type = convert(D, length(l))
   max_num_plates = convert(P, L) * convert(P, W)
   min_pil = minimum(l)
@@ -434,12 +503,13 @@ function gen_cuts(
   # The discretized widths for every plate length.
   dls = [Vector{S}() for _ = 1:W]
   dws = [Vector{S}() for _ = 1:L]
-  dl = dls[W] = becker2019_discretize(
+  dl1 = dl2 = dls[W] = becker2019_discretize(
     d, l, w, L, W; ignore_W = ignore_2th_dim, ignore_d = ignore_d
   )
-  dw = dws[L] = becker2019_discretize(
+  dw1 = dw2 = dws[L] = becker2019_discretize(
     d, w, l, W, L; ignore_W = ignore_2th_dim, ignore_d = ignore_d
   )
+  #fpr_count = 0
   while next_idx <= length(next)
     pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
     next_idx += 1
@@ -452,13 +522,54 @@ function gen_cuts(
         push!(np, (pli, pii))
       end
     end
-    if !ignore_2th_dim
+
+    if ignore_2th_dim
+      dl1 = dl2 = dls[W]
+      dw1 = dw2 = dws[L]
+    else
       isempty(dls[plw]) && (dls[plw] = becker2019_discretize(
         d, l, w, L, plw; ignore_d = ignore_d
       ))
-      dl = dls[plw]
+      dl1 = dl2 = dls[plw]
+
+      isempty(dws[pll]) && (dws[pll] = becker2019_discretize(
+        d, w, l, W, pll; ignore_d = ignore_d
+      ))
+      dw1 = dw2 = dws[pll]
     end
-    for y in dl
+
+    if five_piece_reduction
+      if no_chance_to_fit_6_piece(
+        d, l, w, a, pll, plw, pll * plw; ignore_2th_dim = ignore_2th_dim
+      )
+        if ignore_2th_dim
+          dl1 = usl
+          dw1 = usw
+        else
+          dl1 = reduce2fit_usl(sllw.sl, sllw.sli2pii, w, pll ÷ 2, plw)
+          @assert dl1 ⊆ dl2
+          dw1 = reduce2fit_usl(sllw.sw, sllw.swi2pii, l, plw ÷ 2, pll)
+          @assert dw1 ⊆ dw2
+        end
+        #= Debug. Showing something is not an error.
+        if dl1 != dl2[1:length(dl1)] || dw1 != dw2[1:length(dw1)] 
+          fpr_count += 1
+          @show pll
+          @show plw
+          if dl1 != dl2[1:length(dl1)]
+            @show dl1
+            @show dl2
+          end
+          if dw1 != dw2[1:length(dw1)]
+            @show dw1
+            @show dw2
+          end
+        end
+        =#
+      end
+    end
+
+    for y in dl1
       y > pll ÷ 2 && break
       @assert plw >= min_piw
       @assert y >= min_pil
@@ -468,11 +579,11 @@ function gen_cuts(
         plis[y, plw] = n
       end
       if round2disc
-        dl_sc_ix = searchsortedlast(dl, pll - y)
+        dl_sc_ix = searchsortedlast(dl2, pll - y)
         @assert !iszero(dl_sc_ix)
-        dl_sc = dl[dl_sc_ix]
+        dl_sc = dl2[dl_sc_ix]
       else
-        dl_sc = pll -y
+        dl_sc = pll - y
       end
       if iszero(plis[dl_sc, plw])
         push!(next, (dl_sc, plw, n += 1))
@@ -480,13 +591,8 @@ function gen_cuts(
       end
       push!(hnnn, (pli, plis[y, plw], plis[dl_sc, plw]))
     end
-    if !ignore_2th_dim
-      isempty(dws[pll]) && (dws[pll] = becker2019_discretize(
-        d, w, l, W, pll; ignore_d = ignore_d
-      ))
-      dw = dws[pll]
-    end
-    for x in dw
+
+    for x in dw1
       x > plw ÷ 2 && break
       @assert pll >= min_pil
       @assert x >= min_piw
@@ -496,9 +602,9 @@ function gen_cuts(
         plis[pll, x] = n
       end
       if round2disc
-        dw_sc_ix = searchsortedlast(dw, plw - x)
+        dw_sc_ix = searchsortedlast(dw2, plw - x)
         @assert !iszero(dw_sc_ix)
-        dw_sc = dw[dw_sc_ix]
+        dw_sc = dw2[dw_sc_ix]
       else
         dw_sc = plw - x
       end
@@ -509,6 +615,7 @@ function gen_cuts(
       push!(vnnn, (pli, plis[pll, x], plis[pll, dw_sc]))
     end
   end
+  #@show fpr_count
 
   return pli_lwb, hnnn, vnnn, np
 end

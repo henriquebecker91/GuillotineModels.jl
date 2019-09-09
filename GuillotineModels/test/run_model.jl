@@ -85,6 +85,7 @@ function read_build_solve_and_print(
         ignore_2th_dim = p_args["ignore-2th-dim"],
         ignore_d = p_args["ignore-d"],
         round2disc = p_args["round2disc"],
+        five_piece_reduction = p_args["five-piece-reduction"],
         lb = get(p_args["lower-bounds"], instfname_idx, 0),
         ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p))
       )
@@ -227,6 +228,9 @@ function parse_script_args(args = ARGS)
         nargs = 0
       "--ignore-2th-dim"
         help = "ignore the dimension not being discretized during discretization, used to measure impact (does not affect flow)"
+        nargs = 0
+      "--five-piece-reduction"
+        help = "uses Furini 2016 reduction: if a trivial heuristic shows that no combination of six or more pieces fit a plate, then the plate cuts may be just restricted cuts"
         nargs = 0
       "--ignore-d"
         help = "ignore the demand information during discretization, used to measure impact (does not affect flow)"
