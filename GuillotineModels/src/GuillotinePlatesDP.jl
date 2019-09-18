@@ -611,7 +611,8 @@ function gen_cuts(
     pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
     if faithful2furini2016 && !no_redundant_cut
       sh_j, sv_j, fh_j, fv_j = getindex.(sfhv, next_idx)
-    else
+    end
+    if !faithful2furini2016
       for pii in 1:max_piece_type # pii: PIece Index
         if should_extract_piece_from_plate(pii, pll, plw, sllw)
           push!(np, (pli, pii))
@@ -695,13 +696,12 @@ function gen_cuts(
       # If the preprocessing is faithful2furini2016, the plates are cut until
       # they have the same size as pieces and, consequently, there exist the
       # concept of trim cut (i.e., a cut in which the second child is waste).
-      trim_cut = faithful2furini2016 && !no_redundant_cut &&
-        !fits_at_least_one(sllw, pll, plw - x)
+      trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, pll, plw - x)
       # The trim_cut flag is used below outside of 'if faithful2furini2016'
       # because a true value implicates that 'faithful2furini2016 == true'.
       if iszero(plis[pll, x]) # If the first child does not yet exist.
         push!(next, (pll, x, n += 1)) # Create the first child.
-        if trim_cut
+        if !no_redundant_cut && trim_cut
           # From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
           # from j through a trim cut with orientation v:"
           fchild_sfhv = (-1, 0, sh_j, sv_j)
@@ -740,12 +740,6 @@ function gen_cuts(
         end
       else # If the second child size is not rounded.
         dw_sc = plw - x
-      end
-      if iszero(dw_sc)
-        @show trim_cut
-        @show pll
-        @show dl_sc
-        @show pli
       end
       
       # If the second child is not waste (!trim_cut), nor was already

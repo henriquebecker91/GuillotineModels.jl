@@ -6,7 +6,8 @@ Pkg.instantiate()
 
 # Load the necessary packages. The ones after the `push!` are from this
 # repository.
-using JuMP, CPLEX, ArgParse, MathOptInterface
+using JuMP, CPLEX, ArgParse, MathOptInterface, MathOptFormat
+const MOI = MathOptInterface
 push!(LOAD_PATH, "../src/")
 using AllSubplatesModel, FlowModel, GC2DInstanceReader
 
@@ -123,6 +124,10 @@ function read_build_solve_and_print(
       @show num_cuts_made
     end
   end
+  # The three lines below create a .mps file of the model before solving it.
+  mps_model = MathOptFormat.MPS.Model()
+  MOI.copy_to(mps_model, backend(m))
+  MOI.write_to_file(mps_model, "last_run.mps")
   flush(stdout) # guarantee all messages will be flushed before calling cplex
   @error "testing furini, if optimize is called, all memory will be consumed"
   exit(0)

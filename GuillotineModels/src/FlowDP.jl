@@ -199,7 +199,7 @@ function globalize!(
     end
     back = ppo2gbedge_idx[bedge_ppo...]
     edge = Edge{N, E}(indx, head, tail, back)
-    (iszero(head) || iszero(tail)) && @show edge, @__LINE__
+    #(iszero(head) || iszero(tail)) && @show edge, @__LINE__
     push!(glo_fow_edges, edge)
     # If this foward edge cuts a plate with the exact same size as some piece
     # then we add the "final plate"/piece edge too.
@@ -238,7 +238,7 @@ function gen_u_fow_edges(
     back = ppo2gbedge_idx[bedge_ppo...]
 
     edge = Edge(lgei += 1, glo_nodes[1].idx, node.idx, back)
-    (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
+    #(iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
     push!(u_fow_edges, edge)
   end
   for i = 2:(length(glo_nodes)-1)
@@ -259,7 +259,7 @@ function gen_u_fow_edges(
       edge = Edge(
         lgei += 1, glo_nodes[i].idx, glo_nodes[j].idx, back
       )
-      (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
+      #(iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
       push!(u_fow_edges, edge)
     end
   end
@@ -284,7 +284,7 @@ function gen_w_fow_edges(
   for i = 2:(length(glo_nodes)-1)
     #for j = (i+1):length(glo_nodes)
     edge = Edge(lgei += 1, glo_nodes[i].idx, glo_nodes[i+1].idx, zero(E))
-    (iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
+    #(iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
     push!(w_fow_edges, edge)
     #end
   end
@@ -465,8 +465,8 @@ function gen_all_edges(
   #end
   
   #unique_lw 
-  @show disc_L
-  @show disc_W
+  #@show disc_L
+  #@show disc_W
   for L_ in @view disc_L[2:end-1]#setdiff(unique(l), [L])#
     vnodes, vflows_by_L[L_], vedges, lgni, lgei = gen_closed_flow(
       lgni, lgei, lw2pii, ppo2gbedge_idx, d, l, w, 0x01, L_, W
@@ -483,8 +483,8 @@ function gen_all_edges(
     append!(edges, hedges)
     append!(nodes, hnodes)
   end
-  @show vflows_by_L
-  @show hflows_by_W
+  #@show vflows_by_L
+  #@show hflows_by_W
 
   # TO CREATE THE CIRCULATION EDGES AT THE END, WE NEED TO KNOW THE NAME OF
   # THE NODES FOR THE ORIGIN OF EVERY FLOW WITH PAR WITH SOME SIZE, AND THE
@@ -496,7 +496,7 @@ function gen_all_edges(
   for ppo in CartesianIndices(ppo2gbedge_idx)
     pari, peri, orii = ppo[1], ppo[2], ppo[3]
     iszero(ppo2gbedge_idx[ppo]) && continue
-    @show ppo
+    #@show ppo
     if orii == 0x01
       while !iszero(peri) && iszero(vflows_by_L[pari][peri]); peri -= 1; end
       @assert !iszero(peri)
@@ -505,7 +505,7 @@ function gen_all_edges(
         zero(N)
       ))
       edge = last(edges)
-      (iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, peri, @__LINE__
+      #(iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, peri, @__LINE__
     else
       @assert orii == 0x02
       while !iszero(peri) && iszero(hflows_by_W[pari][peri]); peri -= 1; end
@@ -514,7 +514,7 @@ function gen_all_edges(
         zero(N)
       ))
       edge = last(edges)
-      (iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, peri, @__LINE__
+      #(iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, peri, @__LINE__
     end
   end
   
