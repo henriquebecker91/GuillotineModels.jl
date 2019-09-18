@@ -41,7 +41,9 @@ function build_model_no_symmbreak(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
   L :: S, W :: S; only_binary = false, use_c25 = false,
   ignore_2th_dim = false, ignore_d = false, round2disc = true,
-  five_piece_reduction = false,
+  faithful2furini2016 = false,
+  no_redundant_cut = false, no_cut_position = false,
+  no_furini_symmbreak = false,
   lb :: P = zero(P), ub :: P = zero(P)
 ) where {D, S, P}
   @assert length(d) == length(l) && length(l) == length(w)
@@ -52,7 +54,10 @@ function build_model_no_symmbreak(
     ignore_2th_dim = ignore_2th_dim,
     ignore_d = ignore_d,
     round2disc = round2disc,
-    five_piece_reduction = five_piece_reduction
+    no_cut_position = no_cut_position,
+    no_redundant_cut = no_redundant_cut,
+    no_furini_symmbreak = no_furini_symmbreak,
+    faithful2furini2016 = faithful2furini2016
   )
   num_plate_types = length(pli_lwb)
   hvcuts = vcat(hcuts, vcuts)
@@ -91,8 +96,15 @@ function build_model_no_symmbreak(
     parent, fchild, schild = hvcuts[i]
     push!(parent2cut[parent], i)
     push!(child2cut[fchild], i)
-    @assert !iszero(schild)
-    push!(child2cut[schild], i)
+    #=if iszero(schild)
+      @show parent
+      @show pli_lwb[parent]
+      @show fchild
+      @show pli_lwb[fchild]
+      @show schild
+    end=#
+    #@assert faithful2furini2016 || !iszero(schild)
+    !iszero(schild) && push!(child2cut[schild], i)
   end
 
   for i in eachindex(np)

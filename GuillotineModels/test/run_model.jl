@@ -85,7 +85,10 @@ function read_build_solve_and_print(
         ignore_2th_dim = p_args["ignore-2th-dim"],
         ignore_d = p_args["ignore-d"],
         round2disc = p_args["round2disc"],
-        five_piece_reduction = p_args["five-piece-reduction"],
+        no_cut_position = p_args["no-cut-position"],
+        no_redundant_cut = p_args["no-redundant-cut"],
+        no_furini_symmbreak = p_args["no-furini-symmbreak"],
+        faithful2furini2016 = p_args["faithful2furini2016"],
         lb = get(p_args["lower-bounds"], instfname_idx, 0),
         ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p))
       )
@@ -109,8 +112,20 @@ function read_build_solve_and_print(
     @show num_constrs
     #@show m # just in case there is something here I did not output
     #print(m) # just in case there is something here I did not output
+    if !p_args["flow-model"] && !p_args["break-hvcut-symmetry"]
+      num_plates = length(pli_lwb)
+      @show num_plates
+      ps = m[:picuts]
+      num_picuts = length(ps)
+      @show num_picuts
+      cm = m[:cuts_made]
+      num_cuts_made = length(cm)
+      @show num_cuts_made
+    end
   end
   flush(stdout) # guarantee all messages will be flushed before calling cplex
+  @error "testing furini, if optimize is called, all memory will be consumed"
+  exit(0)
   time_to_solve_model = @elapsed optimize!(m)
   sleep(0.01) # shamefully needed to avoid out of order messages from cplex
   if !no_csv_out
@@ -155,14 +170,6 @@ function read_build_solve_and_print(
           end
         end
       else
-        num_plates = length(pli_lwb)
-        @show num_plates
-        ps = m[:picuts]
-        num_picuts = length(ps)
-        @show num_picuts
-        cm = m[:cuts_made]
-        num_cuts_made = length(cm)
-        @show num_cuts_made
         ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if value(ps[i]) > 0.001]
         cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if value(cm[i]) > 0.001]
         @show ps_nz
@@ -229,8 +236,17 @@ function parse_script_args(args = ARGS)
       "--ignore-2th-dim"
         help = "ignore the dimension not being discretized during discretization, used to measure impact (does not affect flow)"
         nargs = 0
-      "--five-piece-reduction"
-        help = "uses Furini 2016 reduction: if a trivial heuristic shows that no combination of six or more pieces fit a plate, then the plate cuts may be just restricted cuts"
+      "--faithful2furini2016"
+        help = "tries to be the most faithful possible to the description on the Furini2016 paper (more specifically the complete model, with the reductions, FOR NOW without a heuristic solution first and without pricing); the flags --no-cut-position, --no-redundant-cut and --no-furini-symmbreak disable parts of this reimplementation"
+        nargs = 0
+      "--no-redundant-cut"
+        help = "disables Furini2016 Redundant-Cut reduction: a bunch of flags is used to check if some trim cut is necessary for optimality, or is dominated by other trim cuts"
+        nargs = 0
+      "--no-furini-symmbreak"
+        help = "disables Furini2016 symmetry breaking: as trim cuts are needed in faithful2furini2016 mode, the symmetry-breaking is less restrictive than 'do not cut after midplate', it just removes each cut y > midplate in which plate_size - y is an existing cut; enabling this flag makes the code just use all discretized positions as cuts"
+        nargs = 0
+      "--no-cut-position"
+        help = "disables Furini2016 Cut-Position reduction: if a trivial heuristic shows that no combination of six or more pieces fit a plate, then the plate may be cut with restricted cuts without loss to optimality"
         nargs = 0
       "--ignore-d"
         help = "ignore the demand information during discretization, used to measure impact (does not affect flow)"

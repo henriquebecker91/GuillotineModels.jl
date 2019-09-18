@@ -1,5 +1,13 @@
 module GuillotinePlatesDP
 
+# TODO: Consider removing flag ignore_2th_dim. Reasoning: nobody does that,
+# even Furini only consider the pieces that fit a plate before discretizing it,
+# even if ignoring the 2th dimension would save a lot of effort in the
+# preprocessing nobody believes would be a valid trade-off to do so (the
+# preprocessing phase participation on the total time is negligible), and it
+# makes the code far more complex (because I have to have code that respects
+# and ignores a basic assumption).
+
 export SortedLinkedLW
 export becker2019_discretize, gen_cuts, gen_cuts_sb
 
@@ -456,11 +464,75 @@ function reduce2fit_usl(
   xs
 end
 
+function fits_at_least_one(
+  sllw :: SortedLinkedLW{D, S}, L :: S, W :: S
+) :: Bool where {D, S}
+  for (i, v) in enumerate(sllw.sl)
+    v > L && return false
+    sllw.w[sllw.sli2pii[i]] <= W && return true
+  end
+
+  return false
+end
+
+function filter_symm_pos(
+  disc :: Vector{S},
+  dim :: S
+) :: Vector{S} where {S}
+  return filter_symm_pos!(deepcopy(disc), dim)
+end
+
+function filter_symm_pos!(
+  disc :: Vector{S},
+  dim :: S
+) :: Vector{S} where {S}
+  half_dim = dim ÷ 2
+  for xy in disc
+    # The first position after half_dim may have been turned to zero,
+    # this is the reason of '|| iszero(xy)'.
+    (xy >= half_dim || iszero(xy)) && break
+    symm_pos = dim - xy
+    symm_idx = searchsortedlast(disc, symm_pos)
+    !iszero(symm_idx) && disc[symm_idx] == symm_pos && (disc[symm_idx] = 0)
+  end
+  return filter!(!iszero, disc)
+end
+
+# From Furini2016 supplement: "if one (or more) of the flags of plate j has
+# value -1, do not perform trim cuts on j in the flag orientation."
+function filter_redundant_cuts!(
+  # A list of cuts (parent plate, first child, second child). Only the
+  # second child may be waste, and if it is, the index of the second child
+  # is zero. All cuts share the same orientation (vertical or horizontal).
+  nnn :: Vector{NTuple{3, P}},
+  # Self Flag: corresponds to 'sh' or 'sv'. The orientation must match 'nnn'.
+  sf :: Vector{Int8},
+  # Father Flag: corresponds to 'fh' or 'fv'. Analogue to Self Flag.
+  ff :: Vector{Int8}
+) :: Vector{NTuple{3, P}} where {P}
+  return filter!(nnn) do cut
+    pp, _, sc = cut # parent plate, first child, second child
+    # A cut should be kept if it is not a trim cut (!iszero(sc)) or,
+    # in the case it is a trim cut, if none of its flags indicate a trim
+    # cut was already made to obtain pp (check sf), or to obtain every possible
+    # father plate of pp (check ff).
+    !iszero(sc) || (sf[pp] > -1 && ff[pp] > -1)
+  end
+end
+
 function gen_cuts(
   ::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
   ignore_2th_dim = false, ignore_d = false, round2disc = true,
-  five_piece_reduction = true
+  faithful2furini2016 = false,
+  no_redundant_cut = false, no_cut_position = false,
+  no_furini_symmbreak = false
 ) where {D, S, P}
+  faithful2furini2016 && round2disc && @warn(
+    "Enabling both faithful2furini2016 and round2disc is allowed, but you are not being entirely faithful to Furini2016 if you do so."
+  )
+  no_redundant_cut && !faithful2furini2016 && @warn(
+    "The Redundant-Cut is only used when faithful2furini2016 is enabled. As flag faithful2furini2016 is not enabled, flag no-redundant-cut has no effect."
+  )
   l = sllw.l
   w = sllw.w
   @assert length(d) == length(l)
@@ -471,23 +543,30 @@ function gen_cuts(
   a = l .* w
   A = L * W
   max_piece_type = convert(D, length(l))
-  max_num_plates = convert(P, L) * convert(P, W)
+  #max_num_plates = convert(P, L) * convert(P, W)
   min_pil = minimum(l)
   min_piw = minimum(w)
+
   # If (n1, n2, n3) is in nnn, then n1 may be partitioned in n2 and n3.
-  # Not every possible partition is present, just the ones which
-  # each child plate can fit at least one piece.
+  # Not every possible partition is present. If the model is trying to be
+  # the most faithful to Furini, then redundant-cuts is implemented. If the
+  # model is not restricted to Furini's description, then it may cut even more.
   hnnn = Vector{NTuple{3, P}}()
   vnnn = Vector{NTuple{3, P}}()
-  # If the piece fits the plate size and the plate does not allow any other
-  # piece by its side (i.e., there is no second piece that can be placed in the
-  # same plate vertically or horizontally) then (plate, piece) is in np.
+  # The np vector has the pairs plate-piece for which the respective plate is
+  # allowed to be sold as the respective piece.
+  # If the model is faithful to Furini, it just has a single plate for each
+  # piece type and the plate has the exact size of the piece.
+  # Otherwise, if the piece fits the plate size and the plate does not allow
+  # any other piece by its side (i.e., there is no second piece that can be
+  # placed in the same plate vertically or horizontally) then (plate, piece) is
+  # in np.
   np = Vector{Tuple{P, D}}()
   # The list of plates attributes: plate length, plate width, and plate bound.
   # The plate index is the same as the index in pli_lwb.
   pli_lwb = Vector{Tuple{S, S, P}}()
   # plis: matrix of the plate dimensions in which zero means "never seen that
-    # plate before" and nonzero means "this nonzero number is the plate index".
+  # plate before" and nonzero means "this nonzero number is the plate index".
   plis = zeros(P, L, W)
   plis[L, W] = one(P)
   # next: plates already indexed but not yet processed, starts with (L, W, 1).
@@ -497,12 +576,27 @@ function gen_cuts(
   next_idx = one(P)
   #sizehint!(next, max_num_plates)
   push!(next, (L, W, one(P)))
+  if faithful2furini2016 && !no_redundant_cut
+    # If the preprocessing is faithful2furini2016 and Redundant-Cut is
+    # enabled, then four auxiliary trim cut flag vectors are necessary.
+    sfhv = (Vector{Int8}(), Vector{Int8}(), Vector{Int8}(), Vector{Int8}())
+    sh, sv, fh, fv = sfhv
+    push!.(sfhv, (1, 1, 1, 1))
+  end
   # n: The amount of plates (the index of the highest plate type).
   n = one(P) # there is already the original plate
   # Memoized discretizations. The discretized lengths for every plate width.
   # The discretized widths for every plate length.
   dls = [Vector{S}() for _ = 1:W]
   dws = [Vector{S}() for _ = 1:L]
+  # There are two discretizations for each dimension: dl1/dw1 and dl2/dw2.
+  # They are only different if the Cut-Position reduction is being used. In
+  # this case, dl1/dw1, which is used for cutting the plate, may be a
+  # restricted cut set (i.e., it does not have piece size combinations, just
+  # single piece sizes). The dl2/dw2 is always the complete discretization,
+  # and may be needed (even if Cut-Position is used) for reducing the size of
+  # the second child to the last discretized position (if round2disc is
+  # enabled).
   dl1 = dl2 = dls[W] = becker2019_discretize(
     d, l, w, L, W; ignore_W = ignore_2th_dim, ignore_d = ignore_d
   )
@@ -511,18 +605,24 @@ function gen_cuts(
   )
   #fpr_count = 0
   while next_idx <= length(next)
+    @assert (!faithful2furini2016 || no_redundant_cut ||
+      [length(next)] == unique(length.(sfhv)))
+
     pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
-    next_idx += 1
+    if faithful2furini2016 && !no_redundant_cut
+      sh_j, sv_j, fh_j, fv_j = getindex.(sfhv, next_idx)
+    else
+      for pii in 1:max_piece_type # pii: PIece Index
+        if should_extract_piece_from_plate(pii, pll, plw, sllw)
+          push!(np, (pli, pii))
+        end
+      end
+    end
+
     plb = (L ÷ pll) * (W ÷ plw) # PLate Bound
     # It is not necessary to store the plate id in pli_lwb because they are added
     # in order (a queue is used), so the array index is the plate index.
     push!(pli_lwb, (pll, plw, plb))
-    for pii in 1:max_piece_type # pii: PIece Index
-      if should_extract_piece_from_plate(pii, pll, plw, sllw)
-        push!(np, (pli, pii))
-      end
-    end
-
     if ignore_2th_dim
       dl1 = dl2 = dls[W]
       dw1 = dw2 = dws[L]
@@ -538,7 +638,7 @@ function gen_cuts(
       dw1 = dw2 = dws[pll]
     end
 
-    if five_piece_reduction
+    if !no_cut_position
       if no_chance_to_fit_6_piece(
         d, l, w, a, pll, plw, pll * plw; ignore_2th_dim = ignore_2th_dim
       )
@@ -546,9 +646,11 @@ function gen_cuts(
           dl1 = usl
           dw1 = usw
         else
-          dl1 = reduce2fit_usl(sllw.sl, sllw.sli2pii, w, pll ÷ 2, plw)
+          pll_ = faithful2furini2016 ? pll : pll ÷ 2
+          plw_ = faithful2furini2016 ? plw : plw ÷ 2
+          dl1 = reduce2fit_usl(sllw.sl, sllw.sli2pii, w, pll_, plw)
           @assert dl1 ⊆ dl2
-          dw1 = reduce2fit_usl(sllw.sw, sllw.swi2pii, l, plw ÷ 2, pll)
+          dw1 = reduce2fit_usl(sllw.sw, sllw.swi2pii, l, plw_, pll)
           @assert dw1 ⊆ dw2
         end
         #= Debug. Showing something is not an error.
@@ -569,53 +671,200 @@ function gen_cuts(
       end
     end
 
-    for y in dl1
-      y > pll ÷ 2 && break
-      @assert plw >= min_piw
-      @assert y >= min_pil
-      @assert pll - y >= min_pil
-      if iszero(plis[y, plw])
-        push!(next, (y, plw, n += 1))
-        plis[y, plw] = n
-      end
-      if round2disc
-        dl_sc_ix = searchsortedlast(dl2, pll - y)
-        @assert !iszero(dl_sc_ix)
-        dl_sc = dl2[dl_sc_ix]
-      else
-        dl_sc = pll - y
-      end
-      if iszero(plis[dl_sc, plw])
-        push!(next, (dl_sc, plw, n += 1))
-        plis[dl_sc, plw] = n
-      end
-      push!(hnnn, (pli, plis[y, plw], plis[dl_sc, plw]))
+    # If faithful2furini2016 flag is enabled, then the whole discretization is
+    # iterated, except by the cuts on the second half of the plate that have an
+    # exact symmetry on the fist half (same distance from plate midpoint). The
+    # calls below create a new vector without such symmetric points.
+    if faithful2furini2016 && !no_furini_symmbreak
+      dl1 = filter_symm_pos(dl1, pll)
+      dw1 = filter_symm_pos(dw1, plw)
     end
 
     for x in dw1
-      x > plw ÷ 2 && break
+      # See comment above filter_symm_pos calls.
+      if faithful2furini2016
+        x >= plw && break
+      else
+        x > plw ÷ 2 && break
+      end
+
       @assert pll >= min_pil
       @assert x >= min_piw
-      @assert plw - x >= min_piw
-      if iszero(plis[pll, x])
-        push!(next, (pll, x, n += 1))
-        plis[pll, x] = n
+      @assert faithful2furini2016 || plw - x >= min_piw
+      
+      # If the preprocessing is faithful2furini2016, the plates are cut until
+      # they have the same size as pieces and, consequently, there exist the
+      # concept of trim cut (i.e., a cut in which the second child is waste).
+      trim_cut = faithful2furini2016 && !no_redundant_cut &&
+        !fits_at_least_one(sllw, pll, plw - x)
+      # The trim_cut flag is used below outside of 'if faithful2furini2016'
+      # because a true value implicates that 'faithful2furini2016 == true'.
+      if iszero(plis[pll, x]) # If the first child does not yet exist.
+        push!(next, (pll, x, n += 1)) # Create the first child.
+        if trim_cut
+          # From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
+          # from j through a trim cut with orientation v:"
+          fchild_sfhv = (-1, 0, sh_j, sv_j)
+        elseif faithful2furini2016
+          # If a plate (NEW or existing) j_1 is obtained from j without a trim
+          # cut: set all flags of j 1 to 1.
+          fchild_sfhv = (1, 1, 1, 1)
+        end
+        faithful2furini2016 && !no_redundant_cut && push!.(sfhv, fchild_sfhv)
+        plis[pll, x] = n # Mark plate existence.
+      elseif faithful2furini2016 && !no_redundant_cut
+        # If plate already exists, and we are implementing Redundant-Cut
+        if trim_cut
+          # From Furini2016 supplement: "if an existing plate j_1 ∈ J is
+          # obtained from j through a trim cut:"
+          sh_j > -1 && (fh[plis[pll, x]] = 1)
+          sv_j > -1 && (fv[plis[pll, x]] = 1)
+        else
+          # From Furini2016 supplement: "if a plate (new or EXISTING) j_1 is
+          # obtained from j without a trim cut: set all flags of j_1 to 1."
+          setindex!.(sfhv, (1, 1, 1, 1), plis[pll, x])
+        end
       end
+      # If the second child size is rounded down to a discretized point:
       if round2disc
+        # Takes the index of the rounded down discretized point, if it is zero,
+        # it does not exist. Such may happen if faithful2furini2016 is enabled,
+        # in the case the second child is waste (smaller than the first
+        # discretized point).
         dw_sc_ix = searchsortedlast(dw2, plw - x)
-        @assert !iszero(dw_sc_ix)
-        dw_sc = dw2[dw_sc_ix]
-      else
+        @assert faithful2furini2016 || !iszero(dw_sc_ix)
+        if iszero(dw_sc_ix) 
+          dw_sc = zero(S)
+        else
+          dw_sc = dw2[dw_sc_ix]
+        end
+      else # If the second child size is not rounded.
         dw_sc = plw - x
       end
-      if iszero(plis[pll, dw_sc])
+      if iszero(dw_sc)
+        @show trim_cut
+        @show pll
+        @show dl_sc
+        @show pli
+      end
+      
+      # If the second child is not waste (!trim_cut), nor was already
+      # generated, then it is a new plate obtained without a trim cut.
+      if !trim_cut && iszero(plis[pll, dw_sc])
+        # Assert meaning: if the second child is not waste, then it must
+        # have an associated size.
+        @assert !iszero(dw_sc)
+        # Save the plate to be processed later, and mark its existence.
         push!(next, (pll, dw_sc, n += 1))
         plis[pll, dw_sc] = n
+        # From Furini2016 supplement: "if a plate (NEW or existing) j 1 is
+        # obtained from j without a trim cut: set all flags of j_1 to 1."
+        faithful2furini2016 && !no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
       end
-      push!(vnnn, (pli, plis[pll, x], plis[pll, dw_sc]))
+      # Add the cut to the cut list. Check if the second child plate is waste
+      # before trying to get its plate index.
+      push!(vnnn, (pli, plis[pll, x], iszero(dw_sc) ? dw_sc : plis[pll, dw_sc]))
+    end
+
+    for y in dl1
+      # See comment above filter_symm_pos calls.
+      if faithful2furini2016
+        y >= pll && break
+      else
+        y > pll ÷ 2 && break
+      end
+
+      @assert plw >= min_piw
+      @assert y >= min_pil
+      @assert faithful2furini2016 || pll - y >= min_pil
+      
+      # If the preprocessing is faithful2furini2016, the plates are cut until
+      # they have the same size as pieces and, consequently, there exist the
+      # concept of trim cut (i.e., a cut in which the second child is waste).
+      trim_cut = faithful2furini2016 && !no_redundant_cut &&
+        !fits_at_least_one(sllw, pll - y, plw)
+      # The trim_cut flag is used below outside of 'if faithful2furini2016'
+      # because a true value implicates that 'faithful2furini2016 == true'.
+      if iszero(plis[y, plw]) # If the first child does not yet exist.
+        push!(next, (y, plw, n += 1)) # Create the first child.
+        if trim_cut
+          # From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
+          # from j through a trim cut with orientation v:"
+          fchild_sfhv = (0, -1, sh_j, sv_j)
+        elseif faithful2furini2016
+          # If a plate (NEW or existing) j_1 is obtained from j without a trim
+          # cut: set all flags of j 1 to 1.
+          fchild_sfhv = (1, 1, 1, 1)
+        end
+        faithful2furini2016 && !no_redundant_cut && push!.(sfhv, fchild_sfhv)
+        plis[y, plw] = n # Mark plate existence.
+      elseif faithful2furini2016 && !no_redundant_cut
+        # If plate already exists, and we are implementing Redundant-Cut
+        if trim_cut
+          # From Furini2016 supplement: "if an existing plate j_1 ∈ J is
+          # obtained from j through a trim cut:"
+          sh_j > -1 && (fh[plis[y, plw]] = 1)
+          sv_j > -1 && (fv[plis[y, plw]] = 1)
+        else
+          # From Furini2016 supplement: "if a plate (new or EXISTING) j_1 is
+          # obtained from j without a trim cut: set all flags of j_1 to 1."
+          setindex!.(sfhv, (1, 1, 1, 1), plis[y, plw])
+        end
+      end
+      # If the second child size is rounded down to a discretized point:
+      if round2disc
+        # Takes the index of the rounded down discretized point, if it is zero,
+        # it does not exist. Such may happen if faithful2furini2016 is enabled,
+        # in the case the second child is waste (smaller than the first
+        # discretized point).
+        dl_sc_ix = searchsortedlast(dl2, pll - y)
+        @assert faithful2furini2016 || !iszero(dl_sc_ix)
+        if iszero(dl_sc_ix) 
+          dl_sc = zero(S)
+        else
+          dl_sc = dl2[dl_sc_ix]
+        end
+      else # If the second child size is not rounded.
+        dl_sc = pll - y
+      end
+      # If the second child is not waste (!trim_cut), nor was already
+      # generated, then it is a new plate obtained without a trim cut.
+      if !trim_cut && iszero(plis[dl_sc, plw])
+        # Assert meaning: if the second child is not waste, then it must
+        # have an associated size.
+        @assert !iszero(dl_sc)
+        # Save the plate to be processed later, and mark its existence.
+        push!(next, (dl_sc, plw, n += 1))
+        plis[dl_sc, plw] = n
+        # From Furini2016 supplement: "if a plate (NEW or existing) j 1 is
+        # obtained from j without a trim cut: set all flags of j_1 to 1."
+        faithful2furini2016 && !no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
+      end
+      # Add the cut to the cut list. Check if the second child plate is waste
+      # before trying to get its plate index.
+      push!(hnnn, (pli, plis[y, plw], iszero(dl_sc) ? dl_sc : plis[dl_sc, plw]))
+    end
+
+    # Goes to the next unprocessed plate.
+    next_idx += 1
+  end
+
+  if faithful2furini2016
+    # Apply Redundant-Cut.
+    if !no_redundant_cut
+      filter_redundant_cuts!(hnnn, sh, fh)
+      filter_redundant_cuts!(vnnn, sv, fv)
+    end
+
+    # Create conversion table of the index of the plate with same size as
+    # a piece to the corresponding piece index.
+    for pii in 1:max_piece_type # pii: PIece Index
+      # Assert meaning: for every distinct piece dimensions there should be
+      # a plate with the exact same dimensions.
+      @assert !iszero(plis[l[pii], w[pii]])
+      push!(np, (plis[l[pii], w[pii]], pii))
     end
   end
-  #@show fpr_count
 
   return pli_lwb, hnnn, vnnn, np
 end
