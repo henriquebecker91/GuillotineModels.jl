@@ -125,12 +125,14 @@ function read_build_solve_and_print(
     end
   end
   # The three lines below create a .mps file of the model before solving it.
+  #=
   mps_model = MathOptFormat.MPS.Model()
   MOI.copy_to(mps_model, backend(m))
   MOI.write_to_file(mps_model, "last_run.mps")
+  =#
   flush(stdout) # guarantee all messages will be flushed before calling cplex
-  @error "testing furini, if optimize is called, all memory will be consumed"
-  exit(0)
+  #@error "testing furini, if optimize is called, all memory will be consumed"
+  #exit(0)
   time_to_solve_model = @elapsed optimize!(m)
   sleep(0.01) # shamefully needed to avoid out of order messages from cplex
   if !no_csv_out

@@ -530,9 +530,10 @@ function gen_cuts(
   faithful2furini2016 && round2disc && @warn(
     "Enabling both faithful2furini2016 and round2disc is allowed, but you are not being entirely faithful to Furini2016 if you do so."
   )
-  no_redundant_cut && !faithful2furini2016 && @warn(
+  !faithful2furini2016 && no_redundant_cut && @warn(
     "The Redundant-Cut is only used when faithful2furini2016 is enabled. As flag faithful2furini2016 is not enabled, flag no-redundant-cut has no effect."
   )
+  !faithful2furini2016 && (no_redundant_cut = true)
   l = sllw.l
   w = sllw.w
   @assert length(d) == length(l)
@@ -576,7 +577,7 @@ function gen_cuts(
   next_idx = one(P)
   #sizehint!(next, max_num_plates)
   push!(next, (L, W, one(P)))
-  if faithful2furini2016 && !no_redundant_cut
+  if !no_redundant_cut
     # If the preprocessing is faithful2furini2016 and Redundant-Cut is
     # enabled, then four auxiliary trim cut flag vectors are necessary.
     sfhv = (Vector{Int8}(), Vector{Int8}(), Vector{Int8}(), Vector{Int8}())
@@ -605,11 +606,10 @@ function gen_cuts(
   )
   #fpr_count = 0
   while next_idx <= length(next)
-    @assert (!faithful2furini2016 || no_redundant_cut ||
-      [length(next)] == unique(length.(sfhv)))
+    @assert (no_redundant_cut || [length(next)] == unique(length.(sfhv)))
 
     pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
-    if faithful2furini2016 && !no_redundant_cut
+    if !no_redundant_cut
       sh_j, sv_j, fh_j, fv_j = getindex.(sfhv, next_idx)
     end
     if !faithful2furini2016
@@ -701,18 +701,20 @@ function gen_cuts(
       # because a true value implicates that 'faithful2furini2016 == true'.
       if iszero(plis[pll, x]) # If the first child does not yet exist.
         push!(next, (pll, x, n += 1)) # Create the first child.
-        if !no_redundant_cut && trim_cut
-          # From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
-          # from j through a trim cut with orientation v:"
-          fchild_sfhv = (-1, 0, sh_j, sv_j)
-        elseif faithful2furini2016
-          # If a plate (NEW or existing) j_1 is obtained from j without a trim
-          # cut: set all flags of j 1 to 1.
-          fchild_sfhv = (1, 1, 1, 1)
+        if !no_redundant_cut
+          if trim_cut
+            # From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
+            # from j through a trim cut with orientation v:"
+            fchild_sfhv = (-1, 0, sh_j, sv_j)
+          else
+            # If a plate (NEW or existing) j_1 is obtained from j without a trim
+            # cut: set all flags of j 1 to 1.
+            fchild_sfhv = (1, 1, 1, 1)
+          end
+          push!.(sfhv, fchild_sfhv)
         end
-        faithful2furini2016 && !no_redundant_cut && push!.(sfhv, fchild_sfhv)
         plis[pll, x] = n # Mark plate existence.
-      elseif faithful2furini2016 && !no_redundant_cut
+      elseif !no_redundant_cut
         # If plate already exists, and we are implementing Redundant-Cut
         if trim_cut
           # From Furini2016 supplement: "if an existing plate j_1 ∈ J is
@@ -726,7 +728,7 @@ function gen_cuts(
         end
       end
       # If the second child size is rounded down to a discretized point:
-      if round2disc
+      if round2disc && !trim_cut
         # Takes the index of the rounded down discretized point, if it is zero,
         # it does not exist. Such may happen if faithful2furini2016 is enabled,
         # in the case the second child is waste (smaller than the first
@@ -753,7 +755,7 @@ function gen_cuts(
         plis[pll, dw_sc] = n
         # From Furini2016 supplement: "if a plate (NEW or existing) j 1 is
         # obtained from j without a trim cut: set all flags of j_1 to 1."
-        faithful2furini2016 && !no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
+        !no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
       end
       # Add the cut to the cut list. Check if the second child plate is waste
       # before trying to get its plate index.
@@ -775,24 +777,25 @@ function gen_cuts(
       # If the preprocessing is faithful2furini2016, the plates are cut until
       # they have the same size as pieces and, consequently, there exist the
       # concept of trim cut (i.e., a cut in which the second child is waste).
-      trim_cut = faithful2furini2016 && !no_redundant_cut &&
-        !fits_at_least_one(sllw, pll - y, plw)
+      trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, pll - y, plw)
       # The trim_cut flag is used below outside of 'if faithful2furini2016'
       # because a true value implicates that 'faithful2furini2016 == true'.
       if iszero(plis[y, plw]) # If the first child does not yet exist.
         push!(next, (y, plw, n += 1)) # Create the first child.
-        if trim_cut
-          # From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
-          # from j through a trim cut with orientation v:"
-          fchild_sfhv = (0, -1, sh_j, sv_j)
-        elseif faithful2furini2016
-          # If a plate (NEW or existing) j_1 is obtained from j without a trim
-          # cut: set all flags of j 1 to 1.
-          fchild_sfhv = (1, 1, 1, 1)
+        if !no_redundant_cut
+          if trim_cut
+            # From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
+            # from j through a trim cut with orientation v:"
+            fchild_sfhv = (0, -1, sh_j, sv_j)
+          else
+            # If a plate (NEW or existing) j_1 is obtained from j without a trim
+            # cut: set all flags of j 1 to 1.
+            fchild_sfhv = (1, 1, 1, 1)
+          end
+          push!.(sfhv, fchild_sfhv)
         end
-        faithful2furini2016 && !no_redundant_cut && push!.(sfhv, fchild_sfhv)
         plis[y, plw] = n # Mark plate existence.
-      elseif faithful2furini2016 && !no_redundant_cut
+      elseif !no_redundant_cut
         # If plate already exists, and we are implementing Redundant-Cut
         if trim_cut
           # From Furini2016 supplement: "if an existing plate j_1 ∈ J is
@@ -806,7 +809,7 @@ function gen_cuts(
         end
       end
       # If the second child size is rounded down to a discretized point:
-      if round2disc
+      if round2disc && !trim_cut
         # Takes the index of the rounded down discretized point, if it is zero,
         # it does not exist. Such may happen if faithful2furini2016 is enabled,
         # in the case the second child is waste (smaller than the first
@@ -832,7 +835,7 @@ function gen_cuts(
         plis[dl_sc, plw] = n
         # From Furini2016 supplement: "if a plate (NEW or existing) j 1 is
         # obtained from j without a trim cut: set all flags of j_1 to 1."
-        faithful2furini2016 && !no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
+        !no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
       end
       # Add the cut to the cut list. Check if the second child plate is waste
       # before trying to get its plate index.
