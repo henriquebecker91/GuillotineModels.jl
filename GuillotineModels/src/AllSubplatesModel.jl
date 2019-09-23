@@ -44,6 +44,7 @@ function build_model_no_symmbreak(
   faithful2furini2016 = false,
   no_redundant_cut = false, no_cut_position = false,
   no_furini_symmbreak = false,
+  relax2lp = false,
   lb :: P = zero(P), ub :: P = zero(P)
 ) where {D, S, P}
   @assert length(d) == length(l) && length(l) == length(w)
@@ -116,14 +117,14 @@ function build_model_no_symmbreak(
   # If all pieces have demand one, a binary variable will suffice to make the
   # connection between a piece type and the plate it is extracted from.
   naturally_only_binary = all(di -> di <= 1, d)
-  if naturally_only_binary || only_binary
+  if !relax2lp && (naturally_only_binary || only_binary)
     # only_binary is equal to naturally_only_binary for now, but the idea is
     # that only_binary will expand the number of binary variables to account
     # for picuts that can repeat (plates that can appear more than one time
     # and that may have the same piece extracted from them)
     @variable(model, picuts[1:length(np)], Bin)
   else
-    @variable(model, picuts[1:length(np)] >= 0, Int)
+    @variable(model, picuts[1:length(np)] >= 0, integer = !relax2lp)
     #@variable(model,
     #  0 <= picuts[i = 1:length(np)] <=
     #    min(pli_lwb[np[i][1]][3], d[np[i][2]]),
@@ -131,9 +132,10 @@ function build_model_no_symmbreak(
   end
 
   if only_binary
-    @variable(model, cuts_made[1:length(hvcuts)], Bin)
+    @assert !relax2lp
+    @variable(model, cuts_made[1:length(hvcuts)] >= 0, binary = !relax2lp)
   else
-    @variable(model, cuts_made[1:length(hvcuts)] >= 0, Int)
+    @variable(model, cuts_made[1:length(hvcuts)] >= 0, integer = !relax2lp)
   end
 
   # The objective function is to maximize the profit made by extracting

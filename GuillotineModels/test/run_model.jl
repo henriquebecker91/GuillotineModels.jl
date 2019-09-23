@@ -67,7 +67,9 @@ function read_build_solve_and_print(
   p_args["flow-model"] && p_args["only-binary-variables"] && @warn "the algorithm flow-model does not support the option only-binary-variables; ignoring the flag only-binary-variables"
   p_args["flow-model"] && p_args["break-hvcut-symmetry"] && @warn "the algorithm flow-model does not support the option break-hvcut-symmetry; ignoring the flag break-hvcut-symmetry"
   if p_args["flow-model"]
-    FlowModel.build_model(m, d, p, l, w, L, W)
+    FlowModel.build_model(m, d, p, l, w, L, W;
+      relax2lp = p_args["relax2lp"]
+    )
   else
     if p_args["break-hvcut-symmetry"]
       _, hvcuts, pli2lwsb, _, _ = AllSubplatesModel.build_model_with_symmbreak(
@@ -90,6 +92,7 @@ function read_build_solve_and_print(
         no_redundant_cut = p_args["no-redundant-cut"],
         no_furini_symmbreak = p_args["no-furini-symmbreak"],
         faithful2furini2016 = p_args["faithful2furini2016"],
+        relax2lp = p_args["relax2lp"],
         lb = get(p_args["lower-bounds"], instfname_idx, 0),
         ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p))
       )
@@ -125,11 +128,11 @@ function read_build_solve_and_print(
     end
   end
   # The three lines below create a .mps file of the model before solving it.
-  #=
+  # #=
   mps_model = MathOptFormat.MPS.Model()
   MOI.copy_to(mps_model, backend(m))
   MOI.write_to_file(mps_model, "last_run.mps")
-  =#
+  # =#
   flush(stdout) # guarantee all messages will be flushed before calling cplex
   #@error "testing furini, if optimize is called, all memory will be consumed"
   #exit(0)
@@ -143,8 +146,10 @@ function read_build_solve_and_print(
       obj_value = 0
     end
     @show obj_value
-    obj_bound = objective_bound(m)
-    @show obj_bound
+    if !p_args["relax2lp"]
+      obj_bound = objective_bound(m)
+      @show obj_bound
+    end
     stop_reason = termination_status(m)
     @show stop_reason
     stop_code = Int64(stop_reason)
@@ -176,7 +181,8 @@ function read_build_solve_and_print(
             println((pli2lwsb[parent][1], pli2lwsb[parent][2]) => ((pli2lwsb[fchild][1], pli2lwsb[fchild][2]), (pli2lwsb[schild][1], pli2lwsb[schild][2])))
           end
         end
-      else
+      else # same as: if !p_args["break-hvcut-symmetry"]
+        p_args["relax2lp"] && @warn "relax2lp flag used, be careful regarding solution"
         ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if value(ps[i]) > 0.001]
         cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if value(cm[i]) > 0.001]
         @show ps_nz
@@ -187,11 +193,11 @@ function read_build_solve_and_print(
           pli, pii = np[i]
           println((pli_lwb[pli][1], pli_lwb[pli][2]) => (v, l[pii], w[pii]))
         end
-        println("(parent plate length, parent plate width) => ((first child plate length, first child plate width), (second child plate length, second child plate width))")
+        println("(parent plate length, parent plate width) => (number of times this cut happened, (first child plate length, first child plate width), (second child plate length, second child plate width))")
         foreach(cm_nz) do e
-          i, _ = e
+          i, v = e
           parent, fchild, schild = hvcuts[i]
-          println((pli_lwb[parent][1], pli_lwb[parent][2]) => ((pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[schild][1], pli_lwb[schild][2])))
+          println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[schild][1], pli_lwb[schild][2])))
         end
       end
     end
@@ -254,6 +260,9 @@ function parse_script_args(args = ARGS)
         nargs = 0
       "--no-cut-position"
         help = "disables Furini2016 Cut-Position reduction: if a trivial heuristic shows that no combination of six or more pieces fit a plate, then the plate may be cut with restricted cuts without loss to optimality"
+        nargs = 0
+      "--relax2lp"
+        help = "(works on Furini-like and Flow1) integer and binary variables become continuous"
         nargs = 0
       "--ignore-d"
         help = "ignore the demand information during discretization, used to measure impact (does not affect flow)"

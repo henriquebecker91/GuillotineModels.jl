@@ -64,7 +64,8 @@ using FlowDP
 #
 function build_model(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
-  L :: S, W :: S
+  L :: S, W :: S;
+  relax2lp = false
 ) where {D, S, P}
   # TODO: fix (L, W, l, w, d) = (20, 5, [20, 4, 18], [4, 5, 2], [1, 1, 1])
   @assert length(d) == length(l)
@@ -101,7 +102,7 @@ function build_model(
   #@assert isempty(back2indxs[vroot_back_edge])
   push!(back2indxs[vroot_back_edge], dummy_vroot_enabler)
 
-  @variable(model, edge[1:last_gedge_idx] >= 0, Int)
+  @variable(model, edge[1:last_gedge_idx] >= 0, integer = !relax2lp)
 
   @objective(model, Max,
     sum(p[pii] * edge[pii] for pii = 1:num_piece_types)
