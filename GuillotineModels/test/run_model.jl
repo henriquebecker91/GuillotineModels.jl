@@ -99,6 +99,12 @@ function read_build_solve_and_print(
     end
   end
   time_to_build_model = time() - before_model_build 
+  # The three lines below create a .mps file of the model before solving it.
+  # #=
+  mps_model = MathOptFormat.MPS.Model()
+  MOI.copy_to(mps_model, backend(m))
+  MOI.write_to_file(mps_model, "last_run.mps")
+  # =#
   if !no_csv_out
     @show instfname
     seed = first(p_args["seed"])
@@ -127,12 +133,6 @@ function read_build_solve_and_print(
       @show num_cuts_made
     end
   end
-  # The three lines below create a .mps file of the model before solving it.
-  # #=
-  mps_model = MathOptFormat.MPS.Model()
-  MOI.copy_to(mps_model, backend(m))
-  MOI.write_to_file(mps_model, "last_run.mps")
-  # =#
   flush(stdout) # guarantee all messages will be flushed before calling cplex
   #@error "testing furini, if optimize is called, all memory will be consumed"
   #exit(0)

@@ -408,7 +408,9 @@ function gen_all_edges(
   nodes = Vector{Node{S, N}}()
   lw2pii = fill(zero(E), L, W)
   for pii = 1:n
-    @assert iszero(lw2pii[l[pii], w[pii]])
+    if !iszero(lw2pii[l[pii], w[pii]])
+      @warn "CAUTION: the instance has two pieces with the exact same length and width, the first is piece nº $(lw2pii[l[pii], w[pii]]) and the second is nº $(pii), both have length $(l[pii]) and width $(w[pii])"
+    end
     lw2pii[l[pii], w[pii]] = pii
   end
   max_LW = max(L, W)
