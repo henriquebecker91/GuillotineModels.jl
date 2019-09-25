@@ -27,8 +27,23 @@ function promising_kfirst(
   return zero(D)
 end
 
-# TODO: bring the bks back to the original ordering, or tag it with piece
-# indexes, anything to make the solution undestandable.
+#=
+function expand!(
+  d :: AbstractVector{D}, as :: AbstractVector{AbstractVector}
+) :: AbstractVector{D}
+  n = length(d)
+  for a in as
+    @assert length(a) == n
+    a_ = Vector{typeof(a)}()
+    for i in 1:n
+      push!(a_, repeat([a[i]], d[i]))
+    end
+    empty()
+  end
+  empty!(d)
+end
+=#
+
 # Note: the rng object is modified, as it would be expected.
 function iterated_greedy(
   d :: AbstractVector{D}, p :: AbstractVector{P}, l :: AbstractVector{S}, w :: AbstractVector{S},
@@ -65,10 +80,9 @@ function iterated_greedy(
       o_ = sortperm(w_; rev = true)
       permute!.((d_, p_, l_, w_, a_, i_), (o_, o_, o_, o_, o_, o_))
       v, s = first_fit_decr(d_, p_, l_, w_, L, W)
-      @assert sum(s .* p_) == v
       if v > bkv
         (s_ = zeros(D, n))[1:k] = s
-        permute!(s_, i)
+        invpermute!(s_, i)
         bkv, bks = v, s_
         iter_last_improv = curr_iter
       end
@@ -76,10 +90,6 @@ function iterated_greedy(
     shuffle!(rng, o)
   end
 
-  @show bks
-  @show op
-  @show sum(bks .* op)
-  @show bkv
   @assert sum(bks .* op) == bkv
   bkv, bks
 end
@@ -141,6 +151,7 @@ function first_fit_decr(
     @label next_piece_type
   end
 
+  @assert sum(bks .* p) == bkv
   return bkv, bks
 end
 
