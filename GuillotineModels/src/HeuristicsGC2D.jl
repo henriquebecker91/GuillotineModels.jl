@@ -27,22 +27,18 @@ function promising_kfirst(
   return zero(D)
 end
 
-#=
-function expand!(
-  d :: AbstractVector{D}, as :: AbstractVector{AbstractVector}
-) :: AbstractVector{D}
+function expand(
+  d :: AbstractVector{D}, a :: AbstractVector{T}
+) :: AbstractVector{T} where {D, T}
   n = length(d)
-  for a in as
-    @assert length(a) == n
-    a_ = Vector{typeof(a)}()
-    for i in 1:n
-      push!(a_, repeat([a[i]], d[i]))
-    end
-    empty()
-  end
-  empty!(d)
+  @assert length(a) == n
+  collect(Base.Iterators.Flatten(
+    map(
+      ((v, q),) -> repeat([v], q),
+      zip(a, d)
+    )
+  ))
 end
-=#
 
 # Note: the rng object is modified, as it would be expected.
 function iterated_greedy(
