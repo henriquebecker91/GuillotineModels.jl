@@ -4,6 +4,70 @@ using JuMP
 include("GuillotinePlatesDP.jl")
 using .GuillotinePlatesDP
 
+function search_cut(
+  pp :: P, # parent plate
+  fcl :: S, # first child length
+  fcw :: S, # first child width
+  nnn :: Vector{NTuple{3, P}},
+  pli_lwb :: Vector{Tuple{S, S, P}},
+) :: P where {D, S, P}
+  for i in 1:length(nnn)
+    (pp_, fc, _) = nnn[i]
+    pp_ != pp && continue
+    pli_lwb[fc][1] == fcl && pli_lwb[fc][2] == fcw && return 
+  end
+  @assert false # this should not be reachable
+end
+
+# TODO: the warm-start for the flag faithful2furini enabled and disabled will
+# need to be different? the rules for which plates exist and which do not are
+# different from one to another.
+# NOTE: this method only work for simple patterns in which:
+# (i) the cuts are two-staged (i.e., the pattern is justa a vector of vector);
+# (ii) the first stage cuts vertically (width strips);
+# (iii) the first piece of each strip gives the width of the strip;
+# If you need to warm-start with a more complex pattern, create another
+# method with the same name, and another type for parameter `pat`.
+function warm_start(
+  model, l, w, L, W,
+  pat :: AbstractVector{AbstractVector{D}},
+  pli_lwb :: Vector{Tuple{S, S, P}},
+  nnn :: Vector{NTuple{3, P}},
+  np :: Vector{Tuple{P, D}},
+  plis :: Array{P, 2},
+  faithful2furini = false
+  #round2disc wait to see if this is needed
+  # which other model building options will need to be passed to this?
+) :: where {D, S, P}
+  # the initial residual plate is L, W
+  # visit the outer vector in reverse
+  # if the current head of stripe is smaller than half residual plate
+  # then search for a vertical cut on the residual plate, with the right width
+  #   for the first child and enable it, change the residual plate to
+  #   be the second child
+  # else assert this is the last stripe, just use the remaining plate (second
+  #   child of the last cut, or the whole root if there is just one stripe)
+  # after finishing the strip processing, for each plate that is a stripe:
+  #   do the same as the first stage, but for the subplate and the opposite cut
+  #   orientation (including iteration in reverse order); 
+  # finally, for every subplate that will become a piece, connect it to a piece
+  #   for faithful2furini2016 we need to trim the plate and have it with exact
+  #   plate size; for !faithful2furini2016 we just lik directly to np
+  rl, rw = L, W
+  rpli = plis[rl, rw]
+  final = false
+  for stripe in reverse(pat)
+    @assert !final
+    @assert !isempty(stripe)
+    ws = w[first(stripe)]
+    if ws > div(rw, 2)
+      final = true
+    else
+      
+    end
+  end
+end
+
 # HIGH LEVEL EXPLANATION OF THE MODEL
 #
 # Variables:
