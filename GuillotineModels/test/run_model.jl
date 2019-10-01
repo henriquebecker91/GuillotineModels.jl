@@ -6,10 +6,12 @@ Pkg.instantiate()
 
 # Load the necessary packages. The ones after the `push!` are from this
 # repository.
-using JuMP, CPLEX, ArgParse, MathOptInterface, MathOptFormat
+using JuMP, Cbc, ArgParse, MathOptInterface
+#using MathOptFormat # disabled because dependency hell
+using Random # for MersenneTwister used in heuristic
 const MOI = MathOptInterface
 push!(LOAD_PATH, "../src/")
-using AllSubplatesModel, FlowModel, GC2DInstanceReader
+using AllSubplatesModel, FlowModel, GC2DInstanceReader, HeuristicsGC2D
 
 # JuMP has no method for getting all constraints, you need to get the
 # types of constraints used in the model and then query the number for
@@ -32,7 +34,7 @@ function new_empty_and_configured_model(p_args; no_cplex_out = no_cplex_out)
   det_time_limit = first(p_args["det-time-limit"])
 
   if p_args["disable-cplex-tricks"]
-    m = JuMP.Model(with_optimizer(CPLEX.Optimizer,
+    m = JuMP.Model(with_optimizer(Cbc.Optimizer#=,
       CPX_PARAM_PROBE = -1,
       CPX_PARAM_HEURFREQ = -1,
       CPX_PARAM_REPEATPRESOLVE = -1,
@@ -41,15 +43,15 @@ function new_empty_and_configured_model(p_args; no_cplex_out = no_cplex_out)
       #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
       CPX_PARAM_SCRIND = no_cplex_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
-      CPX_PARAM_RANDOMSEED = seed
+      CPX_PARAM_RANDOMSEED = seed=#
     ))
   else
-    m = JuMP.Model(with_optimizer(CPLEX.Optimizer,
+    m = JuMP.Model(with_optimizer(Cbc.Optimizer#=,
       CPX_PARAM_DETTILIM = det_time_limit,
       #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
       CPX_PARAM_SCRIND = no_cplex_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
-      CPX_PARAM_RANDOMSEED = seed
+      CPX_PARAM_RANDOMSEED = seed=#
     ))
   end
 
@@ -100,11 +102,36 @@ function read_build_solve_and_print(
   end
   time_to_build_model = time() - before_model_build 
   # The three lines below create a .mps file of the model before solving it.
-  # #=
+  #=
   mps_model = MathOptFormat.MPS.Model()
   MOI.copy_to(mps_model, backend(m))
   MOI.write_to_file(mps_model, "last_run.mps")
-  # =#
+  =#
+  is_furini_like = !(p_args["flow-model"] || p_args["break-hvcut-symmetry"])
+
+  if p_args["warm-start"] && is_furini_like
+    (ws_obj, ws_sel, ws_pat), heur_time, _, _, _ = @timed iterated_greedy(
+      d, p, l, w, L, W, MersenneTwister(p_args["seed"][1])
+    )
+    if !no_csv_out
+      @show heur_time
+      @show ws_obj
+      @show ws_sel
+      @show ws_pat
+    end
+    ws_time = @elapsed AllSubplatesModel.warm_start(
+      m, l, w, L, W, ws_pat, pli_lwb, hvcuts, np;
+      faithful2furini2016 = p_args["faithful2furini2016"]
+    )
+    if !no_csv_out
+      @show ws_time
+    end
+  end
+
+  p_args["warm-start"] && !is_furini_like && @warn(
+    "warm start not implemented for the selected model"
+  )
+
   if !no_csv_out
     @show instfname
     seed = first(p_args["seed"])
@@ -260,6 +287,9 @@ function parse_script_args(args = ARGS)
         nargs = 0
       "--no-cut-position"
         help = "disables Furini2016 Cut-Position reduction: if a trivial heuristic shows that no combination of six or more pieces fit a plate, then the plate may be cut with restricted cuts without loss to optimality"
+        nargs = 0
+      "--warm-start"
+        help = "(works only for Furini-like) uses the heuristic described in Furini2016 to generate a initial primal feasible solution and warm-start the model"
         nargs = 0
       "--relax2lp"
         help = "(works on Furini-like and Flow1) integer and binary variables become continuous"

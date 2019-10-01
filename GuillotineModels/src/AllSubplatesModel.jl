@@ -11,10 +11,10 @@ function search_cut(
   nnn :: Vector{NTuple{3, P}},
   pli_lwb :: Vector{Tuple{S, S, P}},
 ) :: P where {D, S, P}
-  for i in 1:length(nnn)
+  for i in one(P):convert(P, length(nnn))
     (pp_, fc, _) = nnn[i]
     pp_ != pp && continue
-    pli_lwb[fc][1] == fcl && pli_lwb[fc][2] == fcw && return 
+    pli_lwb[fc][1] == fcl && pli_lwb[fc][2] == fcw && return i
   end
   @assert false # this should not be reachable
 end
@@ -23,22 +23,23 @@ end
 # need to be different? the rules for which plates exist and which do not are
 # different from one to another.
 # NOTE: this method only work for simple patterns in which:
-# (i) the cuts are two-staged (i.e., the pattern is justa a vector of vector);
-# (ii) the first stage cuts vertically (width strips);
-# (iii) the first piece of each strip gives the width of the strip;
+# (1) the cuts are two-staged (i.e., the pattern is justa a vector of vector);
+# (1.5) by consequence, the cuts are restricted;
+# (2) the first stage cuts vertically (width strips);
+# (3) the first piece of each strip gives the width of the strip;
 # If you need to warm-start with a more complex pattern, create another
 # method with the same name, and another type for parameter `pat`.
 function warm_start(
   model, l, w, L, W,
-  pat :: AbstractVector{AbstractVector{D}},
+  pat :: Vector{Vector{D}},
   pli_lwb :: Vector{Tuple{S, S, P}},
   nnn :: Vector{NTuple{3, P}},
-  np :: Vector{Tuple{P, D}},
-  plis :: Array{P, 2},
-  faithful2furini = false
+  np :: Vector{Tuple{P, D}};
+  faithful2furini2016 = false
   #round2disc wait to see if this is needed
   # which other model building options will need to be passed to this?
-) :: where {D, S, P}
+) where {D, S, P}
+  @assert !faithful2furini2016
   # the initial residual plate is L, W
   # visit the outer vector in reverse
   # if the current head of stripe is smaller than half residual plate
@@ -53,19 +54,94 @@ function warm_start(
   # finally, for every subplate that will become a piece, connect it to a piece
   #   for faithful2furini2016 we need to trim the plate and have it with exact
   #   plate size; for !faithful2furini2016 we just lik directly to np
-  rl, rw = L, W
-  rpli = plis[rl, rw]
-  final = false
-  for stripe in reverse(pat)
-    @assert !final
+  rw = W # remaining width, initialized with root plate width
+  rpli = 1 # NOTE: the root plate is guaranteed to have index 1
+  cut_var_vals = Dict{P, Int}() # the amount of times each cut was made
+  first_stage_plates = Vector{P}() # the plate index of all stripes
+  rpat = reverse(pat)
+  for stripe in rpat
     @assert !isempty(stripe)
     ws = w[first(stripe)]
-    if ws > div(rw, 2)
-      final = true
+    if ws <= div(rw, 2)
+      cut = search_cut(rpli, L, ws, nnn, pli_lwb)
+      cut_var_vals[cut] = 1 + get(cut_var_vals, cut, 0)
+      _, fc, rpli = nnn[cut]
+
+      rw -= ws
+      push!(first_stage_plates, fc)
+      fcl, fcw = pli_lwb[fc]
+      println("0\ti\t$(fcl)\t$(fcw)")
     else
-      
+      # If the stripe width is already more than half residual plate, then it
+      # is the last stripe (the stripes are ordered in increase-or-keep order,
+      # and cannot exist a larger width stripe in the remaining space).
+      push!(first_stage_plates, rpli)
+      scl, scw = pli_lwb[rpli]
+      println("0\tl\t$(scl)\t$(scw)")
     end
   end
+  # TODO: both loops need to be by index, and stop before the last element,
+  # the last element need to be checked against the min_piece_l/w and the
+  # remaining space in that dimension, there may be needed to make a cut
+  # that creates an unused first child and a used second child.
+  # The elements before the last do not have this problem because the
+  # ordering guarantee that they are smaller than half plate and therefore
+  # a cut for them exist.
+  # TODO: Consider: would it be simpler to just create missing variables?
+  # this would work for any model type, and would make this code unaffedcted
+  # by new variable reductions; the increase in the number of variables
+  # would be very small.
+
+  println("start of second stage")
+  pli2pii_qt = Dict{Tuple{P, D}, Int}()
+  for i in 1:length(first_stage_plates)
+    # For each stripe, reset the remaining info.
+    rpli = first_stage_plates[i] # get the index of the plate/stripe
+    rl = pli_lwb[rpli][1] # get the length of the plate/stripe
+    ws = pli_lwb[rpli][2] # stripe width (do not diminish)
+
+    pli2pii = Vector{Tuple{P, D}}()
+    for piece in sort(pii -> l[pii], rpat[i])
+      lp = l[piece]
+      if lp <= div(rl, 2)
+        cut = search_cut(rpli, lp, ws, nnn, pli_lwb)
+        cut_var_vals[cut] = 1 + get!(cut_var_vals, cut, 0)
+        _, fc, rpli = nnn[cut]
+        pli2pii_qt[(fc, piece)] = 1 + get(pli2pii_qt, (fc, piece), 0)
+
+        fcl, fcw = pli_lwb[fc]
+        println("$(i)\ti\t$(fcl)\t$(fcw)")
+        println("$(piece)\tp\t$(l[piece])\t$(w[piece])")
+        rl -= lp
+      else
+        if pli_lwb[rpli][1] >= l[piece] + min_l
+          # If the piece is being cut from a large (in relation to it)
+          
+        else
+          scl, scw = pli_lwb[rpli]
+          println("$(i)\tl\t$(scl)\t$(scw)")
+          println("$(piece)\tp\t$(l[piece])\t$(w[piece])")
+          pli2pii_qt[(rpli, piece)] = 1 + get(pli2pii_qt, (rpli, piece), 0)
+        end
+      end
+    end
+  end
+  for (var_index, var_value) in cut_var_vals
+    set_start_value(model[:cuts_made][var_index], var_value)
+  end
+  if faithful2furini2016
+    # HERE WE NEED TO DO THE TRIM CUT IF FAITHFUL2FURINI IS ENABLED
+  else
+    for (pair, value) in pli2pii_qt
+      @show pli_lwb[pair[1]]
+      @show l[pair[2]], w[pair[2]]
+      picut_idx = findfirst(isequal(pair), np)
+      @show picut_idx
+      set_start_value(model[:picuts][picut_idx], value)
+    end
+  end
+
+  model
 end
 
 # HIGH LEVEL EXPLANATION OF THE MODEL
