@@ -47,6 +47,23 @@ function search_approx_cut(
   @assert false # this should not be reachable
 end
 
+function search_cut_or_symmetry(
+  pp :: P, # parent plate
+  fcl :: S, # first child length
+  fcw :: S, # first child width
+  nnn :: Vector{NTuple{3, P}},
+  pli_lwb :: Vector{Tuple{S, S, P}},
+) :: P where {D, S, P}
+  pll, plw, _ = pli_lwb[pp]
+  @assert fcl == pll || fcw == plw
+  for i in one(P):convert(P, length(nnn))
+    (pp_, fc, _) = nnn[i]
+    pp_ != pp && continue
+    pli_lwb[fc][1] == fcl && pli_lwb[fc][2] == fcw && return i
+  end
+  @assert false # this should not be reachable
+end
+
 function search_cut(
   pp :: P, # parent plate
   fcl :: S, # first child length
@@ -163,16 +180,17 @@ function warm_start(
         println("$(i)\ti\t$(fcl)\t$(fcw)")
         println("$(piece)\tp\t$(lp)\t$(wp)")
 
-        # The piece may have a small width relative to the plate width
-        # (i.e., the piece of smallest width could fit there) if this is
-        # the case, we cannot extract it directly from tne plate. 
-        # There are two options: (1) if the piece is smaller than half
-        # the plate, it can be cut as first child; (2) otherwise,
-        # we need to make an extra cut (a fake trim) in which
-        # the second child will be a plate "not too big" to allow a
-        # direct extraction of the piece from it.
         min_w = min_l_fitting_piece(w, l, fcw, fcl)
-        if fcw >= wp + min_w
+        if faithful2furini2016
+        elseif fcw >= wp + min_w
+          # The piece may have a small width relative to the plate width
+          # (i.e., the piece of smallest width could fit there) if this is
+          # the case, we cannot extract it directly from tne plate. 
+          # There are two options: (1) if the piece is smaller than half
+          # the plate, it can be cut as first child; (2) otherwise,
+          # we need to make an extra cut (a fake trim) in which
+          # the second child will be a plate "not too big" to allow a
+          # direct extraction of the piece from it.
           if wp <= div(fcw, 2)
             # Cut the fc again, at the piece width this time, use the
             # first child to extract the piece.
@@ -233,8 +251,6 @@ function warm_start(
         @assert plw == ws
         min_w_pii = min_l_fitting_piece(w, l, plw, pll)
         min_w = iszero(min_w_pii) ? plw : l[min_w_pii]
-        # TODO: here we have a plate of a good length to extract the piece
-        # but we do not guarantee the width
         if plw >= wp + min_w
           trimw = plw - wp
           cut = search_approx_cut(
