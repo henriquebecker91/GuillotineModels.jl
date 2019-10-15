@@ -10,6 +10,7 @@ module GuillotinePlatesDP
 
 export SortedLinkedLW
 export becker2019_discretize, gen_cuts, gen_cuts_sb
+export should_extract_piece_from_plate
 
 # Structure for keeping the piece lengths and widths both in the original order
 # and sorted order, and allow to access the piece index or the width (length)

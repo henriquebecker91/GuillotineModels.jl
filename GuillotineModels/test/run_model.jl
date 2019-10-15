@@ -6,26 +6,20 @@ Pkg.instantiate()
 
 # Load the necessary packages. The ones after the `push!` are from this
 # repository.
-using JuMP, Cbc, ArgParse, MathOptInterface
-#using MathOptFormat # disabled because dependency hell
+using JuMP, ArgParse, MathOptInterface
+#using CPLEX
+#using Cbc
+using Gurobi
+
+using MathOptFormat # disabled because dependency hell
 using Random # for MersenneTwister used in heuristic
 const MOI = MathOptInterface
 push!(LOAD_PATH, "../src/")
 using AllSubplatesModel, FlowModel, GC2DInstanceReader, HeuristicsGC2D
+using ModelUtils # utility methods for dealing with JuMP models
 
-# JuMP has no method for getting all constraints, you need to get the
-# types of constraints used in the model and then query the number for
-# specific type.
-function num_all_constraints(m) :: Int64
-  sum = 0 :: Int64
-  for (ftype, stype) in list_of_constraint_types(m)
-    sum += num_constraints(m, ftype, stype)
-  end
-  return sum
-end
-
-# Create a new CPLEX model and set its configurations.
-function new_empty_and_configured_model(p_args; no_cplex_out = no_cplex_out)
+# Create a new model with a configured underlying solver.
+function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
   @assert isone(length(p_args["threads"]))
   threads = first(p_args["threads"])
   @assert isone(length(p_args["seed"]))
@@ -33,23 +27,34 @@ function new_empty_and_configured_model(p_args; no_cplex_out = no_cplex_out)
   @assert isone(length(p_args["det-time-limit"]))
   det_time_limit = first(p_args["det-time-limit"])
 
-  if p_args["disable-cplex-tricks"]
-    m = JuMP.Model(with_optimizer(Cbc.Optimizer#=,
+  if p_args["disable-solver-tricks"]
+    m = JuMP.Model(with_optimizer(Gurobi.Optimizer,
+      Threads = threads,
+      Seed = seed,
+      OutputFlag = no_solver_out ? 0 : 1,
+      MIPGap = 1e-6
+    #=,
       CPX_PARAM_PROBE = -1,
       CPX_PARAM_HEURFREQ = -1,
       CPX_PARAM_REPEATPRESOLVE = -1,
       CPX_PARAM_DIVETYPE = 1,
       CPX_PARAM_DETTILIM = det_time_limit,
       #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
-      CPX_PARAM_SCRIND = no_cplex_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
+      CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
       CPX_PARAM_RANDOMSEED = seed=#
     ))
   else
-    m = JuMP.Model(with_optimizer(Cbc.Optimizer#=,
+    m = JuMP.Model(with_optimizer(Gurobi.Optimizer,
+      Method = 2, # use barrier for LP
+      Threads = threads,
+      Seed = seed,
+      OutputFlag = no_solver_out ? 0 : 1,
+      MIPGap = 1e-6
+    #=,
       CPX_PARAM_DETTILIM = det_time_limit,
       #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
-      CPX_PARAM_SCRIND = no_cplex_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
+      CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
       CPX_PARAM_RANDOMSEED = seed=#
     ))
@@ -60,18 +65,16 @@ end
 
 # Read the instance, build the model, solve the model, and print related stats.
 function read_build_solve_and_print(
-  p_args, instfname_idx; no_csv_out = false, no_cplex_out = false
+  p_args, instfname_idx; no_csv_out = false, no_solver_out = false
 )
   instfname = p_args["instfnames"][instfname_idx]
   L, W, l, w, p, d = GC2DInstanceReader.read_instance(instfname)
   before_model_build = time()
-  m = new_empty_and_configured_model(p_args; no_cplex_out = no_cplex_out)
+  m = new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
   p_args["flow-model"] && p_args["only-binary-variables"] && @warn "the algorithm flow-model does not support the option only-binary-variables; ignoring the flag only-binary-variables"
   p_args["flow-model"] && p_args["break-hvcut-symmetry"] && @warn "the algorithm flow-model does not support the option break-hvcut-symmetry; ignoring the flag break-hvcut-symmetry"
   if p_args["flow-model"]
-    FlowModel.build_model(m, d, p, l, w, L, W;
-      relax2lp = p_args["relax2lp"]
-    )
+    FlowModel.build_model(m, d, p, l, w, L, W)
   else
     if p_args["break-hvcut-symmetry"]
       _, hvcuts, pli2lwsb, _, _ = AllSubplatesModel.build_model_with_symmbreak(
@@ -94,13 +97,12 @@ function read_build_solve_and_print(
         no_redundant_cut = p_args["no-redundant-cut"],
         no_furini_symmbreak = p_args["no-furini-symmbreak"],
         faithful2furini2016 = p_args["faithful2furini2016"],
-        relax2lp = p_args["relax2lp"],
         lb = get(p_args["lower-bounds"], instfname_idx, 0),
         ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p))
       )
     end
   end
-  time_to_build_model = time() - before_model_build 
+  time_to_build_model = time() - before_model_build
   # The three lines below create a .mps file of the model before solving it.
   #=
   mps_model = MathOptFormat.MPS.Model()
@@ -163,7 +165,32 @@ function read_build_solve_and_print(
   flush(stdout) # guarantee all messages will be flushed before calling cplex
   #@error "testing furini, if optimize is called, all memory will be consumed"
   #exit(0)
+  vars_before_deletes = all_variables(m)
+  if p_args["final-pricing"] || p_args["relax2lp"]
+    original_settings = relax_all_vars!(m)
+  END
   time_to_solve_model = @elapsed optimize!(m)
+  if (p_args["final-pricing"] || p_args["relax2lp"]) && !no_csv_out
+    println("time_to_solve_relaxed_model = $(time_to_solve_model)")
+  end
+  if p_args["final-pricing"]
+    # get the given lower bound on the instance if there is one
+    best_lb = get(p_args["lower-bounds"], instfname_idx, 0)
+    # if warm-start is enabled and the lb is better, use it
+    p_args["warm-start"] && (best_lb = max(best_lb, ws_obj))
+    # delete all variables which would only reduce obj to below the lower bound
+    mask = delete_vars_by_pricing!(m, Float64(best_lb))
+    if !no_csv_out
+      num_vars_after_pricing = sum(mask)
+      num_vars_del_by_pricing = length(mask) - num_vars_after_pricing
+      @show num_vars_after_pricing
+      @show num_vars_del_by_pricing
+    end
+    if !p_args["relax2lp"]
+      unrelax_vars!(vars_before_deletes, m, original_settings)
+      time_to_solve_model += @elapsed optimize!(m)
+    end
+  end
   sleep(0.01) # shamefully needed to avoid out of order messages from cplex
   if !no_csv_out
     @show time_to_solve_model
@@ -182,15 +209,15 @@ function read_build_solve_and_print(
     stop_code = Int64(stop_reason)
     @show stop_code
     if p_args["flow-model"]
-      ps = value.(m[:edge][1:length(d)])
+      ps = value.(m[:edge][pii] for pii = 1:length(d) if is_valid(m, m[:edge][pii]))
       ps_nz = [iv for iv in enumerate(ps) if iv[2] > 0.001]
       @show ps_nz
     else
       if p_args["break-hvcut-symmetry"]
         ps = m[:pieces_sold]
         cm = m[:cuts_made]
-        ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if value(ps[i]) > 0.001]
-        cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if value(cm[i]) > 0.001]
+        ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if is_valid(m, ps[i]) && value(ps[i]) > 0.001]
+        cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if is_valid(m, cm[i]) && value(cm[i]) > 0.001]
         @show ps_nz
         @show cm_nz
         println("(piece length, piece width) => (piece index, amount in solution, profit of single piece, total profit contributed in solution) ")
@@ -210,8 +237,20 @@ function read_build_solve_and_print(
         end
       else # same as: if !p_args["break-hvcut-symmetry"]
         p_args["relax2lp"] && @warn "relax2lp flag used, be careful regarding solution"
-        ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if value(ps[i]) > 0.001]
-        cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if value(cm[i]) > 0.001]
+        ps_nz = Vector{Tuple{Int, Float64}}()
+        cm_nz = Vector{Tuple{Int, Float64}}()
+        for i = 1:length(ps)
+          if is_valid(m, ps[i]) && value(ps[i]) > 0.0001
+            push!(ps_nz, (i, value(ps[i])))
+          end
+        end
+        for i = 1:length(cm)
+          if is_valid(m, cm[i]) && value(cm[i]) > 0.0001
+            push!(cm_nz, (i, value(cm[i])))
+          end
+        end
+        #ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if (is_valid(m, ps[i]) && value(ps[i]) > 0.001)]
+        #cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if (is_valid(m, cm[i]) && value(cm[i]) > 0.001)]
         @show ps_nz
         @show cm_nz
         println("(plate length, plate width) => (number of times this extraction happened, piece length, piece width)")
@@ -252,10 +291,10 @@ function parse_script_args(args = ARGS)
         arg_type = Int
         default = [1]
         nargs = 1
-      "--disable-cplex-tricks"
+      "--disable-solver-tricks"
         help = "disable heuristics, probe, repeat presolve and dive"
         nargs = 0
-      "--disable-cplex-output"
+      "--disable-solver-output"
         help = "disable the CPLEX output for all instances"
         nargs = 0
       "--do-not-mock-first-for-compilation"
@@ -275,6 +314,9 @@ function parse_script_args(args = ARGS)
         nargs = 0
       "--ignore-2th-dim"
         help = "ignore the dimension not being discretized during discretization, used to measure impact (does not affect flow)"
+        nargs = 0
+      "--final-pricing"
+        help = "uses the best lb available (from --lower-bounds or --warm-start) to remove variables after solving the continuous relaxation"
         nargs = 0
       "--faithful2furini2016"
         help = "tries to be the most faithful possible to the description on the Furini2016 paper (more specifically the complete model, with the reductions, FOR NOW without a heuristic solution first and without pricing); the flags --no-cut-position, --no-redundant-cut and --no-furini-symmbreak disable parts of this reimplementation"
@@ -329,6 +371,18 @@ function parse_script_args(args = ARGS)
       end
     end
 
+    is_furini_like = !(p_args["flow-model"] || p_args["break-hvcut-symmetry"])
+    p_args["final-pricing"] && !is_furini_like && @error(
+      "the final pricing technique is implemented just for furini-like model as of now"
+    )
+    p_args["final-pricing"] && isempty(p_args["lower-bounds"]) &&
+      !p_args["warm-start"] && @error(
+      "the flag --final-pricing only makes sense if a lower bound is provided (either directly by --lower-bound or indirectly by --warm-start)"
+    )
+    p_args["final-pricing"] && p_args["relax2lp"] && @error(
+      "the flags --final-pricing and --relax2lp should not be used together; it is not clear what they should do, and the best interpretation (solving the relaxed model and doing the final pricing, without solving the unrelaxed reduced model after) is not specially useful and need extra code to work that is not worth it"
+    )
+
     return p_args
 end
 
@@ -339,12 +393,12 @@ function run_batch(args = ARGS)
 
   if !p_args["do-not-mock-first-for-compilation"] && !isempty(p_args["instfnames"])
     read_build_solve_and_print(
-      p_args, 1; no_csv_out = true, no_cplex_out = true
+      p_args, 1; no_csv_out = true, no_solver_out = true
     )
   end
   for inst_idx in eachindex(p_args["instfnames"])
     read_build_solve_and_print(
-      p_args, inst_idx; no_cplex_out = p_args["disable-cplex-output"]
+      p_args, inst_idx; no_solver_out = p_args["disable-solver-output"]
     )
   end
 end

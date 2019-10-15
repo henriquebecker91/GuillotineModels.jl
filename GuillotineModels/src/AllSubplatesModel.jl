@@ -4,6 +4,49 @@ using JuMP
 include("GuillotinePlatesDP.jl")
 using .GuillotinePlatesDP
 
+function min_l_fitting_piece(l, w, L, W)
+  @assert length(l) == length(w)
+  n = length(l)
+  min_i = zero(n)
+  min_l = zero(eltype(l))
+  for i = one(n):n
+    (l[i] > L || w[i] > W) && continue
+    if iszero(min_i) || l[i] < min_l
+      min_i = i
+      min_l = l[i]
+    end
+  end
+  min_i
+end
+
+function search_approx_cut(
+  pp :: P, # parent plate
+  fcl :: S, # first child length
+  fcw :: S, # first child width
+  max_diff :: S, # how much smaller the approx dimension may be
+  approx_l :: Bool, # if true, length is approx, otherwise, w is approx
+  nnn :: Vector{NTuple{3, P}},
+  pli_lwb :: Vector{Tuple{S, S, P}},
+) :: P where {D, S, P}
+  for i in one(P):convert(P, length(nnn))
+    (pp_, fc, _) = nnn[i]
+    pp_ != pp && continue
+    if approx_l
+      pli_lwb[fc][1] <= fcl && pli_lwb[fc][1] >= (fcl - max_diff) &&
+      pli_lwb[fc][2] == fcw && return i
+    else
+      pli_lwb[fc][2] <= fcw && pli_lwb[fc][2] >= (fcw - max_diff) &&
+      pli_lwb[fc][1] == fcl && return i
+    end
+  end
+  @show pp
+  @show pli_lwb[pp]
+  @show fcl
+  @show fcw
+  @show max_diff
+  @assert false # this should not be reachable
+end
+
 function search_cut(
   pp :: P, # parent plate
   fcl :: S, # first child length
@@ -19,6 +62,9 @@ function search_cut(
   @assert false # this should not be reachable
 end
 
+# TODO: check if the piece will be immediatelly extracted or does it need
+# an extra cut to make a plate small enough to extract the piece?
+# TODO: comment all code this method is specially hard to follow
 # TODO: the warm-start for the flag faithful2furini enabled and disabled will
 # need to be different? the rules for which plates exist and which do not are
 # different from one to another.
@@ -50,16 +96,19 @@ function warm_start(
   #   child of the last cut, or the whole root if there is just one stripe)
   # after finishing the strip processing, for each plate that is a stripe:
   #   do the same as the first stage, but for the subplate and the opposite cut
-  #   orientation (including iteration in reverse order); 
+  #   orientation (as the inner vectors are not sorted by length, we need to
+  #   sort them ourselves);
   # finally, for every subplate that will become a piece, connect it to a piece
   #   for faithful2furini2016 we need to trim the plate and have it with exact
-  #   plate size; for !faithful2furini2016 we just lik directly to np
+  #   plate size; for !faithful2furini2016 we just link directly to np
   rw = W # remaining width, initialized with root plate width
   rpli = 1 # NOTE: the root plate is guaranteed to have index 1
   cut_var_vals = Dict{P, Int}() # the amount of times each cut was made
   first_stage_plates = Vector{P}() # the plate index of all stripes
   rpat = reverse(pat)
+  final = false
   for stripe in rpat
+    @assert !final
     @assert !isempty(stripe)
     ws = w[first(stripe)]
     if ws <= div(rw, 2)
@@ -78,6 +127,7 @@ function warm_start(
       push!(first_stage_plates, rpli)
       scl, scw = pli_lwb[rpli]
       println("0\tl\t$(scl)\t$(scw)")
+      final = true
     end
   end
   # TODO: both loops need to be by index, and stop before the last element,
@@ -101,28 +151,105 @@ function warm_start(
     ws = pli_lwb[rpli][2] # stripe width (do not diminish)
 
     pli2pii = Vector{Tuple{P, D}}()
-    for piece in sort(pii -> l[pii], rpat[i])
+    for piece in sort(rpat[i], by = pii -> l[pii])
       lp = l[piece]
+      wp = w[piece]
       if lp <= div(rl, 2)
         cut = search_cut(rpli, lp, ws, nnn, pli_lwb)
         cut_var_vals[cut] = 1 + get!(cut_var_vals, cut, 0)
         _, fc, rpli = nnn[cut]
-        pli2pii_qt[(fc, piece)] = 1 + get(pli2pii_qt, (fc, piece), 0)
 
-        fcl, fcw = pli_lwb[fc]
+        fcl, fcw, _ = pli_lwb[fc]
         println("$(i)\ti\t$(fcl)\t$(fcw)")
-        println("$(piece)\tp\t$(l[piece])\t$(w[piece])")
-        rl -= lp
-      else
-        if pli_lwb[rpli][1] >= l[piece] + min_l
-          # If the piece is being cut from a large (in relation to it)
-          
+        println("$(piece)\tp\t$(lp)\t$(wp)")
+
+        # The piece may have a small width relative to the plate width
+        # (i.e., the piece of smallest width could fit there) if this is
+        # the case, we cannot extract it directly from tne plate. 
+        # There are two options: (1) if the piece is smaller than half
+        # the plate, it can be cut as first child; (2) otherwise,
+        # we need to make an extra cut (a fake trim) in which
+        # the second child will be a plate "not too big" to allow a
+        # direct extraction of the piece from it.
+        min_w = min_l_fitting_piece(w, l, fcw, fcl)
+        if fcw >= wp + min_w
+          if wp <= div(fcw, 2)
+            # Cut the fc again, at the piece width this time, use the
+            # first child to extract the piece.
+            cut2 = search_cut(fc, lp, wp, nnn, pli_lwb)
+            cut_var_vals[cut2] = 1 + get!(cut_var_vals, cut2, 0)
+            _, fc2, _ = nnn[cut2]
+
+            fc2l, fc2w, _ = pli_lwb[fc2]
+            println("$(i)\ti\t$(scl)\t$(scw)")
+            println("$(piece)\tp\t$(lp)\t$(wp)")
+
+            pli2pii_qt[(fc2, piece)] = 1 + get(pli2pii_qt, (fc2, piece), 0)
+          else
+            trimw = fcw - wp
+            # There is no guarantee of existence of a cut in which the 
+            # second child will have the exact size of the piece, however
+            # there is guarantee that a cut between the exact size and
+            # the exact size - (min_w - 1) exists. Note that cuts smaller
+            # than this lower bound do not interest us, as they would have
+            # the same problem again (the second child would need a fake
+            # trim cut again).
+            cut2 = search_approx_cut(
+              rpli, lp, trimw, min_w - 1, false, nnn, pli_lwb
+            )
+            cut_var_vals[cut2] = 1 + get!(cut_var_vals, cut2, 0)
+            _, _, sc = nnn[cut2]
+
+            scl, scw, _ = pli_lwb[sc]
+            println("$(i)\ti\t$(scl)\t$(scw)")
+            println("$(piece)\tp\t$(lp)\t$(wp)")
+
+            pli2pii_qt[(sc, piece)] = 1 + get(pli2pii_qt, (sc, piece), 0)
+          end
         else
-          scl, scw = pli_lwb[rpli]
-          println("$(i)\tl\t$(scl)\t$(scw)")
-          println("$(piece)\tp\t$(l[piece])\t$(w[piece])")
-          pli2pii_qt[(rpli, piece)] = 1 + get(pli2pii_qt, (rpli, piece), 0)
+          pli2pii_qt[(fc, piece)] = 1 + get(pli2pii_qt, (fc, piece), 0)
         end
+
+        rl -= lp
+      else # if it is the last piece of a strip
+        pll, plw, _ = pli_lwb[rpli]
+        @assert plw == ws
+        min_l_pii = min_l_fitting_piece(l, w, pll, plw)
+        min_l = iszero(min_l_pii) ? pll : l[min_l_pii]
+        if pll >= lp + min_l
+          triml = pll - lp
+          cut = search_approx_cut(
+            rpli, triml, ws, min_l - 1, true, nnn, pli_lwb
+          )
+          cut_var_vals[cut] = 1 + get!(cut_var_vals, cut, 0)
+          _, _, sc = nnn[cut]
+
+          scl, scw, _ = pli_lwb[sc]
+          println("$(i)\tl\t$(scl)\t$(scw)")
+          println("$(piece)\tp\t$(lp)\t$(wp)")
+          rpli = sc
+        end
+        pll, plw, _ = pli_lwb[rpli]
+        @assert plw == ws
+        min_w_pii = min_l_fitting_piece(w, l, plw, pll)
+        min_w = iszero(min_w_pii) ? plw : l[min_w_pii]
+        # TODO: here we have a plate of a good length to extract the piece
+        # but we do not guarantee the width
+        if plw >= wp + min_w
+          trimw = plw - wp
+          cut = search_approx_cut(
+            rpli, pll, trimw, min_w - 1, false, nnn, pli_lwb
+          )
+          cut_var_vals[cut] = 1 + get!(cut_var_vals, cut, 0)
+          _, _, sc = nnn[cut]
+
+          scl, scw, _ = pli_lwb[sc]
+          println("$(i)\tl\t$(scl)\t$(scw)")
+          println("$(piece)\tp\t$(lp)\t$(wp)")
+          rpli = sc
+        end
+
+        pli2pii_qt[(rpli, piece)] = 1 + get(pli2pii_qt, (rpli, piece), 0)
       end
     end
   end
@@ -184,7 +311,6 @@ function build_model_no_symmbreak(
   faithful2furini2016 = false,
   no_redundant_cut = false, no_cut_position = false,
   no_furini_symmbreak = false,
-  relax2lp = false,
   lb :: P = zero(P), ub :: P = zero(P)
 ) where {D, S, P}
   @assert length(d) == length(l) && length(l) == length(w)
@@ -257,14 +383,14 @@ function build_model_no_symmbreak(
   # If all pieces have demand one, a binary variable will suffice to make the
   # connection between a piece type and the plate it is extracted from.
   naturally_only_binary = all(di -> di <= 1, d)
-  if !relax2lp && (naturally_only_binary || only_binary)
+  if naturally_only_binary || only_binary
     # only_binary is equal to naturally_only_binary for now, but the idea is
     # that only_binary will expand the number of binary variables to account
     # for picuts that can repeat (plates that can appear more than one time
     # and that may have the same piece extracted from them)
     @variable(model, picuts[1:length(np)], Bin)
   else
-    @variable(model, picuts[1:length(np)] >= 0, integer = !relax2lp)
+    @variable(model, picuts[1:length(np)] >= 0, Int)
     #@variable(model,
     #  0 <= picuts[i = 1:length(np)] <=
     #    min(pli_lwb[np[i][1]][3], d[np[i][2]]),
@@ -272,10 +398,9 @@ function build_model_no_symmbreak(
   end
 
   if only_binary
-    @assert !relax2lp
-    @variable(model, cuts_made[1:length(hvcuts)] >= 0, binary = !relax2lp)
+    @variable(model, cuts_made[1:length(hvcuts)] >= 0, Bin)
   else
-    @variable(model, cuts_made[1:length(hvcuts)] >= 0, integer = !relax2lp)
+    @variable(model, cuts_made[1:length(hvcuts)] >= 0, Int)
   end
 
   # The objective function is to maximize the profit made by extracting
