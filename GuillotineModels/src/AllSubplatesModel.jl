@@ -47,6 +47,78 @@ function search_approx_cut(
   @assert false # this should not be reachable
 end
 
+# TODO: move to ModelUtils
+struct SavedBound
+  var :: VariableRef
+  was_fixed :: Bool
+  fix_value :: Float64
+  had_lb :: Bool
+  lb :: Float64
+  had_ub :: Bool
+  ub :: Float64
+end
+
+# TODO: move to ModelUtils
+function restore_bound!(b :: SavedBound) :: Nothing
+  if b.was_fixed && !(is_fixed(b.var) && fix_value(b.var) == b.fix_value)
+    fix(b.var, b.fix_value; force = true)
+  else
+    if b.has_lb && !(has_lower_bound(b.var) && lower_bound(b.var) == b.lb)
+      set_lower_bound(b.var, b.lb; force = true)
+    end
+    if b.has_ub && !(has_upper_bound(b.var) && upper_bound(b.var) == b.ub)
+      set_upper_bound(b.var, b.ub; force = true)
+    end
+  end
+  nothing
+end
+
+function save_bound_if_exists!(
+  reg :: Vector{SavedBound}, var :: VariableRef
+) :: Vector{SavedBound}
+  was_fixed = is_fixed(var)
+  had_lb = has_lower_bound(var)
+  had_ub = has_upper_bound(var)
+  if was_fixed || had_lb || had_ub
+    push!(reg, SavedBound(
+      was_fixed, was_fixed ? fix_value(var) : 0.0,
+      had_lb, had_lb ? lower_bound(var) : 0.0,
+      had_ub, had_ub ? upper_bound(var) : 0.0
+    ))
+  end
+  reg
+end
+
+function disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
+  @assert length(sl) == length(sw)
+  n = length(sl)
+  @assert issorted(sl)
+  @assert issorted(sw)
+  reg = Vector{SavedBound}()
+  # For each triple in nnn, there is an associated variable in the
+  # cuts_made vector of m. The orientation and the position of the cut
+  # may be obtained by: getting the parent plate and first child indexes
+  # from nnn, using them to index pli_lwb, check which dimension has
+  # been changed and its new size. If a vertical (horizontal) cut creates
+  # a first child with size s, and s is NOT present in sw (sl), then that
+  # varible will be disabled.
+  for (i ,(pp, fc, _)) in enumerate(nnn)
+    ppl, ppw, _ = pli_lwb[pp]
+    fcl, fcw, _ = pli_lwb[fc]
+    @assert fcl < ppl || fcw < ppw
+    if (fcl < ppl && searchsortedfirst(sl, fcl) == n + 1) ||
+       (fcw < ppw && searchsortedfirst(sw, fcw) == n + 1)
+      var = m[:cuts_made][i]
+      # fix(...; force = true) erase the old bounds to then fix the variable.
+      # To be able to restore variables that had bounds, it is necessary to
+      # save the old bounds and the varible reference to restore them.
+      save_bound_if_exists!(reg, var)
+      fix(var, 0.0; force = true)
+    end
+  end
+  reg
+end
+
 function search_cut(
   pp :: P, # parent plate
   fcl :: S, # first child length

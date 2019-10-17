@@ -29,6 +29,13 @@ function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
 
   if p_args["disable-solver-tricks"]
     m = JuMP.Model(with_optimizer(Gurobi.Optimizer,
+    #= Cbc paramters
+      threads = 1,
+      ratioGap = 1e-6,
+      logLevel = no_solver_out ? 0 : 1,
+      randomSeed = seed,
+      barrier = true
+    =#
       Threads = threads,
       Seed = seed,
       OutputFlag = no_solver_out ? 0 : 1,
@@ -46,6 +53,13 @@ function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
     ))
   else
     m = JuMP.Model(with_optimizer(Gurobi.Optimizer,
+    #= Cbc options
+      threads = 1,
+      ratioGap = 1e-6,
+      logLevel = no_solver_out ? 0 : 1,
+      randomSeed = seed,
+      barrier = true
+    =#
       Method = 2, # use barrier for LP
       Threads = threads,
       Seed = seed,
@@ -109,30 +123,33 @@ function read_build_solve_and_print(
   MOI.copy_to(mps_model, backend(m))
   MOI.write_to_file(mps_model, "last_run.mps")
   =#
-  is_furini_like = !(p_args["flow-model"] || p_args["break-hvcut-symmetry"])
 
-  if p_args["warm-start"] && is_furini_like
-    (ws_obj, ws_sel, ws_pat), heur_time, _, _, _ = @timed iterated_greedy(
+  if p_args["warm-start"]
+    @assert !p_args["faithful2furini2016"] && !p_args["flow-model"]
+    (heur_obj, heur_sel, heur_pat), heur_time, _, _, _ = @timed iterated_greedy(
       d, p, l, w, L, W, MersenneTwister(p_args["seed"][1])
     )
     if !no_csv_out
       @show heur_time
-      @show ws_obj
-      @show ws_sel
-      @show ws_pat
+      @show heur_obj
+      @show heur_sel
+      @show heur_pat
     end
-    ws_time = @elapsed AllSubplatesModel.warm_start(
-      m, l, w, L, W, ws_pat, pli_lwb, hvcuts, np;
+    saved_bounds = AllSubplatesModel.disable_unrestricted_cuts!(
+      m, sort(l), sort(w), hvcuts, pli_lwb
+    )
+    heur_ws_time = @elapsed AllSubplatesModel.warm_start(
+      m, l, w, L, W, heur_pat, pli_lwb, hvcuts, np;
       faithful2furini2016 = p_args["faithful2furini2016"]
     )
-    if !no_csv_out
-      @show ws_time
-    end
+    !no_csv_out && @show heur_ws_time
+    restricted_time = @elapsed optimize!(m)
+    !no_csv_out && @show restricted_time
+    restricted_sol = value.(all_variables(m))
+    restricted_objval = objective_value(m)
+    AllSubplatesModel.restore_bound!.(saved_bounds)
+    set_start_value.(all_variables(m), restricted_sol)
   end
-
-  p_args["warm-start"] && !is_furini_like && @warn(
-    "warm start not implemented for the selected model"
-  )
 
   if !no_csv_out
     @show instfname
@@ -168,7 +185,7 @@ function read_build_solve_and_print(
   vars_before_deletes = all_variables(m)
   if p_args["final-pricing"] || p_args["relax2lp"]
     original_settings = relax_all_vars!(m)
-  END
+  end
   time_to_solve_model = @elapsed optimize!(m)
   if (p_args["final-pricing"] || p_args["relax2lp"]) && !no_csv_out
     println("time_to_solve_relaxed_model = $(time_to_solve_model)")
@@ -177,9 +194,11 @@ function read_build_solve_and_print(
     # get the given lower bound on the instance if there is one
     best_lb = get(p_args["lower-bounds"], instfname_idx, 0)
     # if warm-start is enabled and the lb is better, use it
-    p_args["warm-start"] && (best_lb = max(best_lb, ws_obj))
+    p_args["warm-start"] && (best_lb = max(best_lb, restricted_objval))
     # delete all variables which would only reduce obj to below the lower bound
+    println("before deletes")
     mask = delete_vars_by_pricing!(m, Float64(best_lb))
+    println("after deletes")
     if !no_csv_out
       num_vars_after_pricing = sum(mask)
       num_vars_del_by_pricing = length(mask) - num_vars_after_pricing
@@ -331,7 +350,7 @@ function parse_script_args(args = ARGS)
         help = "disables Furini2016 Cut-Position reduction: if a trivial heuristic shows that no combination of six or more pieces fit a plate, then the plate may be cut with restricted cuts without loss to optimality"
         nargs = 0
       "--warm-start"
-        help = "(works only for Furini-like) uses the heuristic described in Furini2016 to generate a initial primal feasible solution and warm-start the model"
+        help = "(works only for Revised Furini) uses the heuristic described in Furini2016 to generate a initial primal feasible solution, warm-start the model with unrestricted cuts fixed to zero, and then unfix the unrestricted cuts to solve the complete model"
         nargs = 0
       "--relax2lp"
         help = "(works on Furini-like and Flow1) integer and binary variables become continuous"
@@ -371,9 +390,9 @@ function parse_script_args(args = ARGS)
       end
     end
 
-    is_furini_like = !(p_args["flow-model"] || p_args["break-hvcut-symmetry"])
-    p_args["final-pricing"] && !is_furini_like && @error(
-      "the final pricing technique is implemented just for furini-like model as of now"
+    is_revised_furini = !p_args["faithful2furini2016"] && !p_args["flow-model"]
+    p_args["final-pricing"] && !is_revised_furini && @error(
+      "the final pricing technique is implemented just for Revised Furini model as of now"
     )
     p_args["final-pricing"] && isempty(p_args["lower-bounds"]) &&
       !p_args["warm-start"] && @error(
