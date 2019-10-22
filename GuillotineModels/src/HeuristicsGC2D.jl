@@ -114,6 +114,14 @@ function iterated_greedy(
     shuffle!(rng, oe)
   end
 
+  nz_i = collect(i for i in 1:n if !iszero(sel[i]))
+  @show nz_i
+  nz_sel = collect(sel[i] for i in 1:n if !iszero(sel[i]))
+  @show nz_sel
+  nz_l = collect(l[i] for i in 1:n if !iszero(sel[i]))
+  @show nz_l
+  nz_w = collect(w[i] for i in 1:n if !iszero(sel[i]))
+  @show nz_w
   return bkv, sel, pat
 end
 
@@ -217,7 +225,7 @@ function first_fit_decr(
     if !assigned
       # ... and there is no space to open a new level, then jump to the
       # next piece type.
-      rw < w[i] && break
+      rw < w[i] && continue
       # ... but there is yet space to open a new level, create a new level.
       push!(lw, w[i])
       push!(ll, L - l[i])

@@ -10,6 +10,7 @@ using JuMP, ArgParse, MathOptInterface
 #using CPLEX
 #using Cbc
 using Gurobi
+using Profile
 
 using MathOptFormat # disabled because dependency hell
 using Random # for MersenneTwister used in heuristic
@@ -28,7 +29,15 @@ function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
   det_time_limit = first(p_args["det-time-limit"])
 
   if p_args["disable-solver-tricks"]
-    m = JuMP.Model(with_optimizer(Gurobi.Optimizer,
+    m = JuMP.direct_model(Gurobi.Optimizer(
+      Method = 2, # use barrier for LP
+      #PreSparsify = 1, # try to reduce nonzeros
+      #Presolve = 2, # aggressive presolving
+      Threads = threads,
+      Seed = seed,
+      OutputFlag = no_solver_out ? 0 : 1,
+      MIPGap = 1e-6
+    ))#=with_optimizer(Gurobi.Optimizer(),
     #= Cbc paramters
       threads = 1,
       ratioGap = 1e-6,
@@ -50,9 +59,17 @@ function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
       CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
       CPX_PARAM_RANDOMSEED = seed=#
-    ))
+    ))=#
   else
-    m = JuMP.Model(with_optimizer(Gurobi.Optimizer,
+    m = JuMP.direct_model(Gurobi.Optimizer(
+      Method = 2, # use barrier for LP
+      #PreSparsify = 1, # try to reduce nonzeros
+      #Presolve = 2, # aggressive presolving
+      Threads = threads,
+      Seed = seed,
+      OutputFlag = no_solver_out ? 0 : 1,
+      MIPGap = 1e-6
+    ))#=with_optimizer(Gurobi.Optimizer,
     #= Cbc options
       threads = 1,
       ratioGap = 1e-6,
@@ -71,7 +88,7 @@ function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
       CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
       CPX_PARAM_THREADS = threads,
       CPX_PARAM_RANDOMSEED = seed=#
-    ))
+    ))=#
   end
 
   return m
@@ -196,19 +213,22 @@ function read_build_solve_and_print(
     # if warm-start is enabled and the lb is better, use it
     p_args["warm-start"] && (best_lb = max(best_lb, restricted_objval))
     # delete all variables which would only reduce obj to below the lower bound
-    println("before deletes")
-    mask = delete_vars_by_pricing!(m, Float64(best_lb))
-    println("after deletes")
+    #if !no_csv_out
+    #  @profile (mask = delete_vars_by_pricing!(m, Float64(best_lb)))
+    #  Profile.print()
+    #else
+    #  mask = delete_vars_by_pricing!(m, Float64(best_lb))
+    #end
+    kept = which_vars_to_keep(m, Float64(best_lb))
+    unrelax_vars!(vars_before_deletes, m, original_settings)
+    saved_bounds = fix_vars!(all_variables(m)[.!kept])
     if !no_csv_out
-      num_vars_after_pricing = sum(mask)
-      num_vars_del_by_pricing = length(mask) - num_vars_after_pricing
+      num_vars_after_pricing = sum(kept)
+      num_vars_del_by_pricing = length(kept) - num_vars_after_pricing
       @show num_vars_after_pricing
       @show num_vars_del_by_pricing
     end
-    if !p_args["relax2lp"]
-      unrelax_vars!(vars_before_deletes, m, original_settings)
-      time_to_solve_model += @elapsed optimize!(m)
-    end
+    time_to_solve_model += @elapsed optimize!(m)
   end
   sleep(0.01) # shamefully needed to avoid out of order messages from cplex
   if !no_csv_out
@@ -416,9 +436,10 @@ function run_batch(args = ARGS)
     )
   end
   for inst_idx in eachindex(p_args["instfnames"])
-    read_build_solve_and_print(
+    total_instance_time = @elapsed read_build_solve_and_print(
       p_args, inst_idx; no_solver_out = p_args["disable-solver-output"]
     )
+    @show total_instance_time
   end
 end
 

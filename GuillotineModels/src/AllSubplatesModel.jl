@@ -3,6 +3,8 @@ module AllSubplatesModel
 using JuMP
 include("GuillotinePlatesDP.jl")
 using .GuillotinePlatesDP
+include("ModelUtils.jl")
+using .ModelUtils
 
 function min_l_fitting_piece(l, w, L, W)
   @assert length(l) == length(w)
@@ -45,48 +47,6 @@ function search_approx_cut(
   @show fcw
   @show max_diff
   @assert false # this should not be reachable
-end
-
-# TODO: move to ModelUtils
-struct SavedBound
-  var :: VariableRef
-  was_fixed :: Bool
-  fix_value :: Float64
-  had_lb :: Bool
-  lb :: Float64
-  had_ub :: Bool
-  ub :: Float64
-end
-
-# TODO: move to ModelUtils
-function restore_bound!(b :: SavedBound) :: Nothing
-  if b.was_fixed && !(is_fixed(b.var) && fix_value(b.var) == b.fix_value)
-    fix(b.var, b.fix_value; force = true)
-  else
-    if b.has_lb && !(has_lower_bound(b.var) && lower_bound(b.var) == b.lb)
-      set_lower_bound(b.var, b.lb; force = true)
-    end
-    if b.has_ub && !(has_upper_bound(b.var) && upper_bound(b.var) == b.ub)
-      set_upper_bound(b.var, b.ub; force = true)
-    end
-  end
-  nothing
-end
-
-function save_bound_if_exists!(
-  reg :: Vector{SavedBound}, var :: VariableRef
-) :: Vector{SavedBound}
-  was_fixed = is_fixed(var)
-  had_lb = has_lower_bound(var)
-  had_ub = has_upper_bound(var)
-  if was_fixed || had_lb || had_ub
-    push!(reg, SavedBound(
-      was_fixed, was_fixed ? fix_value(var) : 0.0,
-      had_lb, had_lb ? lower_bound(var) : 0.0,
-      had_ub, had_ub ? upper_bound(var) : 0.0
-    ))
-  end
-  reg
 end
 
 function disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
@@ -136,6 +96,16 @@ end
 
 # TODO: check if the piece will be immediatelly extracted or does it need
 # an extra cut to make a plate small enough to extract the piece?
+# TODO: if the piece needs an extra trim, the things are even worse than
+# I thought at first, there is no guarantee the trim will be obtained
+# in a single cut. It may be necessary to make many fake trim cuts to
+# get a plate of the right size to make an extraction. It is just much
+# simpler to add fake extraction variables for every plate that would need
+# fake trims than to add all cuts needed to arrive at it. On the other side,
+# this is something interesting to comment on the paper, the lack of guarantee
+# on the number of cuts needed to extract the pieces from the plates, a
+# 'downside' that seems not to be a problem for the solver, of have common
+# worst-cases.
 # TODO: comment all code this method is specially hard to follow
 # TODO: the warm-start for the flag faithful2furini enabled and disabled will
 # need to be different? the rules for which plates exist and which do not are
