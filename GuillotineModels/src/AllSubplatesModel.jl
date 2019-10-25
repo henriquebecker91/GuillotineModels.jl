@@ -66,8 +66,20 @@ function disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
     ppl, ppw, _ = pli_lwb[pp]
     fcl, fcw, _ = pli_lwb[fc]
     @assert fcl < ppl || fcw < ppw
-    if (fcl < ppl && searchsortedfirst(sl, fcl) == n + 1) ||
-       (fcw < ppw && searchsortedfirst(sw, fcw) == n + 1)
+    should_fix = false
+    if fcl < ppl
+      fcl_idx = searchsortedfirst(sl, fcl)
+      if fcl_idx > n || sl[fcl_idx] != fcl
+        should_fix = true
+      end
+    else
+      @assert fcw < ppw
+      fcw_idx = searchsortedfirst(sw, fcw)
+      if fcw_idx > n || sw[fcw_idx] != fcw
+        should_fix = true
+      end
+    end
+    if should_fix
       var = m[:cuts_made][i]
       # fix(...; force = true) erase the old bounds to then fix the variable.
       # To be able to restore variables that had bounds, it is necessary to

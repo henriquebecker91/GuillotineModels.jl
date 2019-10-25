@@ -84,11 +84,13 @@ function restore_bound!(b :: SavedBound) :: Nothing
   if b.was_fixed && !(is_fixed(b.var) && fix_value(b.var) == b.fix_value)
     fix(b.var, b.fix_value; force = true)
   else
-    if b.has_lb && !(has_lower_bound(b.var) && lower_bound(b.var) == b.lb)
-      set_lower_bound(b.var, b.lb; force = true)
+    # TODO: only unfix if it is fixed
+    is_fixed(b.var) && unfix(b.var)
+    if b.had_lb && !(has_lower_bound(b.var) && lower_bound(b.var) == b.lb)
+      set_lower_bound(b.var, b.lb)
     end
-    if b.has_ub && !(has_upper_bound(b.var) && upper_bound(b.var) == b.ub)
-      set_upper_bound(b.var, b.ub; force = true)
+    if b.had_ub && !(has_upper_bound(b.var) && upper_bound(b.var) == b.ub)
+      set_upper_bound(b.var, b.ub)
     end
   end
   nothing
