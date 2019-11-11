@@ -7,10 +7,10 @@ Pkg.instantiate()
 # Load the necessary packages. The ones after the `push!` are from this
 # repository.
 using JuMP, ArgParse, MathOptInterface
-#using CPLEX
+using CPLEX
 #using Cbc
-using Gurobi
-using Profile
+#using Gurobi
+#using Profile
 
 using MathOptFormat # disabled because dependency hell
 using Random # for MersenneTwister used in heuristic
@@ -29,66 +29,73 @@ function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
   det_time_limit = first(p_args["det-time-limit"])
 
   if p_args["disable-solver-tricks"]
-    m = JuMP.direct_model(Gurobi.Optimizer(
-      Method = 2, # use barrier for LP
-      #PreSparsify = 1, # try to reduce nonzeros
-      #Presolve = 2, # aggressive presolving
-      Threads = threads,
-      Seed = seed,
-      OutputFlag = no_solver_out ? 0 : 1,
-      MIPGap = 1e-6
-    ))#=with_optimizer(Gurobi.Optimizer(),
-    #= Cbc paramters
-      threads = 1,
-      ratioGap = 1e-6,
-      logLevel = no_solver_out ? 0 : 1,
-      randomSeed = seed,
-      barrier = true
+    m = JuMP.direct_model(
+      CPLEX.Optimizer(
+        CPX_PARAM_EPGAP = 1e-6,
+        CPX_PARAM_PROBE = -1,
+        CPX_PARAM_HEURFREQ = -1,
+        CPX_PARAM_REPEATPRESOLVE = -1,
+        CPX_PARAM_DIVETYPE = 1,
+        CPX_PARAM_DETTILIM = det_time_limit,
+        #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
+        CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
+        CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
+        CPX_PARAM_THREADS = threads,
+        CPX_PARAM_RANDOMSEED = seed
+      )
+    )
+    #=
+      Gurobi.Optimizer(
+        Method = 2, # use barrier for LP
+        #PreSparsify = 1, # try to reduce nonzeros
+        #Presolve = 2, # aggressive presolving
+        Threads = threads,
+        Seed = seed,
+        OutputFlag = no_solver_out ? 0 : 1,
+        MIPGap = 1e-6
+      )
     =#
-      Threads = threads,
-      Seed = seed,
-      OutputFlag = no_solver_out ? 0 : 1,
-      MIPGap = 1e-6
-    #=,
-      CPX_PARAM_PROBE = -1,
-      CPX_PARAM_HEURFREQ = -1,
-      CPX_PARAM_REPEATPRESOLVE = -1,
-      CPX_PARAM_DIVETYPE = 1,
-      CPX_PARAM_DETTILIM = det_time_limit,
-      #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
-      CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
-      CPX_PARAM_THREADS = threads,
-      CPX_PARAM_RANDOMSEED = seed=#
-    ))=#
+    #=
+      Cbc.Optimizer(
+        threads = 1,
+        ratioGap = 1e-6,
+        logLevel = no_solver_out ? 0 : 1,
+        randomSeed = seed,
+        barrier = true
+      )
+    =#
   else
-    m = JuMP.direct_model(Gurobi.Optimizer(
-      Method = 2, # use barrier for LP
-      #PreSparsify = 1, # try to reduce nonzeros
-      #Presolve = 2, # aggressive presolving
-      Threads = threads,
-      Seed = seed,
-      OutputFlag = no_solver_out ? 0 : 1,
-      MIPGap = 1e-6
-    ))#=with_optimizer(Gurobi.Optimizer,
-    #= Cbc options
-      threads = 1,
-      ratioGap = 1e-6,
-      logLevel = no_solver_out ? 0 : 1,
-      randomSeed = seed,
-      barrier = true
+    m = JuMP.direct_model(
+      CPLEX.Optimizer(
+        CPX_PARAM_EPGAP = 1e-6,
+        CPX_PARAM_DETTILIM = det_time_limit,
+        #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
+        CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
+        CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
+        CPX_PARAM_THREADS = threads,
+        CPX_PARAM_RANDOMSEED = seed
+      )
+    )
+    #=
+      Gurobi.Optimizer(
+        Method = 2, # use barrier for LP
+        #PreSparsify = 1, # try to reduce nonzeros
+        #Presolve = 2, # aggressive presolving
+        Threads = threads,
+        Seed = seed,
+        OutputFlag = no_solver_out ? 0 : 1,
+        MIPGap = 1e-6
+      )
     =#
-      Method = 2, # use barrier for LP
-      Threads = threads,
-      Seed = seed,
-      OutputFlag = no_solver_out ? 0 : 1,
-      MIPGap = 1e-6
-    #=,
-      CPX_PARAM_DETTILIM = det_time_limit,
-      #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
-      CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
-      CPX_PARAM_THREADS = threads,
-      CPX_PARAM_RANDOMSEED = seed=#
-    ))=#
+    #=
+      Cbc.Optimizer(
+        threads = 1,
+        ratioGap = 1e-6,
+        logLevel = no_solver_out ? 0 : 1,
+        randomSeed = seed,
+        barrier = true
+      )
+    =#
   end
 
   return m
@@ -100,6 +107,25 @@ function read_build_solve_and_print(
 )
   instfname = p_args["instfnames"][instfname_idx]
   L, W, l, w, p, d = GC2DInstanceReader.read_instance(instfname)
+  if p_args["div-and-round-nearest"][1] != 1
+    factor = p_args["div-and-round-nearest"][1]
+    roundmode = RoundNearest
+  elseif p_args["div-and-round-up"][1] != 1
+    factor = p_args["div-and-round-up"][1]
+    roundmode = RoundUp
+  elseif p_args["div-and-round-down"][1] != 1
+    roundmode = RoundDown
+    factor = p_args["div-and-round-down"][1]
+  else
+    factor = 1
+  end
+  if factor != 1
+    S = eltype(L)
+    L = convert(S, round(L / factor, roundmode))
+    W = convert(S, round(W / factor, roundmode))
+    l = convert.(S, round.(l ./ factor, roundmode))
+    w = convert.(S, round.(w ./ factor, roundmode))
+  end
   before_model_build = time()
   m = new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
   p_args["flow-model"] && p_args["only-binary-variables"] && @warn "the algorithm flow-model does not support the option only-binary-variables; ignoring the flag only-binary-variables"
@@ -387,6 +413,21 @@ function parse_script_args(args = ARGS)
       "--upper-bounds"
         help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"
         nargs = 1
+      "--div-and-round-nearest"
+        help = "divide instance lenght and width (but not profit) by the passed factor and round them to nearest (THE ALGORITHM BECOMES A GUESS, DO NOT GIVE A PRIMAL SOLUTION NOR A VALID DUAL SOLUTION)"
+        arg_type = Int
+        default = [1]
+        nargs = 1
+      "--div-and-round-up"
+        help = "divide instance lenght and width (but not profit) by the passed factor and round them up (THE ALGORITHM BECOMES A PRIMAL HEURISTIC)"
+        arg_type = Int
+        default = [1]
+        nargs = 1
+      "--div-and-round-down"
+        help = "divide instance lenght and width (but not profit) by the passed factor and round them down (THE ALGORITHM BECOMES A OPTIMISTIC GUESS, VALID BOUND)"
+        arg_type = Int
+        default = [1]
+        nargs = 1
       "instfnames"
         help = "the paths to the instances to be solved"
         action = :store_arg
@@ -410,6 +451,10 @@ function parse_script_args(args = ARGS)
       end
     end
 
+    num_rounds = sum(.! isone.(map(flag -> p_args[flag][1],
+      ["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
+    )))
+    num_rounds > 1 && @error("only one of --div-and-round-{nearest,up,down} may be passed at the same time (what the fuck you expected?)")
     is_revised_furini = !p_args["faithful2furini2016"] && !p_args["flow-model"]
     p_args["final-pricing"] && !is_revised_furini && @error(
       "the final pricing technique is implemented just for Revised Furini model as of now"

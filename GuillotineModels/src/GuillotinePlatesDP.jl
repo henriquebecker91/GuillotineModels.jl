@@ -569,8 +569,10 @@ function gen_cuts(
   pli_lwb = Vector{Tuple{S, S, P}}()
   # plis: matrix of the plate dimensions in which zero means "never seen that
   # plate before" and nonzero means "this nonzero number is the plate index".
-  plis = zeros(P, L, W)
-  plis[L, W] = one(P)
+  #plis = zeros(P, L, W)
+  plis = Dict{Tuple{S, S}, P}()
+  #plis[L, W] = one(P)
+  plis[(L, W)] = one(P)
   # next: plates already indexed but not yet processed, starts with (L, W, 1).
   # Storing the index as the third value is not necessary (as it could be
   # queried from plis) but this is probably more efficient this way.
@@ -602,11 +604,15 @@ function gen_cuts(
   dl1 = dl2 = dls[W] = becker2019_discretize(
     d, l, w, L, W; ignore_W = ignore_2th_dim, ignore_d = ignore_d
   )
+  @show length(dl1)
   dw1 = dw2 = dws[L] = becker2019_discretize(
     d, w, l, W, L; ignore_W = ignore_2th_dim, ignore_d = ignore_d
   )
   #fpr_count = 0
+  @show length(dw1)
   while next_idx <= length(next)
+    #@show next_idx
+    #@show length(next)
     @assert (no_redundant_cut || [length(next)] == unique(length.(sfhv)))
 
     pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
@@ -700,7 +706,7 @@ function gen_cuts(
       trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, pll, plw - x)
       # The trim_cut flag is used below outside of 'if faithful2furini2016'
       # because a true value implicates that 'faithful2furini2016 == true'.
-      if iszero(plis[pll, x]) # If the first child does not yet exist.
+      if iszero(get(plis, (pll, x), 0)) # If the first child does not yet exist.
         push!(next, (pll, x, n += 1)) # Create the first child.
         if !no_redundant_cut
           if trim_cut
@@ -714,18 +720,19 @@ function gen_cuts(
           end
           push!.(sfhv, fchild_sfhv)
         end
-        plis[pll, x] = n # Mark plate existence.
+        #plis[pll, x] = n # Mark plate existence.
+        plis[(pll, x)] = n # Mark plate existence.
       elseif !no_redundant_cut
         # If plate already exists, and we are implementing Redundant-Cut
         if trim_cut
           # From Furini2016 supplement: "if an existing plate j_1 ∈ J is
           # obtained from j through a trim cut:"
-          sh_j > -1 && (fh[plis[pll, x]] = 1)
-          sv_j > -1 && (fv[plis[pll, x]] = 1)
+          sh_j > -1 && (fh[plis[(pll, x)]] = 1)
+          sv_j > -1 && (fv[plis[(pll, x)]] = 1)
         else
           # From Furini2016 supplement: "if a plate (new or EXISTING) j_1 is
           # obtained from j without a trim cut: set all flags of j_1 to 1."
-          setindex!.(sfhv, (1, 1, 1, 1), plis[pll, x])
+          setindex!.(sfhv, (1, 1, 1, 1), plis[(pll, x)])
         end
       end
       # If the second child size is rounded down to a discretized point:
@@ -747,20 +754,20 @@ function gen_cuts(
       
       # If the second child is not waste (!trim_cut), nor was already
       # generated, then it is a new plate obtained without a trim cut.
-      if !trim_cut && iszero(plis[pll, dw_sc])
+      if !trim_cut && iszero(get(plis, (pll, dw_sc), 0))
         # Assert meaning: if the second child is not waste, then it must
         # have an associated size.
         @assert !iszero(dw_sc)
         # Save the plate to be processed later, and mark its existence.
         push!(next, (pll, dw_sc, n += 1))
-        plis[pll, dw_sc] = n
+        plis[(pll, dw_sc)] = n
         # From Furini2016 supplement: "if a plate (NEW or existing) j 1 is
         # obtained from j without a trim cut: set all flags of j_1 to 1."
         !no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
       end
       # Add the cut to the cut list. Check if the second child plate is waste
       # before trying to get its plate index.
-      push!(vnnn, (pli, plis[pll, x], iszero(dw_sc) ? dw_sc : plis[pll, dw_sc]))
+      push!(vnnn, (pli, plis[(pll, x)], iszero(dw_sc) ? dw_sc : plis[(pll, dw_sc)]))
     end
 
     for y in dl1
@@ -781,7 +788,7 @@ function gen_cuts(
       trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, pll - y, plw)
       # The trim_cut flag is used below outside of 'if faithful2furini2016'
       # because a true value implicates that 'faithful2furini2016 == true'.
-      if iszero(plis[y, plw]) # If the first child does not yet exist.
+      if iszero(get(plis, (y, plw), 0)) # If the first child does not yet exist.
         push!(next, (y, plw, n += 1)) # Create the first child.
         if !no_redundant_cut
           if trim_cut
@@ -795,18 +802,18 @@ function gen_cuts(
           end
           push!.(sfhv, fchild_sfhv)
         end
-        plis[y, plw] = n # Mark plate existence.
+        plis[(y, plw)] = n # Mark plate existence.
       elseif !no_redundant_cut
         # If plate already exists, and we are implementing Redundant-Cut
         if trim_cut
           # From Furini2016 supplement: "if an existing plate j_1 ∈ J is
           # obtained from j through a trim cut:"
-          sh_j > -1 && (fh[plis[y, plw]] = 1)
-          sv_j > -1 && (fv[plis[y, plw]] = 1)
+          sh_j > -1 && (fh[plis[(y, plw)]] = 1)
+          sv_j > -1 && (fv[plis[(y, plw)]] = 1)
         else
           # From Furini2016 supplement: "if a plate (new or EXISTING) j_1 is
           # obtained from j without a trim cut: set all flags of j_1 to 1."
-          setindex!.(sfhv, (1, 1, 1, 1), plis[y, plw])
+          setindex!.(sfhv, (1, 1, 1, 1), plis[(y, plw)])
         end
       end
       # If the second child size is rounded down to a discretized point:
@@ -827,20 +834,20 @@ function gen_cuts(
       end
       # If the second child is not waste (!trim_cut), nor was already
       # generated, then it is a new plate obtained without a trim cut.
-      if !trim_cut && iszero(plis[dl_sc, plw])
+      if !trim_cut && iszero(get(plis, (dl_sc, plw), 0))
         # Assert meaning: if the second child is not waste, then it must
         # have an associated size.
         @assert !iszero(dl_sc)
         # Save the plate to be processed later, and mark its existence.
         push!(next, (dl_sc, plw, n += 1))
-        plis[dl_sc, plw] = n
+        plis[(dl_sc, plw)] = n
         # From Furini2016 supplement: "if a plate (NEW or existing) j 1 is
         # obtained from j without a trim cut: set all flags of j_1 to 1."
         !no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
       end
       # Add the cut to the cut list. Check if the second child plate is waste
       # before trying to get its plate index.
-      push!(hnnn, (pli, plis[y, plw], iszero(dl_sc) ? dl_sc : plis[dl_sc, plw]))
+      push!(hnnn, (pli, plis[(y, plw)], iszero(dl_sc) ? dl_sc : plis[(dl_sc, plw)]))
     end
 
     # Goes to the next unprocessed plate.
@@ -859,11 +866,12 @@ function gen_cuts(
     for pii in 1:max_piece_type # pii: PIece Index
       # Assert meaning: for every distinct piece dimensions there should be
       # a plate with the exact same dimensions.
-      @assert !iszero(plis[l[pii], w[pii]])
-      push!(np, (plis[l[pii], w[pii]], pii))
+      @assert !iszero(get(plis, (l[pii], w[pii]), 0))
+      push!(np, (plis[(l[pii], w[pii])], pii))
     end
   end
 
+  println("finished plate enumeration")
   return pli_lwb, hnnn, vnnn, np
 end
 
