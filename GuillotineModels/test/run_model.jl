@@ -106,6 +106,11 @@ function read_build_solve_and_print(
   p_args, instfname_idx; no_csv_out = false, no_solver_out = false
 )
   instfname = p_args["instfnames"][instfname_idx]
+  if !no_csv_out
+    @show instfname
+    seed = first(p_args["seed"])
+    @show seed
+  end
   L, W, l, w, p, d = GC2DInstanceReader.read_instance(instfname)
   if p_args["div-and-round-nearest"][1] != 1
     factor = p_args["div-and-round-nearest"][1]
@@ -155,7 +160,8 @@ function read_build_solve_and_print(
         no_furini_symmbreak = p_args["no-furini-symmbreak"],
         faithful2furini2016 = p_args["faithful2furini2016"],
         lb = get(p_args["lower-bounds"], instfname_idx, 0),
-        ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p))
+        ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p)),
+	print_debug = !no_csv_out
       )
     end
   end
@@ -195,9 +201,6 @@ function read_build_solve_and_print(
   end
 
   if !no_csv_out
-    @show instfname
-    seed = first(p_args["seed"])
-    @show seed
     @show time_to_build_model
     n = length(d)
     @show n

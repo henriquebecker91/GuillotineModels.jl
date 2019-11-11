@@ -365,8 +365,12 @@ function build_model_no_symmbreak(
   faithful2furini2016 = false,
   no_redundant_cut = false, no_cut_position = false,
   no_furini_symmbreak = false,
-  lb :: P = zero(P), ub :: P = zero(P)
+  lb :: P = zero(P), ub :: P = zero(P),
+  print_debug :: Bool = false
 ) where {D, S, P}
+  if print_debug
+    before_enumeration = time()
+  end
   @assert length(d) == length(l) && length(l) == length(w)
   num_piece_types = convert(D, length(d))
 
@@ -432,6 +436,12 @@ function build_model_no_symmbreak(
     pli, pii = np[i]
     push!(pli2pair[pli], i)
     push!(pii2pair[pii], i)
+  end
+
+  if print_debug
+    time_to_enumerate_plates = time() - before_enumeration
+    @show time_to_enumerate_plates
+    before_solver_build = time()
   end
 
   # If all pieces have demand one, a binary variable will suffice to make the
@@ -509,6 +519,11 @@ function build_model_no_symmbreak(
     @constraint(model,
       sum(p[pii]*sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types) <= ub
     )
+  end
+
+  if print_debug
+    time_to_solver_build = time() - before_solver_build
+    @show time_to_solver_build
   end
 
   model, hvcuts, pli_lwb, np
