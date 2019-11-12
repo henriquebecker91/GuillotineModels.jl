@@ -7,9 +7,11 @@ Pkg.instantiate()
 # Load the necessary packages. The ones after the `push!` are from this
 # repository.
 using JuMP, ArgParse, MathOptInterface
-using CPLEX
+#using CPLEX
+#using_cplex = true
+using_cplex = false
 #using Cbc
-#using Gurobi
+using Gurobi
 #using Profile
 
 using MathOptFormat # disabled because dependency hell
@@ -27,24 +29,25 @@ function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
   seed = first(p_args["seed"])
   @assert isone(length(p_args["det-time-limit"]))
   det_time_limit = first(p_args["det-time-limit"])
+  @assert isone(length(p_args["time-limit"]))
+  time_limit = first(p_args["time-limit"])
 
   if p_args["disable-solver-tricks"]
     m = JuMP.direct_model(
-      CPLEX.Optimizer(
+      #=CPLEX.Optimizer(
         CPX_PARAM_EPGAP = 1e-6,
         CPX_PARAM_PROBE = -1,
         CPX_PARAM_HEURFREQ = -1,
         CPX_PARAM_REPEATPRESOLVE = -1,
         CPX_PARAM_DIVETYPE = 1,
         CPX_PARAM_DETTILIM = det_time_limit,
+	CPX_PARAM_TILIM = time_limit,
         #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
         CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
         CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
         CPX_PARAM_THREADS = threads,
         CPX_PARAM_RANDOMSEED = seed
-      )
-    )
-    #=
+      )=#
       Gurobi.Optimizer(
         Method = 2, # use barrier for LP
         #PreSparsify = 1, # try to reduce nonzeros
@@ -52,31 +55,30 @@ function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
         Threads = threads,
         Seed = seed,
         OutputFlag = no_solver_out ? 0 : 1,
-        MIPGap = 1e-6
+        MIPGap = 1e-6,
+        TimeLimit = time_limit
       )
-    =#
-    #=
-      Cbc.Optimizer(
+      #=Cbc.Optimizer(
         threads = 1,
         ratioGap = 1e-6,
         logLevel = no_solver_out ? 0 : 1,
         randomSeed = seed,
-        barrier = true
-      )
-    =#
+        barrier = true,
+	seconds = time_limit
+      )=#
+    )
   else
     m = JuMP.direct_model(
-      CPLEX.Optimizer(
+      #=CPLEX.Optimizer(
         CPX_PARAM_EPGAP = 1e-6,
         CPX_PARAM_DETTILIM = det_time_limit,
+	CPX_PARAM_TILIM = time_limit,
         #CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
         CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
         CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
         CPX_PARAM_THREADS = threads,
         CPX_PARAM_RANDOMSEED = seed
-      )
-    )
-    #=
+      )=#
       Gurobi.Optimizer(
         Method = 2, # use barrier for LP
         #PreSparsify = 1, # try to reduce nonzeros
@@ -84,18 +86,18 @@ function new_empty_and_configured_model(p_args; no_solver_out = no_solver_out)
         Threads = threads,
         Seed = seed,
         OutputFlag = no_solver_out ? 0 : 1,
-        MIPGap = 1e-6
+        MIPGap = 1e-6,
+        TimeLimit = time_limit
       )
-    =#
-    #=
-      Cbc.Optimizer(
+      #=Cbc.Optimizer(
         threads = 1,
         ratioGap = 1e-6,
         logLevel = no_solver_out ? 0 : 1,
         randomSeed = seed,
-        barrier = true
-      )
-    =#
+        barrier = true,
+	seconds = time_limit
+      )=#
+    )
   end
 
   return m
@@ -173,6 +175,33 @@ function read_build_solve_and_print(
   MOI.write_to_file(mps_model, "last_run.mps")
   =#
 
+  if !no_csv_out
+    @show time_to_build_model
+    n = length(d)
+    @show n
+    n_ = sum(d)
+    @show n_
+    p_ = max(L/minimum(l), W/minimum(w))
+    @show p_
+    num_vars = num_variables(m)
+    @show num_vars
+    num_constrs = num_all_constraints(m)
+    @show num_constrs
+    #@show m # just in case there is something here I did not output
+    #print(m) # just in case there is something here I did not output
+    if !p_args["flow-model"] && !p_args["break-hvcut-symmetry"]
+      num_plates = length(pli_lwb)
+      @show num_plates
+      ps = m[:picuts]
+      num_picuts = length(ps)
+      @show num_picuts
+      cm = m[:cuts_made]
+      num_cuts_made = length(cm)
+      @show num_cuts_made
+    end
+  end
+  flush(stdout) # guarantee all messages will be flushed before calling cplex
+
   if p_args["warm-start"]
     @assert !p_args["faithful2furini2016"] && !p_args["flow-model"]
     (heur_obj, heur_sel, heur_pat), heur_time, _, _, _ = @timed iterated_greedy(
@@ -200,32 +229,7 @@ function read_build_solve_and_print(
     set_start_value.(all_variables(m), restricted_sol)
   end
 
-  if !no_csv_out
-    @show time_to_build_model
-    n = length(d)
-    @show n
-    n_ = sum(d)
-    @show n_
-    p_ = max(L/minimum(l), W/minimum(w))
-    @show p_
-    num_vars = num_variables(m)
-    @show num_vars
-    num_constrs = num_all_constraints(m)
-    @show num_constrs
-    #@show m # just in case there is something here I did not output
-    #print(m) # just in case there is something here I did not output
-    if !p_args["flow-model"] && !p_args["break-hvcut-symmetry"]
-      num_plates = length(pli_lwb)
-      @show num_plates
-      ps = m[:picuts]
-      num_picuts = length(ps)
-      @show num_picuts
-      cm = m[:cuts_made]
-      num_cuts_made = length(cm)
-      @show num_cuts_made
-    end
-  end
-  flush(stdout) # guarantee all messages will be flushed before calling cplex
+  p_args["do-not-solve"] && return nothing
   #@error "testing furini, if optimize is called, all memory will be consumed"
   #exit(0)
   vars_before_deletes = all_variables(m)
@@ -260,6 +264,7 @@ function read_build_solve_and_print(
     time_to_solve_model += @elapsed optimize!(m)
   end
   sleep(0.01) # shamefully needed to avoid out of order messages from cplex
+
   if !no_csv_out
     @show time_to_solve_model
     if primal_status(m) == MOI.FEASIBLE_POINT
@@ -345,17 +350,22 @@ function parse_script_args(args = ARGS)
     s = ArgParseSettings()
     @add_arg_table s begin
       "--threads"
-        help = "number of threads used by CPLEX (not model building)"
+        help = "number of threads used by the solver (not model building)"
         arg_type = Int
         default = [1]
         nargs = 1
+      "--time-limit"
+        help = "time limit in seconds for solver B&B (not model building, not root solving), default one year"
+        arg_type = Float64
+        default = [31536000.0]
+        nargs = 1
       "--det-time-limit"
-        help = "deterministic time limit for CPLEX (not model building)"
+        help = "deterministic time limit for CPLEX B&B (not model building, not root solving), only CPLEX has deterministic time limit among the solvers"
         arg_type = Float64
         default = [1.0E+75]
         nargs = 1
       "--seed"
-        help = "seed used by CPLEX (model building is deterministic)"
+        help = "seed used by the solver (model building is deterministic)"
         arg_type = Int
         default = [1]
         nargs = 1
@@ -364,6 +374,9 @@ function parse_script_args(args = ARGS)
         nargs = 0
       "--disable-solver-output"
         help = "disable the CPLEX output for all instances"
+        nargs = 0
+      "--do-not-solve"
+        help = "just builds the model, do not call the solver over it"
         nargs = 0
       "--do-not-mock-first-for-compilation"
         help = "if passed then the first instance will not be solved twice"
@@ -468,6 +481,9 @@ function parse_script_args(args = ARGS)
     )
     p_args["final-pricing"] && p_args["relax2lp"] && @error(
       "the flags --final-pricing and --relax2lp should not be used together; it is not clear what they should do, and the best interpretation (solving the relaxed model and doing the final pricing, without solving the unrelaxed reduced model after) is not specially useful and need extra code to work that is not worth it"
+    )
+    p_args["det-time-limit"] != [1.0E+75] && !using_cplex && @error(
+      "only CPLEX has deterministic time, unfortunately"
     )
 
     return p_args
