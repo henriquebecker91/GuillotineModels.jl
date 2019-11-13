@@ -336,7 +336,19 @@ function read_build_solve_and_print(
         foreach(cm_nz) do e
           i, v = e
           parent, fchild, schild = hvcuts[i]
-          println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[schild][1], pli_lwb[schild][2])))
+	  @assert !iszero(parent)
+	  @assert !iszero(fchild)
+	  if iszero(schild)
+	    @assert p_args["faithful2furini2016"]
+	    if pli_lwb[parent][1] == pli_lwb[fchild][1]
+              println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1], pli_lwb[parent][2] - pli_lwb[fchild][2])))
+	    else
+	      @assert pli_lwb[parent][2] == pli_lwb[fchild][2]
+              println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1] - pli_lwb[fchild][1], pli_lwb[parent][2])))
+	    end
+	  else
+            println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[schild][1], pli_lwb[schild][2])))
+	  end
         end
       end
     end
