@@ -244,8 +244,8 @@ function gen_cuts_sb(
   # If the piece has the exact same size that a plate, then it is added to
   # the vector at pli2piis[plate_type].
   pli2piis = Vector{D}[]
-  # The list of plates attributes: plate length, plate width, and plate bound.
-  # The plate index is the same as the index in pli_lwb.
+  # The list of plates attributes: plate length, plate width, plate symmetry,
+  # and plate bound. The plate index is the same as the index in pli_lwsb.
   pli2lwsb = Vector{Tuple{S, S, UInt8, P}}()
   # plis: matrix of the plate dimensions in which zero means "never seen that
   # plate before" and nonzero means "this nonzero number is the plate index".
@@ -478,25 +478,18 @@ end
 
 function filter_symm_pos(
   disc :: Vector{S},
-  dim :: S
-) :: Vector{S} where {S}
-  return filter_symm_pos!(deepcopy(disc), dim)
-end
-
-function filter_symm_pos!(
-  disc :: Vector{S},
-  dim :: S
+  dim :: S,
+  disc_copy = copy(disc) :: Vector{S}
 ) :: Vector{S} where {S}
   half_dim = dim ÷ 2
   for xy in disc
-    # The first position after half_dim may have been turned to zero,
-    # this is the reason of '|| iszero(xy)'.
-    (xy >= half_dim || iszero(xy)) && break
+    # If the plate has 
+    (xy > half_dim || (xy == dim - xy)) && break
     symm_pos = dim - xy
     symm_idx = searchsortedlast(disc, symm_pos)
-    !iszero(symm_idx) && disc[symm_idx] == symm_pos && (disc[symm_idx] = 0)
+    !iszero(symm_idx) && disc[symm_idx] == symm_pos && (disc_copy[symm_idx] = 0)
   end
-  return filter!(!iszero, disc)
+  return filter!(!iszero, disc_copy)
 end
 
 # From Furini2016 supplement: "if one (or more) of the flags of plate j has
@@ -886,6 +879,21 @@ function gen_cuts(
       @assert !iszero(plis[l[pii], w[pii]])
       push!(np, (plis[l[pii], w[pii]], pii))
     end
+  end
+
+  # TODO: create flag for print variables
+  # DEBUG FOR CHECKING AGAINST MARTIN REMOVE AFTER
+  for hcut in hnnn
+    pp, fc, _ = hcut
+    ppl, ppw, _ = pli_lwb[pp]
+    q = pli_lwb[fc][1]
+    println("$(ppl) $(ppw) 1 $(q)")
+  end
+  for vcut in vnnn
+    pp, fc, _ = vcut
+    ppl, ppw, _ = pli_lwb[pp]
+    q = pli_lwb[fc][2]
+    println("$(ppl) $(ppw) 0 $(q)")
   end
 
   #println("finished plate enumeration")

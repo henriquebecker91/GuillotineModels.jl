@@ -355,7 +355,7 @@ end
 #
 # Unnecessary constraints:
 #
-# The number of times a pair pli-pii appear is at most the min between: 1)
+# The number of times a pair pli-pii appear is at most the min between:
 # d[pii] and the number of subplates pli that fit in the original plate.
 #   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
 function build_model_no_symmbreak(
