@@ -3,6 +3,8 @@ module AllSubplatesModel
 using JuMP
 include("GuillotinePlatesDP.jl")
 using .GuillotinePlatesDP
+include("ModelUtils.jl")
+using .ModelUtils
 
 function min_l_fitting_piece(l, w, L, W)
   @assert length(l) == length(w)
@@ -64,6 +66,48 @@ function search_cut_or_symmetry(
   @assert false # this should not be reachable
 end
 
+function disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
+  @assert length(sl) == length(sw)
+  n = length(sl)
+  @assert issorted(sl)
+  @assert issorted(sw)
+  reg = Vector{SavedBound}()
+  # For each triple in nnn, there is an associated variable in the
+  # cuts_made vector of m. The orientation and the position of the cut
+  # may be obtained by: getting the parent plate and first child indexes
+  # from nnn, using them to index pli_lwb, check which dimension has
+  # been changed and its new size. If a vertical (horizontal) cut creates
+  # a first child with size s, and s is NOT present in sw (sl), then that
+  # varible will be disabled.
+  for (i ,(pp, fc, _)) in enumerate(nnn)
+    ppl, ppw, _ = pli_lwb[pp]
+    fcl, fcw, _ = pli_lwb[fc]
+    @assert fcl < ppl || fcw < ppw
+    should_fix = false
+    if fcl < ppl
+      fcl_idx = searchsortedfirst(sl, fcl)
+      if fcl_idx > n || sl[fcl_idx] != fcl
+        should_fix = true
+      end
+    else
+      @assert fcw < ppw
+      fcw_idx = searchsortedfirst(sw, fcw)
+      if fcw_idx > n || sw[fcw_idx] != fcw
+        should_fix = true
+      end
+    end
+    if should_fix
+      var = m[:cuts_made][i]
+      # fix(...; force = true) erase the old bounds to then fix the variable.
+      # To be able to restore variables that had bounds, it is necessary to
+      # save the old bounds and the varible reference to restore them.
+      save_bound_if_exists!(reg, var)
+      fix(var, 0.0; force = true)
+    end
+  end
+  reg
+end
+
 function search_cut(
   pp :: P, # parent plate
   fcl :: S, # first child length
@@ -81,6 +125,16 @@ end
 
 # TODO: check if the piece will be immediatelly extracted or does it need
 # an extra cut to make a plate small enough to extract the piece?
+# TODO: if the piece needs an extra trim, the things are even worse than
+# I thought at first, there is no guarantee the trim will be obtained
+# in a single cut. It may be necessary to make many fake trim cuts to
+# get a plate of the right size to make an extraction. It is just much
+# simpler to add fake extraction variables for every plate that would need
+# fake trims than to add all cuts needed to arrive at it. On the other side,
+# this is something interesting to comment on the paper, the lack of guarantee
+# on the number of cuts needed to extract the pieces from the plates, a
+# 'downside' that seems not to be a problem for the solver, of have common
+# worst-cases.
 # TODO: comment all code this method is specially hard to follow
 # TODO: the warm-start for the flag faithful2furini enabled and disabled will
 # need to be different? the rules for which plates exist and which do not are
@@ -317,7 +371,7 @@ end
 #
 # Unnecessary constraints:
 #
-# The number of times a pair pli-pii appear is at most the min between: 1)
+# The number of times a pair pli-pii appear is at most the min between:
 # d[pii] and the number of subplates pli that fit in the original plate.
 #   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
 function build_model_no_symmbreak(
@@ -327,8 +381,12 @@ function build_model_no_symmbreak(
   faithful2furini2016 = false,
   no_redundant_cut = false, no_cut_position = false,
   no_furini_symmbreak = false,
-  lb :: P = zero(P), ub :: P = zero(P)
+  lb :: P = zero(P), ub :: P = zero(P),
+  print_debug :: Bool = false
 ) where {D, S, P}
+  if print_debug
+    before_enumeration = time()
+  end
   @assert length(d) == length(l) && length(l) == length(w)
   num_piece_types = convert(D, length(d))
 
@@ -394,6 +452,12 @@ function build_model_no_symmbreak(
     pli, pii = np[i]
     push!(pli2pair[pli], i)
     push!(pii2pair[pii], i)
+  end
+
+  if print_debug
+    time_to_enumerate_plates = time() - before_enumeration
+    @show time_to_enumerate_plates
+    before_solver_build = time()
   end
 
   # If all pieces have demand one, a binary variable will suffice to make the
@@ -471,6 +535,11 @@ function build_model_no_symmbreak(
     @constraint(model,
       sum(p[pii]*sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types) <= ub
     )
+  end
+
+  if print_debug
+    time_to_solver_build = time() - before_solver_build
+    @show time_to_solver_build
   end
 
   model, hvcuts, pli_lwb, np
