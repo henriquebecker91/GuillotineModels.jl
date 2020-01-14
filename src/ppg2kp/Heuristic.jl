@@ -1,4 +1,4 @@
-module HeuristicsGC2D
+module Heuristic
 
 using Random
 
@@ -25,27 +25,6 @@ function promising_kfirst(
   # the line below is only executed if sum(p) <= bkv
   return zero(D)
 end
-#=
-function promising_kfirst(
-  d :: AbstractVector{D},
-  p :: AbstractVector{P},
-  a :: AbstractVector{P},
-  A :: P,
-  bkv :: P
-) :: D where {D, P}
-  n = length(d)
-  @assert [n] == unique!(length.([p, a]))
-  sump, suma = zero(P), zero(P)
-  for k = 1:n
-    suma += a[k]
-    suma > A && return zero(D)
-    sump += p[k]
-    sump > bkv && return convert(D, k)
-  end
-  # the line below is only executed if sum(p) <= bkv
-  return zero(D)
-end
-=#
 
 # Takes two vectors of the same size. Expand the second based on the values
 # of the first (i.e., parameter 'd'). Ex.: expand([0, 1, 2, 3], [4, 5, 6, 7])
@@ -124,66 +103,6 @@ function iterated_greedy(
   @show nz_w
   return bkv, sel, pat
 end
-
-#=
-function first_fit_decr!(
-  d :: AbstractVector{D}, p :: AbstractVector{P}, l :: AbstractVector{S}, w :: AbstractVector{S},
-  L :: S, W :: S
-) :: Tuple{P, AbstractVector{D}} where {D, S, P}
-  o = sortperm(w; rev = true)
-  permute!.((d, p, l, w), (o, o, o, o))
-  return first_fit_decr(d, p, l, w, L, W)
-end
-
-function first_fit_decr(
-  d :: AbstractVector{D}, p :: AbstractVector{P}, l :: AbstractVector{S}, w :: AbstractVector{S},
-  L :: S, W :: S
-) :: Tuple{P, Vector{D}} where {D, S, P}
-  n = length(d) # number of distinct piece types
-  # assert explanation: all vectors should be the same length.
-  @assert [n] == unique!(length.([p, l, w]))
-  @assert issorted(w; rev = true)
-  lw = Vector{S}() # levels width
-  ll = Vector{S}() # levels length
-  rw = W # remaining width
-
-  bkv = 0
-  bks = zeros(D, n)
-  for i in 1:n # for each piece type
-    for _ in 1:d[i] # for each copy of the same piece type
-      assigned = false
-      for j in 1:length(lw) # for each already open level 
-        # assert reasoning: the levels are created with the width of previous
-        # pieces, and the pieces are ordered by decreasing weight, therefore
-        # no piece may have more width than an already open level.
-        @assert lw[j] >= w[i]
-        if ll[j] >= l[i] # checks if the level has enough length yet
-          ll[j] -= l[i]
-          bkv += p[i]
-          bks[i] += one(D)
-          assigned = true
-          break
-        end
-      end
-      # If the piece does not fit any already open level...
-      if !assigned
-        # ... and there is no space to open a new level, then jump to the
-        # next piece type.
-        rw < w[i] && @goto next_piece_type
-        # ... but there is yet space to open a new level, create a new level.
-        push!(lw, w[i])
-        push!(ll, L - l[i])
-        rw -= w[i]
-        bkv += p[i]
-        bks[i] += one(D)
-      end
-    end
-    @label next_piece_type
-  end
-
-  @assert sum(bks .* p) == bkv
-  return bkv, bks
-end=#
 
 function first_fit_decr(
   p :: AbstractVector{P}, # profit of the piece

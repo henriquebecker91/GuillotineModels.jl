@@ -1,4 +1,4 @@
-module ModelUtils
+module Utilities
 
 using JuMP
 

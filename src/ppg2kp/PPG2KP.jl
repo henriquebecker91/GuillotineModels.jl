@@ -1,10 +1,15 @@
-module AllSubplatesModel
+module PPG2KP
+
+include("Enumeration.jl")
+using .Enumeration
+
+# for now, it does not make use of this module here, just make it available
+include("Heuristic.jl")
+using .Heuristic
+
+using ..Utilities
 
 using JuMP
-include("GuillotinePlatesDP.jl")
-using .GuillotinePlatesDP
-include("ModelUtils.jl")
-using .ModelUtils
 
 function min_l_fitting_piece(l, w, L, W)
   @assert length(l) == length(w)

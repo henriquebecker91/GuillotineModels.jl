@@ -1,4 +1,4 @@
-module GuillotinePlatesDP
+module Enumeration
 
 # TODO: Consider removing flag ignore_2th_dim. Reasoning: nobody does that,
 # even Furini only consider the pieces that fit a plate before discretizing it,

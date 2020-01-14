@@ -1,10 +1,12 @@
-module FlowModel
+module Flow
 
 using JuMP
-push!(LOAD_PATH, "./")
-using FlowDP
-#include("FlowDP.jl")
-#using .FlowDP
+
+include("Enumeration.jl")
+using .Enumeration
+
+# Just include it to make it available to users of this module.
+include("Format.jl")
 
 # HIGH LEVEL EXPLANATION OF THE MODEL
 #

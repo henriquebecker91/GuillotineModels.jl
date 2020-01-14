@@ -1,4 +1,4 @@
-module FlowDP
+module Enumeration
 
 export Node, Edge, FlowModel, gen_all_edges
 

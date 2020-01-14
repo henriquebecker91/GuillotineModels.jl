@@ -1,4 +1,4 @@
-module Flow2Format
+module Format
 
 # CONSIDER MIGRATING TO GraphRecipes
 # (https://github.com/JuliaPlots/GraphRecipes.jl/blob/master/README.md)
@@ -7,8 +7,7 @@ module Flow2Format
 
 import LightGraphs, TikzGraphs, TikzPictures
 
-push!(LOAD_PATH, "./")
-using FlowDP
+using ..Enumeration
 
 export flow2digraph, flow2tikzpic, flow2file, flow2pdf
 

@@ -1,8 +1,6 @@
-module KnapsackPlatesModel
+module KnapsackPlates
 
 using JuMP
-include("GuillotinePlatesDP.jl")
-using .GuillotinePlatesDP
 
 function build(
   model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},

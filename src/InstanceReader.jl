@@ -1,4 +1,4 @@
-module GC2DInstanceReader
+module InstanceReader
 
 export read_instance
 
