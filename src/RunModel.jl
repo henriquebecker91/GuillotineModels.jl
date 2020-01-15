@@ -1,5 +1,6 @@
 module RunModel
 
+using TimerOutputs
 using JuMP
 using ArgParse
 # Both MathOptInterface and MathOptFormat are used to allow saving the
@@ -13,16 +14,25 @@ include("./SolversArgs.jl") # for empty_configured_model, get_solver_arg_parse
 using Random # for MersenneTwister used in heuristic
 using ..InstanceReader # for reading the instances
 using ..Utilities # for useful helper methods not implemented in JuMP
-using ..Flow # for the flow model
-using ..PPG2KP # for the Furini and enhanced Furini models
+# Importing the model modules is not necessary, as they are acessed by
+# metaprogramming not by literals in the code.
+#using ..Flow
+#using ..PPG2KP
 
-function save_model(model, filename = "saved_model.mps")
+# Style guideline: as the module block is left unindented, the @timeit
+# blocks that wrap the whole method body also are not indented.
+
+function save_model(model, filename = "saved_model.mps") :: Nothing
+	@timeit "save_model" begin
 	mps_model = MathOptFormat.MPS.Model()
 	MOI.copy_to(mps_model, backend(model))
 	MOI.write_to_file(mps_model)
+	end # timeit
+	nothing
 end
 
 function div_and_round_instance(L, W, l, w, p_args)
+	@timeit "div_and_round_instance" begin
 	# assert explanation: at least two of the three flags are disabled (i.e., 
 	# have value one)
 	@assert sum(isone.((
@@ -50,11 +60,17 @@ function div_and_round_instance(L, W, l, w, p_args)
 		l = convert.(S, round.(l ./ factor, roundmode))
 		w = convert.(S, round.(w ./ factor, roundmode))
 	end
+	end # timeit
 	L, W, l, w
 end
 
-function get_model_build_method(modname)
-	getfield(:build, getfield(..GuillotineModels, Symbol(modname)))
+function get_submodule(module_name)
+	getfield(parentmodule(@__MODULE__), Symbol(module_name))
+end
+
+function get_submodule_method(module_name, method_name)
+	submodule = get_submodule(modname)
+	getfield(Symbol(method_name), submodule)
 end
 
 # Read the instance, build the model, solve the model, and print related stats.
@@ -264,131 +280,114 @@ function read_build_solve_and_print(
 	return nothing
 end
 
+function check_parsed_args(p_args)
+
+	for option in ["lower-bounds", "upper-bounds"]
+		if !isempty(p_args[option])
+			@assert isone(length(p_args[option]))
+			str_list = p_args[option][1]
+			if match(r"^([1-9][0-9]*|0)(,([1-9][0-9]*|0))*$", str_list) === nothing
+				@error "the --$(option) does not follow the desired format: integer,integer,integer,... (no comma after last number)"
+			end
+			num_list = parse.(Int64, split(str_list, ','))
+			if length(num_list) != length(p_args["instfnames"])
+				@error "the length of the list passed to --$(option) should be the exact same size as the number of instances provided"
+			end
+			p_args[option] = num_list
+		end
+	end
+
+	num_rounds = sum(.! isone.(map(flag -> p_args[flag][1],
+		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
+	)))
+	num_rounds > 1 && @error("only one of --div-and-round-{nearest,up,down} may be passed at the same time (what the fuck you expected?)")
+	is_revised_furini = !p_args["faithful2furini2016"] && !p_args["flow-model"]
+	p_args["final-pricing"] && !is_revised_furini && @error(
+		"the final pricing technique is implemented just for Revised Furini model as of now"
+	)
+	p_args["final-pricing"] && isempty(p_args["lower-bounds"]) &&
+		!p_args["warm-start"] && @error(
+		"the flag --final-pricing only makes sense if a lower bound is provided (either directly by --lower-bound or indirectly by --warm-start)"
+	)
+	p_args["final-pricing"] && p_args["relax2lp"] && @error(
+		"the flags --final-pricing and --relax2lp should not be used together; it is not clear what they should do, and the best interpretation (solving the relaxed model and doing the final pricing, without solving the unrelaxed reduced model after) is not specially useful and need extra code to work that is not worth it"
+	)
+end
+
+function model_agnostic_arg_parse_settings()
+	s = ArgParseSettings()
+	@add_arg_table s begin
+		"--model"
+			help = "which model to use (case sensitive, ex.: PPG2KP, Flow, KnapsackPlates)"
+			arg_type = String
+			default = ["PPG2KP"]
+			nargs = 1
+		"--do-not-solve"
+			help = "builds the model but do not try to solve it, some models may need to solve subproblems with a solver just to build the model, however"
+			nargs = 0
+		"--save-model"
+			help = "save the model to a file before solving it"
+			nargs = 0
+		"--do-not-mock-first-for-compilation"
+			help = "by default the first instance is solved twice, the first time without output, to compile the functions used and give better timing, this flags disable this behavior"
+			nargs = 0
+		"--relax2lp"
+			help = "(works on Furini-like and Flow1) integer and binary variables become continuous"
+			nargs = 0
+		"--ignore-d"
+			help = "ignore the demand information during discretization, used to measure impact (does not affect flow)"
+			nargs = 0
+		"--lower-bounds"
+			help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"
+			nargs = 1
+		"--upper-bounds"
+			help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"
+			nargs = 1
+		"--div-and-round-nearest"
+			help = "divide instance lenght and width (but not profit) by the passed factor and round them to nearest (THE ALGORITHM BECOMES A GUESS, DO NOT GIVE A PRIMAL SOLUTION NOR A VALID DUAL SOLUTION)"
+			arg_type = Int
+			default = [1]
+			nargs = 1
+		"--div-and-round-up"
+			help = "divide instance lenght and width (but not profit) by the passed factor and round them up (THE ALGORITHM BECOMES A PRIMAL HEURISTIC)"
+			arg_type = Int
+			default = [1]
+			nargs = 1
+		"--div-and-round-down"
+			help = "divide instance lenght and width (but not profit) by the passed factor and round them down (THE ALGORITHM BECOMES A OPTIMISTIC GUESS, VALID BOUND)"
+			arg_type = Int
+			default = [1]
+			nargs = 1
+		"instfnames"
+			help = "the paths to the instances to be solved"
+			action = :store_arg
+			nargs = '*' # can pass no instances to call "-h"
+	end
+	s
+end
+
 # Definition of the command line arguments.
 function parse_script_args(args = ARGS)
-		s = ArgParseSettings()
-		@add_arg_table s begin
-			"--model"
-				help = "which model to use (case-insensitive)"
-				arg_type = String
-				default = ["PPG2KP"]
-				nargs = 1
-			"--do-not-solve"
-				help = "just builds the model, do not call the solver over it"
-				nargs = 0
-			"--save-model"
-				help = "save the model to a file before solving it"
-				nargs = 0
-			"--do-not-mock-first-for-compilation"
-				help = "if passed then the first instance will not be solved twice"
-				nargs = 0
-			"--break-hvcut-symmetry"
-				help = "will double the number of variables, and reduce symmetry"
-				nargs = 0
-			"--only-binary-variables"
-				help = "CAUTION DO NOT GUARANTEE OPTIMALITY FOR NOW, IS HEURISTIC"
-				nargs = 0
-			"--use-c25"
-				help = "add the tightening constraints 2.5 (ignored by flow)"
-				nargs = 0
-			"--round2disc"
-				help = "round the second child size to a discretized position"
-				nargs = 0
-			"--ignore-2th-dim"
-				help = "ignore the dimension not being discretized during discretization, used to measure impact (does not affect flow)"
-				nargs = 0
-			"--final-pricing"
-				help = "uses the best lb available (from --lower-bounds or --warm-start) to remove variables after solving the continuous relaxation"
-				nargs = 0
-			"--faithful2furini2016"
-				help = "tries to be the most faithful possible to the description on the Furini2016 paper (more specifically the complete model, with the reductions, FOR NOW without a heuristic solution first and without pricing); the flags --no-cut-position, --no-redundant-cut and --no-furini-symmbreak disable parts of this reimplementation"
-				nargs = 0
-			"--no-redundant-cut"
-				help = "disables Furini2016 Redundant-Cut reduction: a bunch of flags is used to check if some trim cut is necessary for optimality, or is dominated by other trim cuts"
-				nargs = 0
-			"--no-furini-symmbreak"
-				help = "disables Furini2016 symmetry breaking: as trim cuts are needed in faithful2furini2016 mode, the symmetry-breaking is less restrictive than 'do not cut after midplate', it just removes each cut y > midplate in which plate_size - y is an existing cut; enabling this flag makes the code just use all discretized positions as cuts"
-				nargs = 0
-			"--no-cut-position"
-				help = "disables Furini2016 Cut-Position reduction: if a trivial heuristic shows that no combination of six or more pieces fit a plate, then the plate may be cut with restricted cuts without loss to optimality"
-				nargs = 0
-			"--warm-start"
-				help = "(works only for Revised Furini) uses the heuristic described in Furini2016 to generate a initial primal feasible solution, warm-start the model with unrestricted cuts fixed to zero, and then unfix the unrestricted cuts to solve the complete model"
-				nargs = 0
-			"--relax2lp"
-				help = "(works on Furini-like and Flow1) integer and binary variables become continuous"
-				nargs = 0
-			"--ignore-d"
-				help = "ignore the demand information during discretization, used to measure impact (does not affect flow)"
-				nargs = 0
-			"--lower-bounds"
-				help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"
-				nargs = 1
-			"--upper-bounds"
-				help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"
-				nargs = 1
-			"--div-and-round-nearest"
-				help = "divide instance lenght and width (but not profit) by the passed factor and round them to nearest (THE ALGORITHM BECOMES A GUESS, DO NOT GIVE A PRIMAL SOLUTION NOR A VALID DUAL SOLUTION)"
-				arg_type = Int
-				default = [1]
-				nargs = 1
-			"--div-and-round-up"
-				help = "divide instance lenght and width (but not profit) by the passed factor and round them up (THE ALGORITHM BECOMES A PRIMAL HEURISTIC)"
-				arg_type = Int
-				default = [1]
-				nargs = 1
-			"--div-and-round-down"
-				help = "divide instance lenght and width (but not profit) by the passed factor and round them down (THE ALGORITHM BECOMES A OPTIMISTIC GUESS, VALID BOUND)"
-				arg_type = Int
-				default = [1]
-				nargs = 1
-			"instfnames"
-				help = "the paths to the instances to be solved"
-				action = :store_arg
-				nargs = '*' # can pass no instances to call "-h"
-		end
+	@timeit "parse_script_args" begin
 
-		p_args = parse_args(args, s)
+	s = model_agnostic_arg_parse_settings()
+	# TODO: by hand get the value of the model type being used, maybe the
+	# solver too, use them to just merge with their arg_parse settings,
+	# so the flags of other models/solvers are not even merged
 
-		for option in ["lower-bounds", "upper-bounds"]
-			if !isempty(p_args[option])
-				@assert isone(length(p_args[option]))
-				str_list = p_args[option][1]
-				if match(r"^([1-9][0-9]*|0)(,([1-9][0-9]*|0))*$", str_list) === nothing
-					@error "the --$(option) does not follow the desired format: integer,integer,integer,... (no comma after last number)"
-				end
-				num_list = parse.(Int64, split(str_list, ','))
-				if length(num_list) != length(p_args["instfnames"])
-					@error "the length of the list passed to --$(option) should be the exact same size as the number of instances provided"
-				end
-				p_args[option] = num_list
-			end
-		end
+	get_submodule_method()
 
-		num_rounds = sum(.! isone.(map(flag -> p_args[flag][1],
-			["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
-		)))
-		num_rounds > 1 && @error("only one of --div-and-round-{nearest,up,down} may be passed at the same time (what the fuck you expected?)")
-		is_revised_furini = !p_args["faithful2furini2016"] && !p_args["flow-model"]
-		p_args["final-pricing"] && !is_revised_furini && @error(
-			"the final pricing technique is implemented just for Revised Furini model as of now"
-		)
-		p_args["final-pricing"] && isempty(p_args["lower-bounds"]) &&
-			!p_args["warm-start"] && @error(
-			"the flag --final-pricing only makes sense if a lower bound is provided (either directly by --lower-bound or indirectly by --warm-start)"
-		)
-		p_args["final-pricing"] && p_args["relax2lp"] && @error(
-			"the flags --final-pricing and --relax2lp should not be used together; it is not clear what they should do, and the best interpretation (solving the relaxed model and doing the final pricing, without solving the unrelaxed reduced model after) is not specially useful and need extra code to work that is not worth it"
-		)
-		p_args["det-time-limit"] != [1.0E+75] && !using_cplex && @error(
-			"only CPLEX has deterministic time, unfortunately"
-		)
+	p_args = parse_args(args, s)
+	end # timeit
 
-		return p_args
+	return p_args
 end
 
 # Parse the command line arguments, and call the solve for each instance.
+# TODO: consider changing the name of this method and the module for something
+# more adequate.
 function run_batch(args = ARGS)
+	@timeit "run_batch" begin
 	@show args
 	p_args = parse_script_args(args)
 
@@ -403,6 +402,7 @@ function run_batch(args = ARGS)
 		)
 		@show total_instance_time
 	end
+	end # timeit
 end
 
 end # module

@@ -2,8 +2,7 @@ module SolverArgParse
 
 export empty_configured_model
 
-# TODO: remove after putting require to work
-import Cbc
+using TimerOutputs
 
 function get_arg_parse_settings()
 	s = ArgParseSettings()
@@ -86,7 +85,7 @@ function empty_configured_model(
 				CPX_PARAM_HEURFREQ = -1,
 				CPX_PARAM_REPEATPRESOLVE = -1,
 				CPX_PARAM_DIVETYPE = 1,
-				CPX_PARAM_DETTILIM = first(p_args["det-time-limit"]),
+				CPX_PARAM_DETTILIM = first(p_args["cplex-det-time-limit"]),
 				CPX_PARAM_TILIM = first(p_args["time-limit"]),
 				#CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
 				CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
@@ -97,7 +96,7 @@ function empty_configured_model(
 		else
 			CPLEX.Optimizer(
 				CPX_PARAM_EPGAP = 1e-6,
-				CPX_PARAM_DETTILIM = first(p_args["det-time-limit"]),
+				CPX_PARAM_DETTILIM = first(p_args["cplex-det-time-limit"]),
 				CPX_PARAM_TILIM = first(p_args["time-limit"]),
 				CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
 				CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
@@ -149,10 +148,20 @@ end
 
 # Create a new model with a configured underlying solver.
 function empty_configured_model(p_args; no_solver_out = no_solver_out)
+	@timeit "empty_configured_model" begin
 	solver_id = Val(Symbol(lowercase(first(p_args["solver"]))))
-	return empty_configured_model(
+
+	# Some error checking.
+	p_args["cplex-det-time-limit"] != [1.0E+75] && solver_id != "cplex" && @error(
+		"flag cplex-det-time-limit was passed, but the solver selected is not CPLEX"
+	)
+
+	model = empty_configured_model(
 		solver_id, p_args; no_solver_out = no_solver_out
 	)
+	end # timeit
+
+	return model
 end
 
 end # module

@@ -1,5 +1,7 @@
 module InstanceReader
 
+using TimerOutputs
+
 export read_instance
 
 # TODO: allow for out of order plate ids; save ids;
@@ -7,6 +9,7 @@ export read_instance
 # WHITESPACE, CHANGE THE METHOD TO GET THE NEXT TOKEN AND NOT WORK
 # ORIENTED BY LINES BUT BY WORDS/TOKENS/NUMBERS
 function read_instance(filepath; config = Dict{Symbol,Bool}())
+	@timeit "read_instance" begin
 	default_config = Dict{Symbol,Bool}(
 		:expect_pid => false
 	)
@@ -60,6 +63,7 @@ function read_instance(filepath; config = Dict{Symbol,Bool}())
 			end
 			lnc = lnc + 1
 		end
+	end
 	end
 
 	return L, W, l, w, p, q
