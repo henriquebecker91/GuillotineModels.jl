@@ -7,6 +7,7 @@ using .Enumeration
 
 # Just include it to make it available to users of this module.
 include("Format.jl")
+include("Args.jl")
 
 # HIGH LEVEL EXPLANATION OF THE MODEL
 #
