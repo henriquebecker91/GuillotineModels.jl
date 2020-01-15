@@ -48,8 +48,7 @@ end
 function empty_configured_model(
 	::Val{:cbc}, p_args; no_solver_out = no_solver_out
 )
-	# TODO: fix call below
-	#Base.require("Cbc")
+	Base.require(:Cbc)
 	JuMP.direct_model(
 		# TODO: the options of cbc were not studied so, for now it does
 		# the same thing independent of the value of disable-solver-tricks
@@ -58,7 +57,7 @@ function empty_configured_model(
 				threads = 1,
 				ratioGap = 1e-6,
 				logLevel = no_solver_out ? 0 : 1,
-				randomSeed = first(p_args["seed"]),
+				randomSeed = first(p_args["solver-seed"]),
 				barrier = true,
 				seconds = first(p_args["time-limit"])
 			)
@@ -67,7 +66,7 @@ function empty_configured_model(
 				threads = 1,
 				ratioGap = 1e-6,
 				logLevel = no_solver_out ? 0 : 1,
-				randomSeed = first(p_args["seed"]),
+				randomSeed = first(p_args["solver-seed"]),
 				barrier = true,
 				seconds = first(p_args["time-limit"])
 			)
@@ -78,8 +77,7 @@ end
 function empty_configured_model(
 	::Val{:cplex}, p_args; no_solver_out = no_solver_out
 )
-	# TODO: fix call below
-	#Base.require("CPLEX")
+	Base.require(:CPLEX)
 	JuMP.direct_model(
 		if p_args["disable-solver-tricks"]
 			CPLEX.Optimizer(
@@ -94,7 +92,7 @@ function empty_configured_model(
 				CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
 				CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
 				CPX_PARAM_THREADS = first(p_args["threads"]),
-				CPX_PARAM_RANDOMSEED = first(p_args["seed"])
+				CPX_PARAM_RANDOMSEED = first(p_args["solver-seed"])
 			)
 		else
 			CPLEX.Optimizer(
@@ -105,7 +103,7 @@ function empty_configured_model(
 				CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
 				CPX_PARAM_SCRIND = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON,
 				CPX_PARAM_THREADS = first(p_args["threads"]),
-				CPX_PARAM_RANDOMSEED = first(p_args["seed"])
+				CPX_PARAM_RANDOMSEED = first(p_args["solver-seed"])
 			)
 		end
 	)
@@ -114,8 +112,7 @@ end
 function empty_configured_model(
 	::Val{:gurobi}, p_args; no_solver_out = no_solver_out
 )
-	# TODO: fix call below
-	#Base.require("Gurobi")
+	Base.require(:Gurobi)
 	JuMP.direct_model(
 		if p_args["disable-solver-tricks"]
 			Gurobi.Optimizer(
@@ -123,7 +120,7 @@ function empty_configured_model(
 				#PreSparsify = 1, # try to reduce nonzeros
 				#Presolve = 2, # aggressive presolving
 				Threads = first(p_args["threads"]),
-				Seed = first(p_args["seed"]),
+				Seed = first(p_args["solver-seed"]),
 				OutputFlag = no_solver_out ? 0 : 1,
 				MIPGap = 1e-6,
 				TimeLimit = first(p_args["time-limit"])
@@ -134,13 +131,20 @@ function empty_configured_model(
 				#PreSparsify = 1, # try to reduce nonzeros
 				#Presolve = 2, # aggressive presolving
 				Threads = first(p_args["threads"]),
-				Seed = first(p_args["seed"]),
+				Seed = first(p_args["solver-seed"]),
 				OutputFlag = no_solver_out ? 0 : 1,
 				MIPGap = 1e-6,
 				TimeLimit = first(p_args["time-limit"])
 			)
 		end
 	)
+end
+
+function empty_configured_model(
+	::Val{T}, p_args; no_solver_out = no_solver_out
+) where {T}
+	@error("model " * T * "is not implemented, define an implementation of" *
+		" empty_configured_model for it")
 end
 
 # Create a new model with a configured underlying solver.

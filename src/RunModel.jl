@@ -16,17 +16,21 @@ using ..Utilities # for useful helper methods not implemented in JuMP
 using ..Flow # for the flow model
 using ..PPG2KP # for the Furini and enhanced Furini models
 
-# Read the instance, build the model, solve the model, and print related stats.
-function read_build_solve_and_print(
-	p_args, instfname_idx; no_csv_out = false, no_solver_out = false
-)
-	instfname = p_args["instfnames"][instfname_idx]
-	if !no_csv_out
-		@show instfname
-		seed = first(p_args["seed"])
-		@show seed
-	end
-	L, W, l, w, p, d = InstanceReader.read_instance(instfname)
+function save_model(model, filename = "saved_model.mps")
+	mps_model = MathOptFormat.MPS.Model()
+	MOI.copy_to(mps_model, backend(model))
+	MOI.write_to_file(mps_model)
+end
+
+function div_and_round_instance(L, W, l, w, p_args)
+	# assert explanation: at least two of the three flags are disabled (i.e., 
+	# have value one)
+	@assert sum(isone.((
+		p_args["div-and-round-nearest"][1],
+		p_args["div-and-round-up"][1],
+		p_args["div-and-round-down"][1]
+	))) >= 2
+
 	if p_args["div-and-round-nearest"][1] != 1
 		factor = p_args["div-and-round-nearest"][1]
 		roundmode = RoundNearest
@@ -34,8 +38,8 @@ function read_build_solve_and_print(
 		factor = p_args["div-and-round-up"][1]
 		roundmode = RoundUp
 	elseif p_args["div-and-round-down"][1] != 1
-		roundmode = RoundDown
 		factor = p_args["div-and-round-down"][1]
+		roundmode = RoundDown
 	else
 		factor = 1
 	end
@@ -46,47 +50,38 @@ function read_build_solve_and_print(
 		l = convert.(S, round.(l ./ factor, roundmode))
 		w = convert.(S, round.(w ./ factor, roundmode))
 	end
+	L, W, l, w
+end
+
+function get_model_build_method(modname)
+	getfield(:build, getfield(..GuillotineModels, Symbol(modname)))
+end
+
+# Read the instance, build the model, solve the model, and print related stats.
+function read_build_solve_and_print(
+	p_args, instfname_idx; no_csv_out = false, no_solver_out = false
+)
+	instfname = p_args["instfnames"][instfname_idx]
+
+	if !no_csv_out
+		@show instfname
+		seed = first(p_args["solver-seed"])
+		@show seed
+	end
+
+	L_, W_, l_, w_, p, d = InstanceReader.read_instance(instfname)
+	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, p_args)
+
 	before_model_build = time()
 	m = empty_configured_model(p_args; no_solver_out = no_solver_out)
-	p_args["flow-model"] && p_args["only-binary-variables"] && @warn "the algorithm flow-model does not support the option only-binary-variables; ignoring the flag only-binary-variables"
-	p_args["flow-model"] && p_args["break-hvcut-symmetry"] && @warn "the algorithm flow-model does not support the option break-hvcut-symmetry; ignoring the flag break-hvcut-symmetry"
-	if p_args["flow-model"]
-		Flow.build_model(m, d, p, l, w, L, W)
-	else
-		if p_args["break-hvcut-symmetry"]
-			_, hvcuts, pli2lwsb, _, _ = PPG2KP.build_model_with_symmbreak(
-				m, d, p, l, w, L, W;
-				only_binary = p_args["only-binary-variables"],
-				use_c25 = p_args["use-c25"],
-				ignore_2th_dim = p_args["ignore-2th-dim"],
-				ignore_d = p_args["ignore-d"],
-				round2disc = p_args["round2disc"]
-			)
-		else
-			_, hvcuts, pli_lwb, np = PPG2KP.build_model_no_symmbreak(
-				m, d, p, l, w, L, W;
-				only_binary = p_args["only-binary-variables"],
-				use_c25 = p_args["use-c25"],
-				ignore_2th_dim = p_args["ignore-2th-dim"],
-				ignore_d = p_args["ignore-d"],
-				round2disc = p_args["round2disc"],
-				no_cut_position = p_args["no-cut-position"],
-				no_redundant_cut = p_args["no-redundant-cut"],
-				no_furini_symmbreak = p_args["no-furini-symmbreak"],
-				faithful2furini2016 = p_args["faithful2furini2016"],
-				lb = get(p_args["lower-bounds"], instfname_idx, 0),
-				ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p)),
-	print_debug = !no_csv_out
-			)
-		end
-	end
+
+	model_build = get_model_build_method(p_args["model"][1]) 
+	model_build_output = model_build(
+		m, d, p, l, w, L, W; p_args = p_args
+	)
 	time_to_build_model = time() - before_model_build
-	# The three lines below create a .mps file of the model before solving it.
-	#=
-	mps_model = MathOptFormat.MPS.Model()
-	MOI.copy_to(mps_model, backend(m))
-	MOI.write_to_file(mps_model, "last_run.mps")
-	=#
+
+	p_args["save-model"] && save_model(m)
 
 	if !no_csv_out
 		@show time_to_build_model
@@ -100,8 +95,8 @@ function read_build_solve_and_print(
 		@show num_vars
 		num_constrs = num_all_constraints(m)
 		@show num_constrs
-		#@show m # just in case there is something here I did not output
-		#print(m) # just in case there is something here I did not output
+		#= TODO: make specific prints for each model inside their module and
+		# call them there?
 		if !p_args["flow-model"] && !p_args["break-hvcut-symmetry"]
 			num_plates = length(pli_lwb)
 			@show num_plates
@@ -112,13 +107,13 @@ function read_build_solve_and_print(
 			num_cuts_made = length(cm)
 			@show num_cuts_made
 		end
+		=#
 	end
-	flush(stdout) # guarantee all messages will be flushed before calling cplex
 
 	if p_args["warm-start"]
 		@assert !p_args["faithful2furini2016"] && !p_args["flow-model"]
 		(heur_obj, heur_sel, heur_pat), heur_time, _, _, _ = @timed iterated_greedy(
-			d, p, l, w, L, W, MersenneTwister(p_args["seed"][1])
+			d, p, l, w, L, W, MersenneTwister(p_args["solver-seed"][1])
 		)
 		if !no_csv_out
 			@show heur_time
@@ -143,8 +138,7 @@ function read_build_solve_and_print(
 	end
 
 	p_args["do-not-solve"] && return nothing
-	#@error "testing furini, if optimize is called, all memory will be consumed"
-	#exit(0)
+
 	vars_before_deletes = all_variables(m)
 	if p_args["final-pricing"] || p_args["relax2lp"]
 		original_settings = relax_all_vars!(m)
@@ -282,6 +276,9 @@ function parse_script_args(args = ARGS)
 			"--do-not-solve"
 				help = "just builds the model, do not call the solver over it"
 				nargs = 0
+			"--save-model"
+				help = "save the model to a file before solving it"
+				nargs = 0
 			"--do-not-mock-first-for-compilation"
 				help = "if passed then the first instance will not be solved twice"
 				nargs = 0
@@ -323,9 +320,6 @@ function parse_script_args(args = ARGS)
 				nargs = 0
 			"--ignore-d"
 				help = "ignore the demand information during discretization, used to measure impact (does not affect flow)"
-				nargs = 0
-			"--flow-model"
-				help = "use the flow model instead of subplate model (ignore the --break-hvcut-symmetry and --only-binary-variables flags)"
 				nargs = 0
 			"--lower-bounds"
 				help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"

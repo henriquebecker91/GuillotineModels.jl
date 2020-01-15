@@ -346,6 +346,21 @@ function warm_start(
 	model
 end
 
+#= TODO: create a method that takes p_args
+				only_binary = p_args["only-binary-variables"],
+				use_c25 = p_args["use-c25"],
+				ignore_2th_dim = p_args["ignore-2th-dim"],
+				ignore_d = p_args["ignore-d"],
+				round2disc = p_args["round2disc"],
+				no_cut_position = p_args["no-cut-position"],
+				no_redundant_cut = p_args["no-redundant-cut"],
+				no_furini_symmbreak = p_args["no-furini-symmbreak"],
+				faithful2furini2016 = p_args["faithful2furini2016"],
+				lb = get(p_args["lower-bounds"], instfname_idx, 0),
+				ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p)),
+	print_debug = !no_csv_out
+=#
+
 # HIGH LEVEL EXPLANATION OF THE MODEL
 #
 # Variables:
@@ -379,7 +394,7 @@ end
 # The number of times a pair pli-pii appear is at most the min between:
 # d[pii] and the number of subplates pli that fit in the original plate.
 #   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
-function build_model_no_symmbreak(
+function build(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S; only_binary = false, use_c25 = false,
 	ignore_2th_dim = false, ignore_d = false, round2disc = true,
@@ -549,156 +564,6 @@ function build_model_no_symmbreak(
 
 	model, hvcuts, pli_lwb, np
 end # build_model_no_symmbreak
-
-# HIGH LEVEL EXPLANATION OF THE MODEL
-#
-# Variables:
-#
-# `pieces_sold[pii]`: Integer. The number of pieces `pii` sold. Is the minimum
-#   between the demand of the piece and the amount of plates generated and not
-#   used that have exactly the same size as the piece.
-# `cuts_made[n1, n2, n3]`: Integer. The number of subplates of type `n1` that
-#   are cut into subplates `n2` and `n3` (horizontal and vertical cuts are
-#   together for now). As this is a symmetry-breaking model, the plate types
-#   are not only each distinct `l` and `w` but each different `l`, `w`, and
-#   `symm` (that marks if the plate can be cut only horizontally, only
-#   vertically, or both ways).
-#
-# Objective function:
-#
-# Maximize the profit of the pieces sold.
-#   sum(p[pii] * pieces_sold[pii])
-#
-# Constraints:
-#
-# There is exactly one of the original plate, which may be used for cutting
-# or extracting a piece.
-#   sum(pieces_sold[plates exactly the size of the original plate]) +
-#   sum(cuts_made[1, _,  _]) <= 1
-# The number of subplates available depends on the number of plates that have
-# it as children.
-#   sum(cuts_made[n1>1, _, _]) <= sum(cuts_made[_, n2, n3])
-#     where n2 == n1 or n3 == n1, doubling cuts_made[_, n2, n3] if n2 == n3
-# The number of pieces sold is bounded both by the demand of the piece type and
-# the the number of unused plates with the same size as the piece.
-#   sum(pieces_sold[pii]) <= d[pii]
-#   sum(pieces_sold[pii]) <= cuts_made[_, n2, n3] - cuts_made[n2 or n3, _, _]
-#     where n2 or n3 has the same size as pii, fixing for when n2 == n3
-#
-# Unnecessary constraints:
-#
-# The amount of times a plate type may be cut is bounded by how many of them
-# could fit the original plate. Note that we ignore the symmetry tag here
-# and group all the plates with the same `l` and `w` but distinct symmetry tag.
-#   sum(cuts_made[plates sharing `l` and `w`, _, _]) <= (L ÷ l) * (W ÷ w)
-function build_model_with_symmbreak(
-	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
-	L :: S, W :: S; only_binary = false, use_c25 = false,
-	ignore_2th_dim = false, ignore_d = false, round2disc = true
-) where {D, S, P}
-	@assert length(d) == length(l) && length(l) == length(w)
-	num_piece_types = convert(D, length(d))
-
-	sllw = SortedLinkedLW(D, l, w)
-	pli2lwsb, hcuts, vcuts, pii2plis, pli2piis, same_size_plis =
-		gen_cuts_sb(P, d, sllw, L, W; ignore_2th_dim = ignore_2th_dim,
-		ignore_d = ignore_d,
-		round2disc = round2disc
-	)
-	num_plate_types = length(pli2lwsb)
-	hvcuts = vcat(hcuts, vcuts)
-
-	# The vectors below all have the same length as the number of plate types (to
-	# allow indexing by plate type). The value of a position is a vector of
-	# arbitrary length and irrelevant index, the values of this inner vector are
-	# cut indexes. Such cut indexes are related to the plate that is the index of
-	# the outer vector.
-	# any CHILD plate to respective CUT indexes
-	child2cut = [Vector{P}() for _ = 1:num_plate_types]
-	# any PARENT plate to respective CUT indexes
-	parent2cut = [Vector{P}() for _ = 1:num_plate_types]
-
-	# Initialize all inverse indexes.
-	for i in eachindex(hvcuts)
-		parent, fchild, schild = hvcuts[i]
-		push!(parent2cut[parent], i)
-		push!(child2cut[fchild], i)
-		!iszero(schild) && push!(child2cut[schild], i)
-	end
-
-	# If all pieces have demand one, a binary variable will suffice to make the
-	# connection between a piece type and the plate it is extracted from.
-	naturally_only_binary = all(di -> di <= 1, d)
-	if naturally_only_binary || only_binary
-		# only_binary is equal to naturally_only_binary for now, but the idea is
-		# that only_binary will expand the number of binary variables to account
-		# for piece solds that can repeat (i.e., have demand more than one).
-		# NOTE that using only_binary with this model will restrict much more
-		# than using only_binary with the model without symmetry, unless the demand
-		# of all pieces is naturally_only_binary the model will give much worse
-		# results.
-		@variable(model, pieces_sold[1:num_piece_types], Bin)
-	else
-		@variable(model,
-			0 <= pieces_sold[pii = 1:num_piece_types] <= d[pii],
-		Int)
-	end
-
-	if only_binary
-		@variable(model, cuts_made[1:length(hvcuts)], Bin)
-	else
-		@variable(model, cuts_made[1:length(hvcuts)] >= 0, Int)
-	end
-
-	# The objective function maximizes the profit of the pieces sold.
-	@objective(model, Max,
-		sum(p[pii] * sum(pieces_sold[pii]) for pii = 1:num_piece_types)
-	)
-
-	# c1: There is just one of the original plate, and so it can be only used to
-	# extract a single piece (this is rare, because there would need to be a
-	# piece the exact same size as the original plate) xor make a single cut that
-	# would make two new subplates available.
-	@constraint(model,
-		sum(pieces_sold[pli2piis[1]]) + sum(cuts_made[parent2cut[1]]) <= 1
-	)
-
-	# c2: for each subplate type that is not the original plate, such subplate
-	# type may be cut at most the number of times it was a child of another cut.
-	for pli in 2:num_plate_types
-		@constraints model begin
-			sum(cuts_made[parent2cut[pli]]) <= sum(cuts_made[child2cut[pli]])
-		end
-	end
-
-	if use_c25
-		@error "not sure if correctly implemented, check before"
-		# TODO: check if the below is corret. What seems to be wrong is that ssplis
-		# is a vector of plate indexes, while cuts_made should be indexed by
-		# vectors of cut indexes.
-
-		# c2.5: The amount of each subplate type generated by cuts (and used either
-		# as a piece or as a intermediary plate) is bounded by the amount that can be
-		# cut from the original plate.
-		for ssplis in same_size_plis
-			@assert !iszero(length(ssplis))
-			@assert isone(length(unique!(map(i -> pli2lwsb[i][1], ssplis))))
-			@assert isone(length(unique!(map(i -> pli2lwsb[i][2], ssplis))))
-			@constraint(model,
-				sum(cuts_made[ssplis]) <= pli2lwsb[ssplis[1]][4]
-			)
-		end
-	end
-
-	# c3: finally, for each piece type, the amount of pieces sold of that type is
-	# at most the number of plates with the piece exact size that were not cut to
-	# make smaller plates.
-	for pii in 1:num_piece_types
-		@constraint(model, pieces_sold[pii] <= sum(cuts_made[vcat(child2cut[pii2plis[pii]]...)]) - sum(cuts_made[vcat(parent2cut[pii2plis[pii]]...)]))
-	end
-
-	model, hvcuts, pli2lwsb, pii2plis, pli2piis
-end # build_model_with_symmbreak
 
 end # module
 

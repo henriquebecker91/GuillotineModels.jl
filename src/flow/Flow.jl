@@ -65,7 +65,7 @@ include("Args.jl")
 #     It is allowed by cutting n+2.
 #   n+5:m - The remaining intermediary plates.
 #
-function build_model(
+function build(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S;
 	relax2lp = false
