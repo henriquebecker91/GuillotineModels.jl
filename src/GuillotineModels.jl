@@ -9,7 +9,7 @@ include("Utilities.jl")
 include("KnapsackPlates.jl")
 include("flow/Flow.jl")
 include("ppg2kp/PPG2KP.jl")
-include("RunModel.jl")
+include("CommandLine.jl")
 
 end # module
 

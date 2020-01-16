@@ -2,6 +2,11 @@ module KnapsackPlates
 
 using JuMP
 
+module Args
+	# No extra flags for this model yet.
+	get_arg_parse_settings() = ArgParseSettings()
+end
+
 function build(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S; only_binary = false

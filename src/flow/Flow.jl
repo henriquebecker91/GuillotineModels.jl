@@ -5,9 +5,13 @@ using JuMP
 include("Enumeration.jl")
 using .Enumeration
 
+module Args
+	# No extra flags for this model yet.
+	get_arg_parse_settings() = ArgParseSettings()
+end
+
 # Just include it to make it available to users of this module.
 include("Format.jl")
-include("Args.jl")
 
 # HIGH LEVEL EXPLANATION OF THE MODEL
 #

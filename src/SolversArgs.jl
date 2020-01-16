@@ -4,14 +4,14 @@ export empty_configured_model
 
 using TimerOutputs
 
+# TODO: change this file to a folder, add a submodule for each solver,
+# each module should implement its own get_arg_parse_settings, and
+# interflag_validation (? for things that cannot be solved by range_tester)
+
 function get_arg_parse_settings()
 	s = ArgParseSettings()
+	ArgParse.add_arg_group(s, "Solvers Common Flags", "solver_common_flags")
 	@add_arg_table s begin
-		"--solver"
-			help = "which Solver to use if the model is solved (case-insensitive)"
-			arg_type = String
-			default = ["Cbc"]
-			nargs = 1
 		"--threads"
 			help = "number of threads used by the solver (not model building)"
 			arg_type = Int
@@ -21,11 +21,6 @@ function get_arg_parse_settings()
 			help = "time limit in seconds for solver B&B (not model building, nor root solving), the default is one year"
 			arg_type = Float64
 			default = [31536000.0]
-			nargs = 1
-		"--cplex-det-time-limit"
-			help = "deterministic time limit for CPLEX B&B (not model building, nor root solving), only CPLEX has deterministic time limit among the solvers"
-			arg_type = Float64
-			default = [1.0E+75]
 			nargs = 1
 		"--solver-seed"
 			help = "the random seed used by the solver (the model building is deterministic)"
@@ -39,42 +34,40 @@ function get_arg_parse_settings()
 			help = "disable the solver output"
 			nargs = 0
 	end
+	ArgParse.add_arg_group(s, "CPLEX-specific Flags", "cplex_specific_flags")
+	@add_arg_table s begin
+		"--cplex-det-time-limit"
+			help = "deterministic time limit for CPLEX B&B (not model building, nor root solving), only CPLEX has deterministic time limit among the solvers"
+			arg_type = Float64
+			default = [1.0E+75]
+			nargs = 1
+	end
+	set_default_arg_group(s)
 	s
 end
 
 # TODO: the variables of these methods are not declared (they come from
 # the hash). Change them back to hash accesses.
 function empty_configured_model(
-	::Val{:cbc}, p_args; no_solver_out = no_solver_out
+	::Val{:Cbc}, p_args; no_solver_out = no_solver_out
 )
 	Base.require(:Cbc)
 	JuMP.direct_model(
 		# TODO: the options of cbc were not studied so, for now it does
 		# the same thing independent of the value of disable-solver-tricks
-		if p_args["disable-solver-tricks"]
-			Cbc.Optimizer(
-				threads = 1,
-				ratioGap = 1e-6,
-				logLevel = no_solver_out ? 0 : 1,
-				randomSeed = first(p_args["solver-seed"]),
-				barrier = true,
-				seconds = first(p_args["time-limit"])
-			)
-		else
-			Cbc.Optimizer(
-				threads = 1,
-				ratioGap = 1e-6,
-				logLevel = no_solver_out ? 0 : 1,
-				randomSeed = first(p_args["solver-seed"]),
-				barrier = true,
-				seconds = first(p_args["time-limit"])
-			)
-		end
+		Cbc.Optimizer(
+			threads = 1,
+			ratioGap = 1e-6,
+			logLevel = no_solver_out ? 0 : 1,
+			randomSeed = first(p_args["solver-seed"]),
+			barrier = true,
+			seconds = first(p_args["time-limit"])
+		)
 	)
 end
 
 function empty_configured_model(
-	::Val{:cplex}, p_args; no_solver_out = no_solver_out
+	::Val{:CPLEX}, p_args; no_solver_out = no_solver_out
 )
 	Base.require(:CPLEX)
 	JuMP.direct_model(
@@ -109,7 +102,7 @@ function empty_configured_model(
 end
 
 function empty_configured_model(
-	::Val{:gurobi}, p_args; no_solver_out = no_solver_out
+	::Val{:Gurobi}, p_args; no_solver_out = no_solver_out
 )
 	Base.require(:Gurobi)
 	JuMP.direct_model(
@@ -149,15 +142,16 @@ end
 # Create a new model with a configured underlying solver.
 function empty_configured_model(p_args; no_solver_out = no_solver_out)
 	@timeit "empty_configured_model" begin
-	solver_id = Val(Symbol(lowercase(first(p_args["solver"]))))
+	solver_sym = Symbol(first(p_args["solver"]))
 
 	# Some error checking.
-	p_args["cplex-det-time-limit"] != [1.0E+75] && solver_id != "cplex" && @error(
+	is_default_value = p_args["cplex-det-time-limit"] == [1.0E+75]
+	is_default_value && solver_sym != :CPLEX && @error(
 		"flag cplex-det-time-limit was passed, but the solver selected is not CPLEX"
 	)
 
 	model = empty_configured_model(
-		solver_id, p_args; no_solver_out = no_solver_out
+		Val(solver_id), p_args; no_solver_out = no_solver_out
 	)
 	end # timeit
 

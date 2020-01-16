@@ -1,23 +1,26 @@
-module RunModel
+module CommandLine
 
+# External packages used.
 using TimerOutputs
 using JuMP
-using ArgParse
+using Random # for rng object passed to heuristic
+import ArgParse
+import ArgParse.ArgParseSettings
 # Both MathOptInterface and MathOptFormat are used to allow saving the
 # generated model.
 using MathOptInterface
 const MOI = MathOptInterface
 using MathOptFormat
 
-include("./SolversArgs.jl") # for empty_configured_model, get_solver_arg_parse
+include("./SolversArgs.jl") # empty_configured_model, get_arg_parse_settings
 
-using Random # for MersenneTwister used in heuristic
 using ..InstanceReader # for reading the instances
 using ..Utilities # for useful helper methods not implemented in JuMP
-# Importing the model modules is not necessary, as they are acessed by
-# metaprogramming not by literals in the code.
-#using ..Flow
-#using ..PPG2KP
+
+# The implemented models.
+import ..Flow
+import ..PPG2KP
+import ..KnapsackPlates
 
 # Style guideline: as the module block is left unindented, the @timeit
 # blocks that wrap the whole method body also are not indented.
@@ -88,14 +91,15 @@ function read_build_solve_and_print(
 	L_, W_, l_, w_, p, d = InstanceReader.read_instance(instfname)
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, p_args)
 
-	before_model_build = time()
 	m = empty_configured_model(p_args; no_solver_out = no_solver_out)
 
-	model_build = get_model_build_method(p_args["model"][1]) 
-	model_build_output = model_build(
+	@timeit "build_model" begin
+	model_builder = get_submodule_method(p_args["model"][1], :build)
+	model_build_output = model_builder(
 		m, d, p, l, w, L, W; p_args = p_args
 	)
-	time_to_build_model = time() - before_model_build
+	end
+	time_to_build_model = TimerOutputs.time(get_defaulttimer(), "build_model")
 
 	p_args["save-model"] && save_model(m)
 
@@ -280,30 +284,19 @@ function read_build_solve_and_print(
 	return nothing
 end
 
-function check_parsed_args(p_args)
-
-	for option in ["lower-bounds", "upper-bounds"]
-		if !isempty(p_args[option])
-			@assert isone(length(p_args[option]))
-			str_list = p_args[option][1]
-			if match(r"^([1-9][0-9]*|0)(,([1-9][0-9]*|0))*$", str_list) === nothing
-				@error "the --$(option) does not follow the desired format: integer,integer,integer,... (no comma after last number)"
-			end
-			num_list = parse.(Int64, split(str_list, ','))
-			if length(num_list) != length(p_args["instfnames"])
-				@error "the length of the list passed to --$(option) should be the exact same size as the number of instances provided"
-			end
-			p_args[option] = num_list
-		end
-	end
-
+function check_flag_conflicts(p_args)
 	num_rounds = sum(.! isone.(map(flag -> p_args[flag][1],
 		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
 	)))
-	num_rounds > 1 && @error("only one of --div-and-round-{nearest,up,down} may be passed at the same time (what the fuck you expected?)")
-	is_revised_furini = !p_args["faithful2furini2016"] && !p_args["flow-model"]
+	num_rounds > 1 && @error(
+		"only one of --div-and-round-{nearest,up,down} may be passed at the" *
+		" same time (what the fuck you expected?)"
+	)
+	is_revised_furini = p_args["model"] == "PPG2KP" &&
+		!p_args["faithful2furini2016"]
 	p_args["final-pricing"] && !is_revised_furini && @error(
-		"the final pricing technique is implemented just for Revised Furini model as of now"
+		"the final pricing technique is implemented just for Enhanced Furini" *
+		" model as of now"
 	)
 	p_args["final-pricing"] && isempty(p_args["lower-bounds"]) &&
 		!p_args["warm-start"] && @error(
@@ -314,14 +307,23 @@ function check_parsed_args(p_args)
 	)
 end
 
-function model_agnostic_arg_parse_settings()
+function common_arg_parse_settings()
 	s = ArgParseSettings()
+	ArgParse.add_arg_group(s, "Core Parameters", "core_parameters")
 	@add_arg_table s begin
-		"--model"
-			help = "which model to use (case sensitive, ex.: PPG2KP, Flow, KnapsackPlates)"
+		"model"
+			help = "which model to use (case sensitive, ex.: Flow, KnapsackPlates, PPG2KP)"
 			arg_type = String
-			default = ["PPG2KP"]
-			nargs = 1
+		"solver"
+			help = "which Solver to use if the model is solved (case-sensitive, ex.: Cbc, CPLEX, Gurobi)"
+			arg_type = String
+		"instfnames"
+			help = "the paths to the instances to be solved"
+			#action = :store_arg
+			nargs = '*' # can pass no instances to call "-h"
+	end
+	ArgParse.add_arg_group(s, "Generic Flags", "generic_flags")
+	@add_arg_table s begin
 		"--do-not-solve"
 			help = "builds the model but do not try to solve it, some models may need to solve subproblems with a solver just to build the model, however"
 			nargs = 0
@@ -329,72 +331,86 @@ function model_agnostic_arg_parse_settings()
 			help = "save the model to a file before solving it"
 			nargs = 0
 		"--do-not-mock-first-for-compilation"
-			help = "by default the first instance is solved twice, the first time without output, to compile the functions used and give better timing, this flags disable this behavior"
+			help = "by default, the first instance is solved twice, the first time to compile the methods used and give better timing (no output), this flag disables the first and silent solve"
 			nargs = 0
 		"--relax2lp"
-			help = "(works on Furini-like and Flow1) integer and binary variables become continuous"
-			nargs = 0
-		"--ignore-d"
-			help = "ignore the demand information during discretization, used to measure impact (does not affect flow)"
+			help = "integer and binary variables become continuous"
 			nargs = 0
 		"--lower-bounds"
-			help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"
+			help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed, it is up to the model generation procedure to use this option"
 			nargs = 1
 		"--upper-bounds"
-			help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed"
+			help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed, it is up to the model generation procedure to use this option"
 			nargs = 1
 		"--div-and-round-nearest"
-			help = "divide instance lenght and width (but not profit) by the passed factor and round them to nearest (THE ALGORITHM BECOMES A GUESS, DO NOT GIVE A PRIMAL SOLUTION NOR A VALID DUAL SOLUTION)"
+			help = "divide instance lenght and width (but not profit) by the passed factor and round them to nearest (THE MODEL BECOMES A GUESS, DO NOT GIVE A PRIMAL SOLUTION NOR A VALID DUAL SOLUTION)"
 			arg_type = Int
 			default = [1]
 			nargs = 1
 		"--div-and-round-up"
-			help = "divide instance lenght and width (but not profit) by the passed factor and round them up (THE ALGORITHM BECOMES A PRIMAL HEURISTIC)"
+			help = "divide instance lenght and width (but not profit) by the passed factor and round them up (THE MODEL BECOMES A PRIMAL HEURISTIC)"
 			arg_type = Int
 			default = [1]
 			nargs = 1
 		"--div-and-round-down"
-			help = "divide instance lenght and width (but not profit) by the passed factor and round them down (THE ALGORITHM BECOMES A OPTIMISTIC GUESS, VALID BOUND)"
+			help = "divide instance lenght and width (but not profit) by the passed factor and round them down (THE MODEL BECOMES AN OPTIMISTIC GUESS, A VALID BOUND)"
 			arg_type = Int
 			default = [1]
 			nargs = 1
-		"instfnames"
-			help = "the paths to the instances to be solved"
-			action = :store_arg
-			nargs = '*' # can pass no instances to call "-h"
 	end
+	set_default_arg_group(s)
 	s
 end
 
+function bounds_extra_parse(p_args)
+	for option in ["lower-bounds", "upper-bounds"]
+		if !isempty(p_args[option])
+			@assert isone(length(p_args[option]))
+			str_list = p_args[option][1]
+			if match(r"^([1-9][0-9]*|0)(,([1-9][0-9]*|0))*$", str_list) === nothing
+				@error("the --$(option) does not follow the desired format:" *
+					" integer,integer,integer,... (no comma after last number)"
+				)
+			end
+			num_list = parse.(Int64, split(str_list, ','))
+			if length(num_list) != length(p_args["instfnames"])
+				@error("the length of the list passed to --$(option) should be" *
+					" the exact same size as the number of instances provided"
+				)
+			end
+			p_args[option] = num_list
+		end
+	end
+end
+
 # Definition of the command line arguments.
-function parse_script_args(args = ARGS)
-	@timeit "parse_script_args" begin
-
-	s = model_agnostic_arg_parse_settings()
-	# TODO: by hand get the value of the model type being used, maybe the
-	# solver too, use them to just merge with their arg_parse settings,
-	# so the flags of other models/solvers are not even merged
-
-	get_submodule_method()
-
-	p_args = parse_args(args, s)
+function parse_args(args = ARGS)
+	@timeit "parse_args" begin
+	s = common_arg_parse_settings()
+	import_settings(s, SolversArgs.get_arg_parse_settings())
+	import_settings(s, PPG2KP.Args.get_arg_parse_settings())
+	import_settings(s, Flow.Args.get_arg_parse_settings())
+	import_settings(s, KnapsackPlates.Args.get_arg_parse_settings())
+	p_args = ArgParse.parse_args(args, s)
+	bounds_extra_parse(p_args)
 	end # timeit
 
 	return p_args
 end
 
 # Parse the command line arguments, and call the solve for each instance.
-# TODO: consider changing the name of this method and the module for something
-# more adequate.
-function run_batch(args = ARGS)
+function run(args = ARGS)
 	@timeit "run_batch" begin
 	@show args
-	p_args = parse_script_args(args)
+	p_args = parse_args(args)
 
-	if !p_args["do-not-mock-first-for-compilation"] && !isempty(p_args["instfnames"])
+	mock_first = !p_args["do-not-mock-first-for-compilation"]
+	if mock_first && !isempty(p_args["instfnames"])
+		@timeit "first_instance_mock_call" begin
 		read_build_solve_and_print(
 			p_args, 1; no_csv_out = true, no_solver_out = true
 		)
+		end
 	end
 	for inst_idx in eachindex(p_args["instfnames"])
 		total_instance_time = @elapsed read_build_solve_and_print(
