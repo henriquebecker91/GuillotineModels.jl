@@ -5,9 +5,9 @@
 #Pkg.instantiate()
 
 import GuillotineModels
-import TimeOutputs
+import TimerOutputs
 
 #TimerOutputs.enable_debug_timings(GuillotineModels)
-GuillotineModels.RunModel.run_batch()
+GuillotineModels.CommandLine.run()
 TimeOutputs.print_timer() # global timer used
 

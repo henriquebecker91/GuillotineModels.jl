@@ -1,39 +1,43 @@
-module SolverArgParse
+module SolversArgs
 
 export empty_configured_model
 
 using TimerOutputs
+using ArgParse
+using JuMP
 
-# TODO: change this file to a folder, add a submodule for each solver,
-# each module should implement its own get_arg_parse_settings, and
-# interflag_validation (? for things that cannot be solved by range_tester)
-
-function get_arg_parse_settings()
+function common_parse_settings()
 	s = ArgParseSettings()
 	ArgParse.add_arg_group(s, "Solvers Common Flags", "solver_common_flags")
 	@add_arg_table s begin
 		"--threads"
-			help = "number of threads used by the solver (not model building)"
+			help = "Number of threads used by the solver (not model building)."
 			arg_type = Int
 			default = [1]
 			nargs = 1
 		"--time-limit"
-			help = "time limit in seconds for solver B&B (not model building, nor root solving), the default is one year"
+			help = "Time limit in seconds for solver B&B (not model building, nor root solving), the default is one year."
 			arg_type = Float64
 			default = [31536000.0]
 			nargs = 1
 		"--solver-seed"
-			help = "the random seed used by the solver (the model building is deterministic)"
+			help = "The random seed used by the solver."
 			arg_type = Int
 			default = [1]
 			nargs = 1
 		"--disable-solver-tricks"
-			help = "vary between solvers but disable things like heuristics, probe, repeat presolve, and dive"
+			help = "Vary between solvers but disable things like heuristics, probe, repeat presolve, and dive."
 			nargs = 0
 		"--disable-solver-output"
-			help = "disable the solver output"
+			help = "Disables the solver output."
 			nargs = 0
 	end
+	set_default_arg_group(s)
+	s
+end
+
+function parse_settings()
+	#=
 	ArgParse.add_arg_group(s, "CPLEX-specific Flags", "cplex_specific_flags")
 	@add_arg_table s begin
 		"--cplex-det-time-limit"
@@ -42,12 +46,21 @@ function get_arg_parse_settings()
 			default = [1.0E+75]
 			nargs = 1
 	end
+	=#
 	set_default_arg_group(s)
 	s
 end
 
-# TODO: the variables of these methods are not declared (they come from
-# the hash). Change them back to hash accesses.
+function check_flag_conflicts(p_args)
+	# Some error checking.
+	#= Solver-specific flags are disabled for now
+	is_default_value = p_args["cplex-det-time-limit"] == [1.0E+75]
+	is_default_value && p_args["solver"] != "CPLEX" && @error(
+		"flag cplex-det-time-limit was passed, but the solver selected is not CPLEX"
+	)
+	=#
+end
+
 function empty_configured_model(
 	::Val{:Cbc}, p_args; no_solver_out = no_solver_out
 )
@@ -56,7 +69,7 @@ function empty_configured_model(
 		# TODO: the options of cbc were not studied so, for now it does
 		# the same thing independent of the value of disable-solver-tricks
 		Cbc.Optimizer(
-			threads = 1,
+			threads = first(p_args["threads"]),
 			ratioGap = 1e-6,
 			logLevel = no_solver_out ? 0 : 1,
 			randomSeed = first(p_args["solver-seed"]),
@@ -69,7 +82,11 @@ end
 function empty_configured_model(
 	::Val{:CPLEX}, p_args; no_solver_out = no_solver_out
 )
-	Base.require(:CPLEX)
+	Base.require(
+		Base.PkgId(Base.UUID("a076750e-1247-5638-91d2-ce28b192dca0"), "CPLEX")
+	)
+	#:CPLEX)
+	import CPLEX
 	JuMP.direct_model(
 		if p_args["disable-solver-tricks"]
 			CPLEX.Optimizer(
@@ -78,7 +95,7 @@ function empty_configured_model(
 				CPX_PARAM_HEURFREQ = -1,
 				CPX_PARAM_REPEATPRESOLVE = -1,
 				CPX_PARAM_DIVETYPE = 1,
-				CPX_PARAM_DETTILIM = first(p_args["cplex-det-time-limit"]),
+				#CPX_PARAM_DETTILIM = first(p_args["cplex-det-time-limit"]),
 				CPX_PARAM_TILIM = first(p_args["time-limit"]),
 				#CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
 				CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
@@ -89,7 +106,7 @@ function empty_configured_model(
 		else
 			CPLEX.Optimizer(
 				CPX_PARAM_EPGAP = 1e-6,
-				CPX_PARAM_DETTILIM = first(p_args["cplex-det-time-limit"]),
+				#CPX_PARAM_DETTILIM = first(p_args["cplex-det-time-limit"]),
 				CPX_PARAM_TILIM = first(p_args["time-limit"]),
 				CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
 				CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER,
@@ -142,17 +159,13 @@ end
 # Create a new model with a configured underlying solver.
 function empty_configured_model(p_args; no_solver_out = no_solver_out)
 	@timeit "empty_configured_model" begin
-	solver_sym = Symbol(first(p_args["solver"]))
+	solver_sym = Symbol(p_args["solver"])
 
-	# Some error checking.
-	is_default_value = p_args["cplex-det-time-limit"] == [1.0E+75]
-	is_default_value && solver_sym != :CPLEX && @error(
-		"flag cplex-det-time-limit was passed, but the solver selected is not CPLEX"
-	)
-
+	@show solver_sym
 	model = empty_configured_model(
-		Val(solver_id), p_args; no_solver_out = no_solver_out
+		Val(solver_sym), p_args; no_solver_out = no_solver_out
 	)
+	@show model
 	end # timeit
 
 	return model

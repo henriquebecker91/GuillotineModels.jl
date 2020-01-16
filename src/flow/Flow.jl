@@ -6,8 +6,10 @@ include("Enumeration.jl")
 using .Enumeration
 
 module Args
+	using ArgParse
 	# No extra flags for this model yet.
-	get_arg_parse_settings() = ArgParseSettings()
+	parse_settings() = ArgParseSettings()
+	check_flag_conflicts() = nothing
 end
 
 # Just include it to make it available to users of this module.

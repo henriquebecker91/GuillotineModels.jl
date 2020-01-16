@@ -5,14 +5,15 @@ using TimerOutputs
 using JuMP
 using Random # for rng object passed to heuristic
 import ArgParse
-import ArgParse.ArgParseSettings
+import ArgParse: set_default_arg_group, add_arg_group, @add_arg_table
 # Both MathOptInterface and MathOptFormat are used to allow saving the
 # generated model.
 using MathOptInterface
 const MOI = MathOptInterface
 using MathOptFormat
 
-include("./SolversArgs.jl") # empty_configured_model, get_arg_parse_settings
+include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
+using .SolversArgs
 
 using ..InstanceReader # for reading the instances
 using ..Utilities # for useful helper methods not implemented in JuMP
@@ -68,12 +69,18 @@ function div_and_round_instance(L, W, l, w, p_args)
 end
 
 function get_submodule(module_name)
-	getfield(parentmodule(@__MODULE__), Symbol(module_name))
+	@show module_name
+	@show @__MODULE__
+	@show parentmodule(@__MODULE__)
+	@show names(parentmodule(@__MODULE__), all = true)
+	f = getfield(parentmodule(@__MODULE__), Symbol(module_name))
+	@show f
+	f
 end
 
-function get_submodule_method(module_name, method_name)
-	submodule = get_submodule(modname)
-	getfield(Symbol(method_name), submodule)
+function get_submodule_field(module_name, method_name)
+	submodule = get_submodule(module_name)
+	getfield(submodule, Symbol(method_name))
 end
 
 # Read the instance, build the model, solve the model, and print related stats.
@@ -94,14 +101,15 @@ function read_build_solve_and_print(
 	m = empty_configured_model(p_args; no_solver_out = no_solver_out)
 
 	@timeit "build_model" begin
-	model_builder = get_submodule_method(p_args["model"][1], :build)
+	model_builder = get_submodule_field(p_args["model"], :build)
 	model_build_output = model_builder(
 		m, d, p, l, w, L, W; p_args = p_args
 	)
 	end
 	time_to_build_model = TimerOutputs.time(get_defaulttimer(), "build_model")
 
-	p_args["save-model"] && save_model(m)
+	p_args["save-model"] && !no_csv_out &&
+		save_model(m, "./$(basename(instfname)).mps")
 
 	if !no_csv_out
 		@show time_to_build_model
@@ -284,76 +292,59 @@ function read_build_solve_and_print(
 	return nothing
 end
 
-function check_flag_conflicts(p_args)
-	num_rounds = sum(.! isone.(map(flag -> p_args[flag][1],
-		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
-	)))
-	num_rounds > 1 && @error(
-		"only one of --div-and-round-{nearest,up,down} may be passed at the" *
-		" same time (what the fuck you expected?)"
-	)
-	is_revised_furini = p_args["model"] == "PPG2KP" &&
-		!p_args["faithful2furini2016"]
-	p_args["final-pricing"] && !is_revised_furini && @error(
-		"the final pricing technique is implemented just for Enhanced Furini" *
-		" model as of now"
-	)
-	p_args["final-pricing"] && isempty(p_args["lower-bounds"]) &&
-		!p_args["warm-start"] && @error(
-		"the flag --final-pricing only makes sense if a lower bound is provided (either directly by --lower-bound or indirectly by --warm-start)"
-	)
-	p_args["final-pricing"] && p_args["relax2lp"] && @error(
-		"the flags --final-pricing and --relax2lp should not be used together; it is not clear what they should do, and the best interpretation (solving the relaxed model and doing the final pricing, without solving the unrelaxed reduced model after) is not specially useful and need extra code to work that is not worth it"
-	)
-end
-
-function common_arg_parse_settings()
-	s = ArgParseSettings()
+function core_parse_settings()
+	s = ArgParse.ArgParseSettings()
 	ArgParse.add_arg_group(s, "Core Parameters", "core_parameters")
 	@add_arg_table s begin
 		"model"
-			help = "which model to use (case sensitive, ex.: Flow, KnapsackPlates, PPG2KP)"
+			help = "Model or solution procedure to be used (case sensitive, ex.: Flow, KnapsackPlates, PPG2KP). Required."
 			arg_type = String
 		"solver"
-			help = "which Solver to use if the model is solved (case-sensitive, ex.: Cbc, CPLEX, Gurobi)"
+			help = "Solver to be used if necessary (case-sensitive, ex.: Cbc, CPLEX, Gurobi). Required, even if --do-not-solve is specified."
 			arg_type = String
 		"instfnames"
-			help = "the paths to the instances to be solved"
+			help = "The paths to the instances to be solved."
 			#action = :store_arg
 			nargs = '*' # can pass no instances to call "-h"
 	end
-	ArgParse.add_arg_group(s, "Generic Flags", "generic_flags")
+	set_default_arg_group(s)
+	s
+end
+
+function generic_parse_settings()
+	s = ArgParse.ArgParseSettings()
+	add_arg_group(s, "Generic Flags", "generic_flags")
 	@add_arg_table s begin
 		"--do-not-solve"
-			help = "builds the model but do not try to solve it, some models may need to solve subproblems with a solver just to build the model, however"
+			help = "The model is build but not solved. A solver has yet to be specified. Note that just building a model may depend on using a solver over subproblems. Such uses of the solver are not disabled by this flag."
 			nargs = 0
 		"--save-model"
-			help = "save the model to a file before solving it"
+			help = "Save the model of each problem instance to the working directory ('./instance_name.mps'). Uses MPS format."
 			nargs = 0
 		"--do-not-mock-first-for-compilation"
-			help = "by default, the first instance is solved twice, the first time to compile the methods used and give better timing (no output), this flag disables the first and silent solve"
+			help = "To avoid counting the compilation time, the first instance is solved twice, this flag disables the first and silent solve."
 			nargs = 0
 		"--relax2lp"
-			help = "integer and binary variables become continuous"
+			help = "Integer and binary variables become continuous."
 			nargs = 0
 		"--lower-bounds"
-			help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed, it is up to the model generation procedure to use this option"
+			help = "Takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed, it is up to the model generation procedure to use this option."
 			nargs = 1
 		"--upper-bounds"
-			help = "takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed, it is up to the model generation procedure to use this option"
+			help = "Takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed, it is up to the model generation procedure to use this option."
 			nargs = 1
 		"--div-and-round-nearest"
-			help = "divide instance lenght and width (but not profit) by the passed factor and round them to nearest (THE MODEL BECOMES A GUESS, DO NOT GIVE A PRIMAL SOLUTION NOR A VALID DUAL SOLUTION)"
+			help = "Divide the instances lenght and width (but not profit) by the passed factor and round them to nearest (the model answer becomes a GUESS, not a valid primal heuristic, nor a valid bound)."
 			arg_type = Int
 			default = [1]
 			nargs = 1
 		"--div-and-round-up"
-			help = "divide instance lenght and width (but not profit) by the passed factor and round them up (THE MODEL BECOMES A PRIMAL HEURISTIC)"
+			help = "Divide the instances lenght and width (but not profit) by the passed factor and round them up (the model becomes a PRIMAL HEURISTIC)."
 			arg_type = Int
 			default = [1]
 			nargs = 1
 		"--div-and-round-down"
-			help = "divide instance lenght and width (but not profit) by the passed factor and round them down (THE MODEL BECOMES AN OPTIMISTIC GUESS, A VALID BOUND)"
+			help = "Divide the instances lenght and width (but not profit) by the passed factor and round them down (the model becomes an OPTIMISTIC GUESS, A VALID BOUND)."
 			arg_type = Int
 			default = [1]
 			nargs = 1
@@ -362,6 +353,72 @@ function common_arg_parse_settings()
 	s
 end
 
+function common_parse_settings()
+	s = core_parse_settings()
+	ArgParse.import_settings(s, generic_parse_settings())
+	ArgParse.import_settings(s, SolversArgs.common_parse_settings())
+	s
+end
+
+# NOTE: all flags are parsed, even if just one model is selected at a time.
+# The reasons for that are: (1) we do not know the model before the parsing
+# unless we manipulate ARGS directly; (2) if they are not included in the
+# parsing they do not appear in the help message.
+function parse_settings()
+	s = common_parse_settings()
+	ArgParse.import_settings(s, PPG2KP.Args.parse_settings())
+	ArgParse.import_settings(s, Flow.Args.parse_settings())
+	ArgParse.import_settings(s, KnapsackPlates.Args.parse_settings())
+	s
+end
+
+function model_parse_settings(
+	model_module_name :: Union{AbstractString,Symbol}
+)
+	args_submod = get_submodule_field(model_module_name, :Args)
+	s = getfield(args_submod, :parse_settings)()
+end
+
+function extract_option_names(s)
+	# NOTE: these fields are not described in the documentation, so this is
+	# probably not guaranteed against sudden internal changes in the ArgParse
+	# package.
+	getfield.(s.args_table.fields, :dest_name)
+end
+
+function check_flag_conflicts(p_args)
+	# Generic Flags conflicts
+	num_rounds = sum(.! isone.(map(flag -> p_args[flag][1],
+		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
+	)))
+	num_rounds > 1 && @error(
+		"only one of --div-and-round-{nearest,up,down} may be passed at the" *
+		" same time (what the fuck you expected?)"
+	)
+	# Check if all options are from common or the model selected.
+	# NOTE: if someday we have solver-specific arguments we need to treat them
+	# here too.
+	valid_option_names = [extract_option_names(common_parse_settings());
+		extract_option_names(model_parse_settings(p_args["model"]))]
+	for option in keys(p_args)
+		if option ∉ valid_option_names
+			@warn(
+				"option $(option) was recognized by the parsing but is not from" *
+				" the common options, nor the model selected, are you sure this" *
+				" is what you wanted?"
+			)
+		end
+	end
+	# Model specific conflicts
+	p_args["model"] == "PPG2KP" && PPG2KP.Args.check_flag_conflicts(p_args)
+	p_args["model"] == "Flow" && Flow.Args.check_flag_conflicts(p_args)
+	p_args["model"] == "KnapsackPlates" &&
+		KnapsackPlates.Args.check_flag_conflicts(p_args)
+end
+
+# TODO: this could be parsed with custom type parsing:
+# https://carlobaldassi.github.io/ArgParse.jl/stable/custom.html
+# However, the size checks would need to go to other place.
 function bounds_extra_parse(p_args)
 	for option in ["lower-bounds", "upper-bounds"]
 		if !isempty(p_args[option])
@@ -386,13 +443,10 @@ end
 # Definition of the command line arguments.
 function parse_args(args = ARGS)
 	@timeit "parse_args" begin
-	s = common_arg_parse_settings()
-	import_settings(s, SolversArgs.get_arg_parse_settings())
-	import_settings(s, PPG2KP.Args.get_arg_parse_settings())
-	import_settings(s, Flow.Args.get_arg_parse_settings())
-	import_settings(s, KnapsackPlates.Args.get_arg_parse_settings())
+	s = parse_settings()
 	p_args = ArgParse.parse_args(args, s)
 	bounds_extra_parse(p_args)
+	check_flag_conflicts(p_args)
 	end # timeit
 
 	return p_args
@@ -400,13 +454,13 @@ end
 
 # Parse the command line arguments, and call the solve for each instance.
 function run(args = ARGS)
-	@timeit "run_batch" begin
+	@timeit "run" begin
 	@show args
 	p_args = parse_args(args)
 
 	mock_first = !p_args["do-not-mock-first-for-compilation"]
 	if mock_first && !isempty(p_args["instfnames"])
-		@timeit "first_instance_mock_call" begin
+		@timeit "mock" begin
 		read_build_solve_and_print(
 			p_args, 1; no_csv_out = true, no_solver_out = true
 		)

@@ -1,10 +1,13 @@
 module KnapsackPlates
 
 using JuMP
+using ArgParse
 
 module Args
+	using ArgParse
 	# No extra flags for this model yet.
-	get_arg_parse_settings() = ArgParseSettings()
+	parse_settings() = ArgParseSettings()
+	check_flag_conflicts() = nothing
 end
 
 function build(
