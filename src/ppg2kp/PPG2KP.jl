@@ -394,15 +394,9 @@ end
 # The number of times a pair pli-pii appear is at most the min between:
 # d[pii] and the number of subplates pli that fit in the original plate.
 #   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
-function build(
+function unsafe_build(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
-	L :: S, W :: S; only_binary = false, use_c25 = false,
-	ignore_2th_dim = false, ignore_d = false, round2disc = true,
-	faithful2furini2016 = false,
-	no_redundant_cut = false, no_cut_position = false,
-	no_furini_symmbreak = false,
-	lb :: P = zero(P), ub :: P = zero(P),
-	print_debug :: Bool = false
+	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
 	if print_debug
 		before_enumeration = time()
@@ -563,7 +557,23 @@ function build(
 	end
 
 	model, hvcuts, pli_lwb, np
-end # build_model_no_symmbreak
+end
+
+function build(
+	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
+	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
+) where {D, S, P}
+#=
+	only_binary = false, use_c25 = false,
+	ignore_2th_dim = false, ignore_d = false, round2disc = true,
+	faithful2furini2016 = false,
+	no_redundant_cut = false, no_cut_position = false,
+	no_furini_symmbreak = false,
+	lb :: P = zero(P), ub :: P = zero(P),
+	print_debug :: Bool = false
+=#
+	exit()
+end
 
 end # module
 

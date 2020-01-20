@@ -40,19 +40,19 @@ function div_and_round_instance(L, W, l, w, p_args)
 	# assert explanation: at least two of the three flags are disabled (i.e., 
 	# have value one)
 	@assert sum(isone.((
-		p_args["div-and-round-nearest"][1],
-		p_args["div-and-round-up"][1],
-		p_args["div-and-round-down"][1]
+		p_args["div-and-round-nearest"],
+		p_args["div-and-round-up"],
+		p_args["div-and-round-down"]
 	))) >= 2
 
-	if p_args["div-and-round-nearest"][1] != 1
-		factor = p_args["div-and-round-nearest"][1]
+	if p_args["div-and-round-nearest"] != 1
+		factor = p_args["div-and-round-nearest"]
 		roundmode = RoundNearest
-	elseif p_args["div-and-round-up"][1] != 1
-		factor = p_args["div-and-round-up"][1]
+	elseif p_args["div-and-round-up"] != 1
+		factor = p_args["div-and-round-up"]
 		roundmode = RoundUp
-	elseif p_args["div-and-round-down"][1] != 1
-		factor = p_args["div-and-round-down"][1]
+	elseif p_args["div-and-round-down"] != 1
+		factor = p_args["div-and-round-down"]
 		roundmode = RoundDown
 	else
 		factor = 1
@@ -91,7 +91,7 @@ function read_build_solve_and_print(
 
 	if !no_csv_out
 		@show instfname
-		seed = first(p_args["solver-seed"])
+		seed = p_args["solver-seed"]
 		@show seed
 	end
 
@@ -141,7 +141,7 @@ function read_build_solve_and_print(
 	if p_args["warm-start"]
 		@assert !p_args["faithful2furini2016"] && !p_args["flow-model"]
 		(heur_obj, heur_sel, heur_pat), heur_time, _, _, _ = @timed iterated_greedy(
-			d, p, l, w, L, W, MersenneTwister(p_args["solver-seed"][1])
+			d, p, l, w, L, W, MersenneTwister(p_args["solver-seed"])
 		)
 		if !no_csv_out
 			@show heur_time
@@ -304,8 +304,8 @@ function core_parse_settings()
 			arg_type = String
 		"instfnames"
 			help = "The paths to the instances to be solved."
-			#action = :store_arg
-			nargs = '*' # can pass no instances to call "-h"
+			arg_type = String
+			nargs = '*'
 	end
 	set_default_arg_group(s)
 	s
@@ -317,37 +317,32 @@ function generic_parse_settings()
 	@add_arg_table s begin
 		"--do-not-solve"
 			help = "The model is build but not solved. A solver has yet to be specified. Note that just building a model may depend on using a solver over subproblems. Such uses of the solver are not disabled by this flag."
-			nargs = 0
+			action = :store_true
 		"--save-model"
 			help = "Save the model of each problem instance to the working directory ('./instance_name.mps'). Uses MPS format."
-			nargs = 0
+			action = :store_true
 		"--do-not-mock-first-for-compilation"
 			help = "To avoid counting the compilation time, the first instance is solved twice, this flag disables the first and silent solve."
-			nargs = 0
+			action = :store_true
 		"--relax2lp"
 			help = "Integer and binary variables become continuous."
-			nargs = 0
-		"--lower-bounds"
-			help = "Takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed, it is up to the model generation procedure to use this option."
-			nargs = 1
-		"--upper-bounds"
-			help = "Takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed, it is up to the model generation procedure to use this option."
-			nargs = 1
+			action = :store_true
 		"--div-and-round-nearest"
 			help = "Divide the instances lenght and width (but not profit) by the passed factor and round them to nearest (the model answer becomes a GUESS, not a valid primal heuristic, nor a valid bound)."
 			arg_type = Int
-			default = [1]
-			nargs = 1
+			default = 1
+			action = :store_arg
+			#nargs = 1
 		"--div-and-round-up"
 			help = "Divide the instances lenght and width (but not profit) by the passed factor and round them up (the model becomes a PRIMAL HEURISTIC)."
 			arg_type = Int
-			default = [1]
-			nargs = 1
+			default = 1
+			action = :store_arg
 		"--div-and-round-down"
 			help = "Divide the instances lenght and width (but not profit) by the passed factor and round them down (the model becomes an OPTIMISTIC GUESS, A VALID BOUND)."
 			arg_type = Int
-			default = [1]
-			nargs = 1
+			default = 1
+			action = :store_arg
 	end
 	set_default_arg_group(s)
 	s
@@ -388,7 +383,7 @@ end
 
 function check_flag_conflicts(p_args)
 	# Generic Flags conflicts
-	num_rounds = sum(.! isone.(map(flag -> p_args[flag][1],
+	num_rounds = sum(.! isone.(map(flag -> p_args[flag],
 		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
 	)))
 	num_rounds > 1 && @error(
@@ -421,9 +416,9 @@ end
 # However, the size checks would need to go to other place.
 function bounds_extra_parse(p_args)
 	for option in ["lower-bounds", "upper-bounds"]
-		if !isempty(p_args[option])
+		if !isnothing(p_args[option])
 			@assert isone(length(p_args[option]))
-			str_list = p_args[option][1]
+			str_list = p_args[option]
 			if match(r"^([1-9][0-9]*|0)(,([1-9][0-9]*|0))*$", str_list) === nothing
 				@error("the --$(option) does not follow the desired format:" *
 					" integer,integer,integer,... (no comma after last number)"
@@ -441,10 +436,10 @@ function bounds_extra_parse(p_args)
 end
 
 # Definition of the command line arguments.
-function parse_args(args = ARGS)
+function parse_args(args = ARGS) :: Dict{String, Any}
 	@timeit "parse_args" begin
 	s = parse_settings()
-	p_args = ArgParse.parse_args(args, s)
+	p_args = ArgParse.parse_args(args, s) :: Dict{String, Any}
 	bounds_extra_parse(p_args)
 	check_flag_conflicts(p_args)
 	end # timeit
@@ -459,7 +454,7 @@ function run(args = ARGS)
 	p_args = parse_args(args)
 
 	mock_first = !p_args["do-not-mock-first-for-compilation"]
-	if mock_first && !isempty(p_args["instfnames"])
+	if mock_first && !isnothing(p_args["instfnames"])
 		@timeit "mock" begin
 		read_build_solve_and_print(
 			p_args, 1; no_csv_out = true, no_solver_out = true

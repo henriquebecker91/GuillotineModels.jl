@@ -2,10 +2,25 @@ module Utilities
 
 using JuMP
 
+# JuMP/'Mathematical Model' related utilities
 export num_all_constraints, reduced_cost, delete_vars_by_pricing!
 export relax_vars!, relax_all_vars!, unrelax_vars!, unrelax_all_vars!
 export SavedBound, save_bound_if_exists!, restore_bound!
 export which_vars_to_keep, fix_vars!
+
+# The only non-JuMP related utility:
+#=
+export argdict2keywords
+
+function argdict2keywords(d)
+	name_fixer s = Symbol(replace(string(s), '-' => '_'))
+	NamedTuple{Tuple{map(name_fixer, keys(d))}}(values(d))
+end
+=#
+
+# is a function that takes a Dict of
+# Symbols to Any and creates a new version
+
 
 # JuMP has no method for getting all constraints, you need to get the
 # types of constraints used in the model and then query the number for

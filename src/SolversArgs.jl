@@ -5,7 +5,7 @@ export empty_configured_model
 using TimerOutputs
 using ArgParse
 using JuMP
-import CPLEX
+#import CPLEX
 
 function common_parse_settings()
 	s = ArgParseSettings()
@@ -14,24 +14,24 @@ function common_parse_settings()
 		"--threads"
 			help = "Number of threads used by the solver (not model building)."
 			arg_type = Int
-			default = [1]
-			nargs = 1
+			default = 1
+			action = :store_arg
 		"--time-limit"
 			help = "Time limit in seconds for solver B&B (not model building, nor root solving), the default is one year."
 			arg_type = Float64
-			default = [31536000.0]
-			nargs = 1
+			default = 31536000.0
+			action = :store_arg
 		"--solver-seed"
 			help = "The random seed used by the solver."
 			arg_type = Int
-			default = [1]
-			nargs = 1
+			default = 1
+			action = :store_arg
 		"--disable-solver-tricks"
 			help = "Vary between solvers but disable things like heuristics, probe, repeat presolve, and dive."
-			nargs = 0
+			action = :store_true
 		"--disable-solver-output"
 			help = "Disables the solver output."
-			nargs = 0
+			action = :store_true
 	end
 	set_default_arg_group(s)
 	s
@@ -70,50 +70,79 @@ function empty_configured_model(
 		# TODO: the options of cbc were not studied so, for now it does
 		# the same thing independent of the value of disable-solver-tricks
 		Cbc.Optimizer(
-			threads = first(p_args["threads"]),
+			threads = p_args["threads"],
 			ratioGap = 1e-6,
 			logLevel = no_solver_out ? 0 : 1,
-			randomSeed = first(p_args["solver-seed"]),
+			randomSeed = p_args["solver-seed"],
 			barrier = true,
-			seconds = first(p_args["time-limit"])
+			seconds = p_args["time-limit"]
 		)
 	)
 end
 
 function cplex_inner_call(p_args, no_solver_out)
-	model = JuMP.direct_model(CPLEX.Optimizer())
 	scrind_value = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON
 	# TODO: just append options if disable-solver-tricks is on, do not
 	# write the common options two times
-	#=if p_args["disable-solver-tricks"]
+	#=
+	if p_args["disable-solver-tricks"]
 		configuration = [
 			"CPX_PARAM_EPGAP" => 1e-6
 			, "CPX_PARAM_PROBE" => -1
 			, "CPX_PARAM_HEURFREQ" => -1
 			, "CPX_PARAM_REPEATPRESOLVE" => -1
 			, "CPX_PARAM_DIVETYPE" => 1
-			#, "CPX_PARAM_DETTILIM" => first(p_args["cplex-det-time-limit"]),
-			, "CPX_PARAM_TILIM" => first(p_args["time-limit"])
+			#, "CPX_PARAM_DETTILIM" => p_args["cplex-det-time-limit"],
+			, "CPX_PARAM_TILIM" => p_args["time-limit"]
 			#, "CPX_PARAM_VARSEL" => CPLEX.CPX_VARSEL_MAXINFEAS,
 			, "CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_BARRIER
 			, "CPX_PARAM_SCRIND" => scrind_value
-			, "CPX_PARAM_THREADS" => first(p_args["threads"])
-			, "CPX_PARAM_RANDOMSEED" => first(p_args["solver-seed"])
+			, "CPX_PARAM_THREADS" => p_args["threads"]
+			, "CPX_PARAM_RANDOMSEED" => p_args["solver-seed"]
 		]
-	else=#
+	else
 		configuration = [
 			"CPX_PARAM_EPGAP" => 1e-6,
-			#, "CPLEX.CPX_PARAM_DETTILIM" = first(p_args["cplex-det-time-limit"]),
-			"CPX_PARAM_TILIM" => first(p_args["time-limit"]),
+			#, "CPLEX.CPX_PARAM_DETTILIM" = p_args["cplex-det-time-limit"],
+			"CPX_PARAM_TILIM" => p_args["time-limit"],
 			"CPX_PARAM_VARSEL" => CPLEX.CPX_VARSEL_MAXINFEAS,
 			"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_BARRIER,
 			"CPX_PARAM_SCRIND" => scrind_value,
-			"CPX_PARAM_THREADS" => first(p_args["threads"]),
-			"CPX_PARAM_RANDOMSEED" => first(p_args["solver-seed"])
+			"CPX_PARAM_THREADS" => p_args["threads"],
+			"CPX_PARAM_RANDOMSEED" => p_args["solver-seed"]
 		]
-	#end
+	end=#
+	#=
+	CPLEX.Optimizer(
+		CPX_PARAM_EPGAP = 1e-6
+		, CPX_PARAM_PROBE = -1
+		, CPX_PARAM_HEURFREQ = -1
+		, CPX_PARAM_REPEATPRESOLVE = -1
+		, CPX_PARAM_DIVETYPE = 1
+		#, CPX_PARAM_DETTILIM = p_args["cplex-det-time-limit"],
+		, CPX_PARAM_TILIM = p_args["time-limit"]
+		#, CPX_PARAM_VARSEL = CPLEX.CPX_VARSEL_MAXINFEAS,
+		, CPX_PARAM_STARTALG = CPLEX.CPX_ALG_BARRIER
+		, CPX_PARAM_SCRIND = scrind_value
+		, CPX_PARAM_THREADS = p_args["threads"]
+		, CPX_PARAM_RANDOMSEED = p_args["solver-seed"]
+	)
+	=#
 
-	JuMP.set_parameters(model, configuration...)
+	configuration = [
+		"CPX_PARAM_EPGAP" => 1e-6,
+		#, "CPLEX.CPX_PARAM_DETTILIM" = p_args["cplex-det-time-limit"],
+		"CPX_PARAM_TILIM" => p_args["time-limit"],
+		"CPX_PARAM_VARSEL" => CPLEX.CPX_VARSEL_MAXINFEAS,
+		"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_BARRIER,
+		"CPX_PARAM_SCRIND" => scrind_value,
+		"CPX_PARAM_THREADS" => p_args["threads"],
+		"CPX_PARAM_RANDOMSEED" => p_args["solver-seed"]
+	]
+	model = JuMP.direct_model(CPLEX.Optimizer())
+	for c in configuration
+		JuMP.set_parameter(model, c...)
+	end
 	model
 end
 
@@ -123,7 +152,7 @@ function empty_configured_model(
 	#Base.require(
 	#	Base.PkgId(Base.UUID("a076750e-1247-5638-91d2-ce28b192dca0"), "CPLEX")
 	#)
-	#Base.include_string(@__MODULE__, "import CPLEX")
+	Base.include_string(@__MODULE__, "import CPLEX")
 	Base.invokelatest(cplex_inner_call, p_args, no_solver_out)
 	#CPLEX = getfield(Main, :CPLEX)
 	#:CPLEX)
@@ -139,22 +168,22 @@ function empty_configured_model(
 				Method = 2, # use barrier for LP
 				#PreSparsify = 1, # try to reduce nonzeros
 				#Presolve = 2, # aggressive presolving
-				Threads = first(p_args["threads"]),
-				Seed = first(p_args["solver-seed"]),
+				Threads = p_args["threads"],
+				Seed = p_args["solver-seed"],
 				OutputFlag = no_solver_out ? 0 : 1,
 				MIPGap = 1e-6,
-				TimeLimit = first(p_args["time-limit"])
+				TimeLimit = p_args["time-limit"]
 			)
 		else
 			Gurobi.Optimizer(
 				Method = 2, # use barrier for LP
 				#PreSparsify = 1, # try to reduce nonzeros
 				#Presolve = 2, # aggressive presolving
-				Threads = first(p_args["threads"]),
-				Seed = first(p_args["solver-seed"]),
+				Threads = p_args["threads"],
+				Seed = p_args["solver-seed"],
 				OutputFlag = no_solver_out ? 0 : 1,
 				MIPGap = 1e-6,
-				TimeLimit = first(p_args["time-limit"])
+				TimeLimit = p_args["time-limit"]
 			)
 		end
 	)
