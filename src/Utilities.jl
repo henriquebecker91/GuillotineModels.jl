@@ -1,5 +1,63 @@
 module Utilities
 
+module Args
+
+	using ArgParse
+	export Arg, IntList
+
+	struct Arg{T}
+		name :: String
+		default :: T
+		help :: String
+	end
+
+	function Arg(name :: String, default, help :: String)
+		Arg{typeof(default)}(name, default, help)
+	end
+
+	function ArgParse.add_arg_table(settings :: ArgParseSettings, arg :: Arg)
+		if isa(arg.default, Bool)
+			conf = Dict{Symbol, Any}(
+				:help => arg.help,
+				# default == true means that passing it as a flag turns it false
+				:action => (arg.default ? :store_false : :store_true)
+			)
+		else
+			conf = Dict{Symbol, Any}(
+				:help => arg.help,
+				:type => typeof(arg.default),
+				:default => arg.default,
+				:action => :store_arg
+			)
+		end
+		# only long options are accepted, enforced clarity
+		ArgParse.add_arg_table(settings, "--" * arg.name, conf)
+	end
+
+	#=
+	# The code below was kept as an example of how to parse custom items but
+	# it is not necessary anymore (since the script was changed to work over
+	# a single instance at time).
+	struct IntList
+		vector :: Vector{Int}
+	end
+
+	function IntList()
+		IntList(Vector{Int}())
+	end
+
+	function ArgParse.parse_item(::Type{IntList}, s :: AbstractString)
+			if match(r"^([1-9][0-9]*|0)(,([1-9][0-9]*|0))*$", s) === nothing
+				@error("tried to parse an $(string(IntList)), but argument '$(s)' does" *
+					" not follow the desired format: integer,integer,... (no comma after" *
+					" last number)"
+				)
+			end
+			IntList(parse.(Int, split(s, ',')))
+	end
+	=#
+end # submodule Args
+
 using JuMP
 
 # JuMP/'Mathematical Model' related utilities
@@ -7,20 +65,6 @@ export num_all_constraints, reduced_cost, delete_vars_by_pricing!
 export relax_vars!, relax_all_vars!, unrelax_vars!, unrelax_all_vars!
 export SavedBound, save_bound_if_exists!, restore_bound!
 export which_vars_to_keep, fix_vars!
-
-# The only non-JuMP related utility:
-#=
-export argdict2keywords
-
-function argdict2keywords(d)
-	name_fixer s = Symbol(replace(string(s), '-' => '_'))
-	NamedTuple{Tuple{map(name_fixer, keys(d))}}(values(d))
-end
-=#
-
-# is a function that takes a Dict of
-# Symbols to Any and creates a new version
-
 
 # JuMP has no method for getting all constraints, you need to get the
 # types of constraints used in the model and then query the number for

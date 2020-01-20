@@ -405,6 +405,7 @@ function unsafe_build(
 	num_piece_types = convert(D, length(d))
 
 	sllw = SortedLinkedLW(D, l, w)
+	# TODO: change enumeration to also use a Dict?
 	pli_lwb, hcuts, vcuts, np = gen_cuts(P, d, sllw, L, W;
 		ignore_2th_dim = ignore_2th_dim,
 		ignore_d = ignore_d,

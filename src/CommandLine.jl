@@ -1,5 +1,7 @@
 module CommandLine
 
+# TODO: accept command-line arguments to set the instance parsing configuration
+
 # External packages used.
 using TimerOutputs
 using JuMP
@@ -16,7 +18,8 @@ include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
 using .SolversArgs
 
 using ..InstanceReader # for reading the instances
-using ..Utilities # for useful helper methods not implemented in JuMP
+using ..Utilities
+using ..Utilities.Args
 
 # The implemented models.
 import ..Flow
@@ -69,13 +72,7 @@ function div_and_round_instance(L, W, l, w, p_args)
 end
 
 function get_submodule(module_name)
-	@show module_name
-	@show @__MODULE__
-	@show parentmodule(@__MODULE__)
-	@show names(parentmodule(@__MODULE__), all = true)
-	f = getfield(parentmodule(@__MODULE__), Symbol(module_name))
-	@show f
-	f
+	getfield(parentmodule(@__MODULE__), Symbol(module_name))
 end
 
 function get_submodule_field(module_name, method_name)
@@ -83,19 +80,22 @@ function get_submodule_field(module_name, method_name)
 	getfield(submodule, Symbol(method_name))
 end
 
+function build_solve_and_print(
+	p_args, no_csv_out = false, no_solver_out = false
+)
+end
+
 # Read the instance, build the model, solve the model, and print related stats.
 function read_build_solve_and_print(
-	p_args, instfname_idx; no_csv_out = false, no_solver_out = false
+	p_args, no_csv_out = false, no_solver_out = false
 )
-	instfname = p_args["instfnames"][instfname_idx]
-
 	if !no_csv_out
 		@show instfname
 		seed = p_args["solver-seed"]
 		@show seed
 	end
 
-	L_, W_, l_, w_, p, d = InstanceReader.read_instance(instfname)
+	L_, W_, l_, w_, p, d = InstanceReader.read_instance(p_args["instfname"])
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, p_args)
 
 	m = empty_configured_model(p_args; no_solver_out = no_solver_out)
@@ -311,39 +311,56 @@ function core_parse_settings()
 	s
 end
 
+function bounds_args() :: Vector{Arg}
+	return [
+		Arg(
+			"lower-bounds", IntList(),
+			"Takes a single string, the string has N comma-separated-numbers where N is the number of instances passed. The use of these values is dependent on the other options selected, --final-pricing may use the values if --warm-start do not give better values."
+		),
+		Arg(
+			"upper-bounds", IntList(),
+			"Takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed. The use of these values is dependent on the other options selected, check code."
+		)
+	]
+end
+
+function generic_args() :: Vector{Arg}
+	return [
+		Arg(
+			"do-not-solve", false,
+			"The model is build but not solved. A solver has yet to be specified. Note that just building a model may depend on using a solver over subproblems. Such uses of the solver are not disabled by this flag."
+		),
+		Arg(
+			"save-model", false,
+			"Save the model of each problem instance to the working directory ('./instance_name.mps'). Uses MPS format."
+		),
+		Arg(
+			"do-not-mock-for-compilation", false,
+			"To avoid counting the compilation time, a small hardcoded mock instance is solved before (to warm the JIT), this flag disables this mock solve."
+		),
+		Arg(
+			"relax2lp", false,
+			"Integer and binary variables become continuous."
+		),
+		Arg(
+			"div-and-round-nearest", 1,
+			"Divide the instances lenght and width (but not profit) by the passed factor and round them to nearest (the model answer becomes a GUESS, not a valid primal heuristic, nor a valid bound)."
+		),
+		Arg(
+			"div-and-round-up", 1,
+			"Divide the instances lenght and width (but not profit) by the passed factor and round them up (the model becomes a PRIMAL HEURISTIC)."
+		),
+		Arg(
+			"div-and-round-down", 1,
+			"Divide the instances lenght and width (but not profit) by the passed factor and round them down (the model becomes an OPTIMISTIC GUESS, A VALID BOUND)."
+		)
+	]
+end
+
 function generic_parse_settings()
 	s = ArgParse.ArgParseSettings()
-	add_arg_group(s, "Generic Flags", "generic_flags")
-	@add_arg_table s begin
-		"--do-not-solve"
-			help = "The model is build but not solved. A solver has yet to be specified. Note that just building a model may depend on using a solver over subproblems. Such uses of the solver are not disabled by this flag."
-			action = :store_true
-		"--save-model"
-			help = "Save the model of each problem instance to the working directory ('./instance_name.mps'). Uses MPS format."
-			action = :store_true
-		"--do-not-mock-first-for-compilation"
-			help = "To avoid counting the compilation time, the first instance is solved twice, this flag disables the first and silent solve."
-			action = :store_true
-		"--relax2lp"
-			help = "Integer and binary variables become continuous."
-			action = :store_true
-		"--div-and-round-nearest"
-			help = "Divide the instances lenght and width (but not profit) by the passed factor and round them to nearest (the model answer becomes a GUESS, not a valid primal heuristic, nor a valid bound)."
-			arg_type = Int
-			default = 1
-			action = :store_arg
-			#nargs = 1
-		"--div-and-round-up"
-			help = "Divide the instances lenght and width (but not profit) by the passed factor and round them up (the model becomes a PRIMAL HEURISTIC)."
-			arg_type = Int
-			default = 1
-			action = :store_arg
-		"--div-and-round-down"
-			help = "Divide the instances lenght and width (but not profit) by the passed factor and round them down (the model becomes an OPTIMISTIC GUESS, A VALID BOUND)."
-			arg_type = Int
-			default = 1
-			action = :store_arg
-	end
+	add_arg_group(s, "Generic Options", "generic_options")
+	add_arg_group.(s, generic_args())
 	set_default_arg_group(s)
 	s
 end
@@ -355,7 +372,7 @@ function common_parse_settings()
 	s
 end
 
-# NOTE: all flags are parsed, even if just one model is selected at a time.
+# NOTE: all options are parsed, even if just one model is selected at a time.
 # The reasons for that are: (1) we do not know the model before the parsing
 # unless we manipulate ARGS directly; (2) if they are not included in the
 # parsing they do not appear in the help message.
@@ -367,18 +384,11 @@ function parse_settings()
 	s
 end
 
-function model_parse_settings(
+function model_accepted_args(
 	model_module_name :: Union{AbstractString,Symbol}
 )
 	args_submod = get_submodule_field(model_module_name, :Args)
-	s = getfield(args_submod, :parse_settings)()
-end
-
-function extract_option_names(s)
-	# NOTE: these fields are not described in the documentation, so this is
-	# probably not guaranteed against sudden internal changes in the ArgParse
-	# package.
-	getfield.(s.args_table.fields, :dest_name)
+	s = getfield(args_submod, :accepted_args)()
 end
 
 function check_flag_conflicts(p_args)
@@ -393,8 +403,11 @@ function check_flag_conflicts(p_args)
 	# Check if all options are from common or the model selected.
 	# NOTE: if someday we have solver-specific arguments we need to treat them
 	# here too.
-	valid_option_names = [extract_option_names(common_parse_settings());
-		extract_option_names(model_parse_settings(p_args["model"]))]
+	# TODO: implement this valid_option_names the right way (using the args
+	# structure)
+	#valid_option_names = [common_parse_settings();
+	#	model_parse_settings(p_args["model"])]
+
 	for option in keys(p_args)
 		if option ∉ valid_option_names
 			@warn(
@@ -404,35 +417,22 @@ function check_flag_conflicts(p_args)
 			)
 		end
 	end
+	for option in ("lower-bound", "upper-bound")
+		lenght(p_args[option].vector) != length(p_args["instfnames"]) && @error(
+			"the length of the list passed to --$(option) should be" *
+			" the exact same size as the number of instances provided"
+		)
+	end
+	# The check below needs to be here because uses a generic flag and a specific
+	# flag at same time.
+	p_args["final-pricing"] && p_args["relax2lp"] && @error(
+		"the flags --final-pricing and --relax2lp should not be used together; it is not clear what they should do, and the best interpretation (solving the relaxed model and doing the final pricing, without solving the unrelaxed reduced model after) is not specially useful and need extra code to work that is not worth it"
+	)
 	# Model specific conflicts
 	p_args["model"] == "PPG2KP" && PPG2KP.Args.check_flag_conflicts(p_args)
 	p_args["model"] == "Flow" && Flow.Args.check_flag_conflicts(p_args)
 	p_args["model"] == "KnapsackPlates" &&
 		KnapsackPlates.Args.check_flag_conflicts(p_args)
-end
-
-# TODO: this could be parsed with custom type parsing:
-# https://carlobaldassi.github.io/ArgParse.jl/stable/custom.html
-# However, the size checks would need to go to other place.
-function bounds_extra_parse(p_args)
-	for option in ["lower-bounds", "upper-bounds"]
-		if !isnothing(p_args[option])
-			@assert isone(length(p_args[option]))
-			str_list = p_args[option]
-			if match(r"^([1-9][0-9]*|0)(,([1-9][0-9]*|0))*$", str_list) === nothing
-				@error("the --$(option) does not follow the desired format:" *
-					" integer,integer,integer,... (no comma after last number)"
-				)
-			end
-			num_list = parse.(Int64, split(str_list, ','))
-			if length(num_list) != length(p_args["instfnames"])
-				@error("the length of the list passed to --$(option) should be" *
-					" the exact same size as the number of instances provided"
-				)
-			end
-			p_args[option] = num_list
-		end
-	end
 end
 
 # Definition of the command line arguments.
@@ -447,26 +447,40 @@ function parse_args(args = ARGS) :: Dict{String, Any}
 	return p_args
 end
 
+function mock_instance() :: String
+	"""
+	100	200
+	2
+	50     100    1     2
+	50     200    1     1
+	"""
+end
+
+function mock_for_compilation(p_args)
+	@timeit "mock_for_compilation" begin
+	mktemp() do path, io
+		copyed_args = copy(p_args)
+		write(io, mock_instance)
+		close(io) # it will be opened again inside read_build_solve_and_print
+		copyed_args["instfname"] = path
+		read_build_solve_and_print(
+			copyed_args, no_csv_out = true, no_solver_out = true
+		)
+	end
+	end
+end
+
 # Parse the command line arguments, and call the solve for each instance.
 function run(args = ARGS)
 	@timeit "run" begin
 	@show args
 	p_args = parse_args(args)
 
-	mock_first = !p_args["do-not-mock-first-for-compilation"]
-	if mock_first && !isnothing(p_args["instfnames"])
-		@timeit "mock" begin
-		read_build_solve_and_print(
-			p_args, 1; no_csv_out = true, no_solver_out = true
-		)
-		end
-	end
-	for inst_idx in eachindex(p_args["instfnames"])
-		total_instance_time = @elapsed read_build_solve_and_print(
-			p_args, inst_idx; no_solver_out = p_args["disable-solver-output"]
-		)
-		@show total_instance_time
-	end
+	!p_args["do-not-mock-for-compilation"] && mock_for_compilation(p_args)
+	total_instance_time = @elapsed read_build_solve_and_print(
+		p_args, no_solver_out = p_args["disable-solver-output"]
+	)
+	@show total_instance_time
 	end # timeit
 end
 
