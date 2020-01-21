@@ -3,42 +3,48 @@ module SolversArgs
 export empty_configured_model
 
 using TimerOutputs
-using ArgParse
 using JuMP
 #import CPLEX
+using ArgParse
+using ...Utilities.Args
+
+function common_args() :: Vector{Arg}
+	return [
+		Arg(
+			"threads", 1,
+			"Number of threads used by the solver (not model building)."
+		),
+		Arg(
+			"time-limit", 31536000.0,
+			"Time limit in seconds for solver B&B (not model building, nor root solving), the default is one year."
+		),
+		Arg(
+			"solver-seed", 1,
+			"The random seed used by the solver."
+		),
+		Arg(
+			"disable-solver-tricks", false,
+			"Vary between solvers but disable things like heuristics, probe, repeat presolve, and dive."
+		),
+		Arg(
+			"disable-solver-output", false,
+			"Disables the solver output."
+		)
+	]
+end
 
 function common_parse_settings()
 	s = ArgParseSettings()
 	ArgParse.add_arg_group(s, "Solvers Common Flags", "solver_common_flags")
-	@add_arg_table s begin
-		"--threads"
-			help = "Number of threads used by the solver (not model building)."
-			arg_type = Int
-			default = 1
-			action = :store_arg
-		"--time-limit"
-			help = "Time limit in seconds for solver B&B (not model building, nor root solving), the default is one year."
-			arg_type = Float64
-			default = 31536000.0
-			action = :store_arg
-		"--solver-seed"
-			help = "The random seed used by the solver."
-			arg_type = Int
-			default = 1
-			action = :store_arg
-		"--disable-solver-tricks"
-			help = "Vary between solvers but disable things like heuristics, probe, repeat presolve, and dive."
-			action = :store_true
-		"--disable-solver-output"
-			help = "Disables the solver output."
-			action = :store_true
-	end
+	ArgParse.add_arg_table.(s, common_args())
 	set_default_arg_group(s)
 	s
 end
 
 function parse_settings()
-	#=
+	s = common_parse_settings()
+	#= TODO: if this is added back, it needs to be adapted to the new
+	# style using Utilities.Args.
 	ArgParse.add_arg_group(s, "CPLEX-specific Flags", "cplex_specific_flags")
 	@add_arg_table s begin
 		"--cplex-det-time-limit"
@@ -47,13 +53,14 @@ function parse_settings()
 			default = [1.0E+75]
 			nargs = 1
 	end
-	=#
 	set_default_arg_group(s)
+	=#
 	s
 end
 
 function check_flag_conflicts(p_args)
-	# Some error checking.
+	# This method is called on CommandLine.jl, if conflicts arise they may
+	# be just checked hered.
 	#= Solver-specific flags are disabled for now
 	is_default_value = p_args["cplex-det-time-limit"] == [1.0E+75]
 	is_default_value && p_args["solver"] != "CPLEX" && @error(

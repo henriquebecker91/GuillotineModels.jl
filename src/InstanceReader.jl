@@ -17,25 +17,24 @@ function read_from_string(s :: AbstractString)
 		elseif  lnc == 2
 			N = parse(Int64, ln)
 		else    # all other lines
-			# The instances of paper "Improved state space relaxation for
-			# constrained two-dimensional guillotine cutting problems" have a N
-			# different of the real number of lines because the instances with 50
-			# and 25 items are the same, only changing the value (they could
-			# have removed the unused lines...).
-			if (lnc > N + 2)
-			end
 			# cp_ == current plate
 			(cp_l, cp_w, cp_p, cp_q) = map(x -> parse(Int64, x), split(ln))
 			push!((l, w, p, q), (cp_l, cp_w, cp_p, cp_q))
 		end
+		# The instances of paper "Improved state space relaxation for
+		# constrained two-dimensional guillotine cutting problems" have a N
+		# different of the real number of lines because the instances with 50
+		# and 25 items are the same, only changing the value (they could
+		# have removed the unused lines...).
 		if lnc - 2 == N # use N and not all the lines in the file
-			@warn "There are more plate lines than the specified number of plates."
+			@warn "There are more plate lines than the specified number of plates." *
+				" The extra lines will not be used."
 			break
 		end
 		lnc = lnc + 1
 	end
 	end # @timeit
-	return N, L, W, l, w, p, q, 
+	return N, L, W, l, w, p, q
 end
 
 # TODO: restore the configuration Dict and allow:

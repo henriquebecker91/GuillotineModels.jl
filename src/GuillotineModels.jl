@@ -4,8 +4,8 @@ module GuillotineModels
 # not of the top-level. The module names are not exported, it is expected
 # the user will abbreviate the module used with a constant global variable.
 
-include("InstanceReader.jl")
 include("Utilities.jl")
+include("InstanceReader.jl")
 include("KnapsackPlates.jl")
 include("flow/Flow.jl")
 include("ppg2kp/PPG2KP.jl")

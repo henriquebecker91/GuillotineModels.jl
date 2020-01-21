@@ -8,11 +8,6 @@ using JuMP
 using Random # for rng object passed to heuristic
 import ArgParse
 import ArgParse: set_default_arg_group, add_arg_group, @add_arg_table
-# Both MathOptInterface and MathOptFormat are used to allow saving the
-# generated model.
-using MathOptInterface
-const MOI = MathOptInterface
-using MathOptFormat
 
 include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
 using .SolversArgs
@@ -21,21 +16,10 @@ using ..InstanceReader # for reading the instances
 using ..Utilities
 using ..Utilities.Args
 
-# The implemented models.
-import ..Flow
-import ..PPG2KP
-import ..KnapsackPlates
-
-# Style guideline: as the module block is left unindented, the @timeit
-# blocks that wrap the whole method body also are not indented.
-
-function save_model(model, filename = "saved_model.mps") :: Nothing
-	@timeit "save_model" begin
-	mps_model = MathOptFormat.MPS.Model()
-	MOI.copy_to(mps_model, backend(model))
-	MOI.write_to_file(mps_model)
-	end # timeit
-	nothing
+# Note: the name of the submodules that implement a model should be returned
+# by this method to considered an option by the method `run`.
+function available_models()
+	return ["Flow", "PPG2KP", "KnapsackPlates"]
 end
 
 function div_and_round_instance(L, W, l, w, p_args)
@@ -71,37 +55,32 @@ function div_and_round_instance(L, W, l, w, p_args)
 	L, W, l, w
 end
 
-function get_submodule(module_name)
-	getfield(parentmodule(@__MODULE__), Symbol(module_name))
-end
-
-function get_submodule_field(module_name, method_name)
-	submodule = get_submodule(module_name)
-	getfield(submodule, Symbol(method_name))
-end
-
-function build_solve_and_print(
-	p_args, no_csv_out = false, no_solver_out = false
-)
+function get_sibling_field(field_path :: AbstractString)
+	curr_field = parentmodule(@__MODULE__)
+	broken_path = split(field_path, ".")
+	for shard in broken_path
+		curr_field = getfield(curr_field, Symbol(shard))
+	end
+	return curr_field
 end
 
 # Read the instance, build the model, solve the model, and print related stats.
-function read_build_solve_and_print(
-	p_args, no_csv_out = false, no_solver_out = false
-)
+function read_build_solve_and_print(p_args)
+	no_csv_out = p_args["no-csv-output"]
+	no_solver_out = p_args["no-solver-output"]
 	if !no_csv_out
 		@show instfname
 		seed = p_args["solver-seed"]
 		@show seed
 	end
 
-	L_, W_, l_, w_, p, d = InstanceReader.read_instance(p_args["instfname"])
+	L_, W_, l_, w_, p, d = InstanceReader.read_from_file(p_args["instfname"])
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, p_args)
 
 	m = empty_configured_model(p_args; no_solver_out = no_solver_out)
 
 	@timeit "build_model" begin
-	model_builder = get_submodule_field(p_args["model"], :build)
+	model_builder = get_sibling_field("$(p_args["model"]).build")
 	model_build_output = model_builder(
 		m, d, p, l, w, L, W; p_args = p_args
 	)
@@ -302,10 +281,9 @@ function core_parse_settings()
 		"solver"
 			help = "Solver to be used if necessary (case-sensitive, ex.: Cbc, CPLEX, Gurobi). Required, even if --do-not-solve is specified."
 			arg_type = String
-		"instfnames"
-			help = "The paths to the instances to be solved."
+		"instfname"
+			help = "The path to the instance to be solved."
 			arg_type = String
-			nargs = '*'
 	end
 	set_default_arg_group(s)
 	s
@@ -337,6 +315,10 @@ function generic_args() :: Vector{Arg}
 		Arg(
 			"do-not-mock-for-compilation", false,
 			"To avoid counting the compilation time, a small hardcoded mock instance is solved before (to warm the JIT), this flag disables this mock solve."
+		),
+		Arg(
+			"no-csv-output", false,
+			"Disable some extra output that the author of this package uses to assemble CSVs and/or debug."
 		),
 		Arg(
 			"relax2lp", false,
@@ -384,13 +366,6 @@ function parse_settings()
 	s
 end
 
-function model_accepted_args(
-	model_module_name :: Union{AbstractString,Symbol}
-)
-	args_submod = get_submodule_field(model_module_name, :Args)
-	s = getfield(args_submod, :accepted_args)()
-end
-
 function check_flag_conflicts(p_args)
 	# Generic Flags conflicts
 	num_rounds = sum(.! isone.(map(flag -> p_args[flag],
@@ -405,9 +380,9 @@ function check_flag_conflicts(p_args)
 	# here too.
 	# TODO: implement this valid_option_names the right way (using the args
 	# structure)
-	#valid_option_names = [common_parse_settings();
-	#	model_parse_settings(p_args["model"])]
-
+	sel_model = p_args["model"]
+	valid_options = [common_parse_settings(); model_parse_settings(sel_model)]
+	valid_option_names = getfield.(valid_options, :name)
 	for option in keys(p_args)
 		if option ∉ valid_option_names
 			@warn(
@@ -417,22 +392,19 @@ function check_flag_conflicts(p_args)
 			)
 		end
 	end
-	for option in ("lower-bound", "upper-bound")
-		lenght(p_args[option].vector) != length(p_args["instfnames"]) && @error(
-			"the length of the list passed to --$(option) should be" *
-			" the exact same size as the number of instances provided"
-		)
-	end
 	# The check below needs to be here because uses a generic flag and a specific
 	# flag at same time.
 	p_args["final-pricing"] && p_args["relax2lp"] && @error(
-		"the flags --final-pricing and --relax2lp should not be used together; it is not clear what they should do, and the best interpretation (solving the relaxed model and doing the final pricing, without solving the unrelaxed reduced model after) is not specially useful and need extra code to work that is not worth it"
+		"The flags --final-pricing and --relax2lp should not be used together;" *
+		" it is not clear what they should do, and the best interpretation" *
+		" (solving the relaxed model and doing the final pricing, without" *
+		" solving the unrelaxed reduced model after) is not specially useful" *
+		" and need extra code to work that is not worth it."
 	)
 	# Model specific conflicts
-	p_args["model"] == "PPG2KP" && PPG2KP.Args.check_flag_conflicts(p_args)
-	p_args["model"] == "Flow" && Flow.Args.check_flag_conflicts(p_args)
-	p_args["model"] == "KnapsackPlates" &&
-		KnapsackPlates.Args.check_flag_conflicts(p_args)
+	model_specific_checker_path = "$(p_args["model"]).Args.check_flag_conflicts"
+	model_specific_checker = get_sibling_field(model_specific_checker_path)
+	model_specific_checker(p_args)
 end
 
 # Definition of the command line arguments.
@@ -463,11 +435,11 @@ function mock_for_compilation(p_args)
 		write(io, mock_instance)
 		close(io) # it will be opened again inside read_build_solve_and_print
 		copyed_args["instfname"] = path
-		read_build_solve_and_print(
-			copyed_args, no_csv_out = true, no_solver_out = true
-		)
+		copyed_args["no-csv-output"] = true
+		copyed_args["no-solver-output"] = true
+		read_build_solve_and_print(copyed_args)
 	end
-	end
+	end # @timeit
 end
 
 # Parse the command line arguments, and call the solve for each instance.
@@ -477,10 +449,10 @@ function run(args = ARGS)
 	p_args = parse_args(args)
 
 	!p_args["do-not-mock-for-compilation"] && mock_for_compilation(p_args)
-	total_instance_time = @elapsed read_build_solve_and_print(
-		p_args, no_solver_out = p_args["disable-solver-output"]
-	)
-	@show total_instance_time
+	# remaining code should not depend on this option
+	delete!(p_args, "do-not-mock-for-compilation")
+	total_instance_time = @elapsed read_build_solve_and_print(p_args)
+	@show total_instance_timE
 	end # timeit
 end
 

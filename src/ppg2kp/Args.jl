@@ -1,7 +1,7 @@
 module Args
 
 using ArgParse
-using ..Utilities.Args
+using ...Utilities.Args
 
 function owned_args()
 	return [

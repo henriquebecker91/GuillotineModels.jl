@@ -11,9 +11,11 @@ module Args
 		help :: String
 	end
 
+	#= TODO: check if it really may be remove
 	function Arg(name :: String, default, help :: String)
 		Arg{typeof(default)}(name, default, help)
 	end
+	=#
 
 	function ArgParse.add_arg_table(settings :: ArgParseSettings, arg :: Arg)
 		if isa(arg.default, Bool)
@@ -59,12 +61,27 @@ module Args
 end # submodule Args
 
 using JuMP
+using MathOptInterface
+const MOI = MathOptInterface
+using MathOptFormat
 
 # JuMP/'Mathematical Model' related utilities
 export num_all_constraints, reduced_cost, delete_vars_by_pricing!
 export relax_vars!, relax_all_vars!, unrelax_vars!, unrelax_all_vars!
 export SavedBound, save_bound_if_exists!, restore_bound!
 export which_vars_to_keep, fix_vars!
+export save_model
+
+# Style guideline: as the module block is left unindented, the @timeit
+# blocks that wrap the whole method body also are not indented.
+function save_model(model, filename = "saved_model.mps") :: Nothing
+	@timeit "save_model" begin
+	mps_model = MathOptFormat.MPS.Model()
+	MOI.copy_to(mps_model, backend(model))
+	MOI.write_to_file(mps_model)
+	end # timeit
+	nothing
+end
 
 # JuMP has no method for getting all constraints, you need to get the
 # types of constraints used in the model and then query the number for
