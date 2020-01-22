@@ -14,13 +14,9 @@ using .SolversArgs
 
 using ..InstanceReader # for reading the instances
 using ..Utilities
-using ..Utilities.Args
 
-# Note: the name of the submodules that implement a model should be returned
-# by this method to considered an option by the method `run`.
-function available_models()
-	return ["Flow", "PPG2KP", "KnapsackPlates"]
-end
+import ..Utilities.Args.Arg
+using PPG2KP, PPG2KP.Args, Flow, Flow.Args, KnapsackPlates, KnapsackPlates.Args
 
 function div_and_round_instance(L, W, l, w, p_args)
 	@timeit "div_and_round_instance" begin
@@ -55,6 +51,7 @@ function div_and_round_instance(L, W, l, w, p_args)
 	L, W, l, w
 end
 
+#=
 function get_sibling_field(field_path :: AbstractString)
 	curr_field = parentmodule(@__MODULE__)
 	broken_path = split(field_path, ".")
@@ -63,6 +60,7 @@ function get_sibling_field(field_path :: AbstractString)
 	end
 	return curr_field
 end
+=#
 
 # Read the instance, build the model, solve the model, and print related stats.
 function read_build_solve_and_print(p_args)
@@ -271,7 +269,23 @@ function read_build_solve_and_print(p_args)
 	return nothing
 end
 
-function core_parse_settings()
+function generate_model_argparse_settings(
+	model_name :: Union{String, Symbol}
+) :: ArgParse.ArgParseSettings
+	s = ArgParseSettings()
+	ArgParse.add_arg_group(
+		s, "$(model_name)-Specific Options", "$(model_name)-specific-options"
+	)
+	original_args = accepted_arg_list(Val(Symbol(model_name)))
+	prefixed_args = map(original_args) do arg
+		Arg(string(model_name) * "-" * arg.name, arg.default, arg.help)
+	end
+	ArgParse.add_arg_table.(s, prefixed_args)
+	set_default_arg_group(s)
+	s
+end
+
+function core_argparse_settings()
 	s = ArgParse.ArgParseSettings()
 	ArgParse.add_arg_group(s, "Core Parameters", "core_parameters")
 	@add_arg_table s begin
@@ -289,26 +303,13 @@ function core_parse_settings()
 	s
 end
 
-function bounds_args() :: Vector{Arg}
-	return [
-		Arg(
-			"lower-bounds", IntList(),
-			"Takes a single string, the string has N comma-separated-numbers where N is the number of instances passed. The use of these values is dependent on the other options selected, --final-pricing may use the values if --warm-start do not give better values."
-		),
-		Arg(
-			"upper-bounds", IntList(),
-			"Takes a single string, the string has N comma-separated-numbers where N is the number of instances passed, no spaces allowed. The use of these values is dependent on the other options selected, check code."
-		)
-	]
-end
-
 function generic_args() :: Vector{Arg}
 	return [
 		Arg(
 			"do-not-solve", false,
 			"The model is build but not solved. A solver has yet to be specified. Note that just building a model may depend on using a solver over subproblems. Such uses of the solver are not disabled by this flag."
 		),
-		Arg(
+		Arg( # TODO: check if it can be implemented generically
 			"save-model", false,
 			"Save the model of each problem instance to the working directory ('./instance_name.mps'). Uses MPS format."
 		),
@@ -339,7 +340,7 @@ function generic_args() :: Vector{Arg}
 	]
 end
 
-function generic_parse_settings()
+function generic_argparse_settings()
 	s = ArgParse.ArgParseSettings()
 	add_arg_group(s, "Generic Options", "generic_options")
 	add_arg_group.(s, generic_args())
@@ -347,26 +348,22 @@ function generic_parse_settings()
 	s
 end
 
-function common_parse_settings()
-	s = core_parse_settings()
-	ArgParse.import_settings(s, generic_parse_settings())
-	ArgParse.import_settings(s, SolversArgs.common_parse_settings())
-	s
-end
-
 # NOTE: all options are parsed, even if just one model is selected at a time.
 # The reasons for that are: (1) we do not know the model before the parsing
 # unless we manipulate ARGS directly; (2) if they are not included in the
 # parsing they do not appear in the help message.
-function parse_settings()
+function argparse_settings(models_list :: Vector{Symbol})
+	s = core_argparse_settings()
+	ArgParse.import_settings(s, generic_argparse_settings())
+	ArgParse.import_settings(s, SolversArgs.argparse_settings())
 	s = common_parse_settings()
-	ArgParse.import_settings(s, PPG2KP.Args.parse_settings())
-	ArgParse.import_settings(s, Flow.Args.parse_settings())
-	ArgParse.import_settings(s, KnapsackPlates.Args.parse_settings())
+	for model in models_list
+		ArgParse.import_settings(s, generate_model_argparse_settings(model))
+	end
 	s
 end
 
-function check_flag_conflicts(p_args)
+function throw_if_incompatible_options(p_args)
 	# Generic Flags conflicts
 	num_rounds = sum(.! isone.(map(flag -> p_args[flag],
 		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
@@ -378,8 +375,7 @@ function check_flag_conflicts(p_args)
 	# Check if all options are from common or the model selected.
 	# NOTE: if someday we have solver-specific arguments we need to treat them
 	# here too.
-	# TODO: implement this valid_option_names the right way (using the args
-	# structure)
+	# TODO: Adapt this to prefix the argument names with the model
 	sel_model = p_args["model"]
 	valid_options = [common_parse_settings(); model_parse_settings(sel_model)]
 	valid_option_names = getfield.(valid_options, :name)
@@ -401,19 +397,16 @@ function check_flag_conflicts(p_args)
 		" solving the unrelaxed reduced model after) is not specially useful" *
 		" and need extra code to work that is not worth it."
 	)
-	# Model specific conflicts
-	model_specific_checker_path = "$(p_args["model"]).Args.check_flag_conflicts"
-	model_specific_checker = get_sibling_field(model_specific_checker_path)
-	model_specific_checker(p_args)
+	# Model specific checking
+	throw_if_incompatible_options(Val(Symbol(sel_model)), p_args)
 end
 
 # Definition of the command line arguments.
-function parse_args(args = ARGS) :: Dict{String, Any}
+function parse_args(args, models_list) :: Dict{String, Any}
 	@timeit "parse_args" begin
-	s = parse_settings()
+	s = argparse_settings(models_list)
 	p_args = ArgParse.parse_args(args, s) :: Dict{String, Any}
-	bounds_extra_parse(p_args)
-	check_flag_conflicts(p_args)
+	throw_if_incompatible_options(p_args)
 	end # timeit
 
 	return p_args
@@ -443,16 +436,20 @@ function mock_for_compilation(p_args)
 end
 
 # Parse the command line arguments, and call the solve for each instance.
-function run(args = ARGS)
+function run(
+	args = ARGS;
+	implemented_models = [:Flow, :PPG2KP, :KnapsackPlates]
+)
 	@timeit "run" begin
 	@show args
-	p_args = parse_args(args)
+	@show implemented_models
+	p_args = parse_args(args, implemented_models)
 
 	!p_args["do-not-mock-for-compilation"] && mock_for_compilation(p_args)
 	# remaining code should not depend on this option
 	delete!(p_args, "do-not-mock-for-compilation")
 	total_instance_time = @elapsed read_build_solve_and_print(p_args)
-	@show total_instance_timE
+	@show total_instance_time
 	end # timeit
 end
 

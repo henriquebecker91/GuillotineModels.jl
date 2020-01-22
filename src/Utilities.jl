@@ -1,9 +1,8 @@
 module Utilities
 
 module Args
-
 	using ArgParse
-	export Arg, IntList
+	export Arg#, IntList
 
 	struct Arg{T}
 		name :: String

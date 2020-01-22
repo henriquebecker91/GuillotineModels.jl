@@ -1,18 +1,21 @@
 module KnapsackPlates
 
-using JuMP
-using ArgParse
-
 module Args
-	using ArgParse
+	import .Utilities.Args.Arg
+	export accepted_arg_list, throw_if_incompatible_options
 	# No extra flags for this model yet.
-	parse_settings() = ArgParseSettings()
-	check_flag_conflicts() = nothing
+	accepted_arg_list(::Val{:KnapsackPlates}) = Vector{Arg}()
+	throw_if_incompatible_options(::Val{:KnapsackPlates}, p_args) = nothing
 end
 
-function build(
-	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
-	L :: S, W :: S; only_binary = false
+export build_model
+
+using JuMP
+
+function build_model(
+	::Val{:KnapsackPlates}, model, d :: Vector{D}, p :: Vector{P},
+	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S;
+	options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
 	@assert length(d) == length(l) && length(l) == length(w)
 	num_fplate_types = convert(D, length(d))

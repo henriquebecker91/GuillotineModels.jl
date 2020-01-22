@@ -1,19 +1,20 @@
 module Flow
 
-using JuMP
-
-include("Enumeration.jl")
-using .Enumeration
-
 module Args
-	using ArgParse
+	import .Utilities.Args.Arg
+	export accepted_arg_list, throw_if_incompatible_options
 	# No extra flags for this model yet.
-	parse_settings() = ArgParseSettings()
-	check_flag_conflicts() = nothing
+	accepted_arg_list(::Val{:Flow}) = Vector{Arg}()
+	throw_if_incompatible_options(::Val{:Flow}, p_args) = nothing
 end
 
 # Just include it to make it available to users of this module.
 include("Format.jl")
+# Used for building the model.
+include("Enumeration.jl")
+using .Enumeration
+
+using JuMP
 
 # HIGH LEVEL EXPLANATION OF THE MODEL
 #
@@ -71,10 +72,10 @@ include("Format.jl")
 #     It is allowed by cutting n+2.
 #   n+5:m - The remaining intermediary plates.
 #
-function build(
-	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
-	L :: S, W :: S;
-	relax2lp = false
+function build_model(
+	::Val{:Flow}, model, d :: Vector{D}, p :: Vector{P},
+	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S;
+	options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
 	# TODO: fix (L, W, l, w, d) = (20, 5, [20, 4, 18], [4, 5, 2], [1, 1, 1])
 	@assert length(d) == length(l)

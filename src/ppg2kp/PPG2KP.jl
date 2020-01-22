@@ -560,20 +560,12 @@ function unsafe_build(
 	model, hvcuts, pli_lwb, np
 end
 
-function build(
-	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
-	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
+function build_model(
+	::Val{:PPG2KP}, model, d :: Vector{D}, p :: Vector{P},
+	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
+	options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
-#=
-	only_binary = false, use_c25 = false,
-	ignore_2th_dim = false, ignore_d = false, round2disc = true,
-	faithful2furini2016 = false,
-	no_redundant_cut = false, no_cut_position = false,
-	no_furini_symmbreak = false,
-	lb :: P = zero(P), ub :: P = zero(P),
-	print_debug :: Bool = false
-=#
-	exit()
+	@warn "PPG2KP build_model is not linked with the rest yet"
 end
 
 end # module

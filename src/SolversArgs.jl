@@ -8,7 +8,7 @@ using JuMP
 using ArgParse
 using ...Utilities.Args
 
-function common_args() :: Vector{Arg}
+function accepted_arg_list(::Val{:Solvers}) :: Vector{Arg}
 	return [
 		Arg(
 			"threads", 1,
@@ -33,16 +33,11 @@ function common_args() :: Vector{Arg}
 	]
 end
 
-function common_parse_settings()
+function argparse_settings()
 	s = ArgParseSettings()
 	ArgParse.add_arg_group(s, "Solvers Common Flags", "solver_common_flags")
-	ArgParse.add_arg_table.(s, common_args())
+	ArgParse.add_arg_table.(s, accepted_arg_list(Val{:Solvers}))
 	set_default_arg_group(s)
-	s
-end
-
-function parse_settings()
-	s = common_parse_settings()
 	#= TODO: if this is added back, it needs to be adapted to the new
 	# style using Utilities.Args.
 	ArgParse.add_arg_group(s, "CPLEX-specific Flags", "cplex_specific_flags")
@@ -58,7 +53,7 @@ function parse_settings()
 	s
 end
 
-function check_flag_conflicts(p_args)
+function throw_if_incompatible_options(::Val{:Solvers}, p_args)
 	# This method is called on CommandLine.jl, if conflicts arise they may
 	# be just checked hered.
 	#= Solver-specific flags are disabled for now
