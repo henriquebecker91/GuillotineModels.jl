@@ -36,8 +36,20 @@ module Args
 		ArgParse.add_arg_table(settings, "--" * arg.name, conf)
 	end
 
-	# TODO: create here the method for merging given args with the defaults
-	# of all accepted args. maybe: add_default_of_missing_args
+	function create_normalized_arg_subset(
+		p_args :: Dict{String, Any}, selected :: Vector{Arg}
+	)
+		new_dict = Dict{String, Any}()
+		for arg in selected
+			if haskey(p_args, arg.name)
+				new_dict[arg.name] = p_args[arg.name]
+			else
+				new_dict[arg.name] = arg.default
+			end
+		end
+
+		new_dict
+	end
 
 	#=
 	# The code below was kept as an example of how to parse custom items but
