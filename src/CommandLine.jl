@@ -12,7 +12,7 @@ import ArgParse: set_default_arg_group, add_arg_group, @add_arg_table
 include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
 using .SolversArgs
 
-using ..InstanceReader # for reading the instances
+using ..InstanceReader
 using ..Utilities
 
 import ..Utilities.Args.Arg
@@ -51,44 +51,31 @@ function div_and_round_instance(L, W, l, w, p_args)
 	L, W, l, w
 end
 
-#=
-function get_sibling_field(field_path :: AbstractString)
-	curr_field = parentmodule(@__MODULE__)
-	broken_path = split(field_path, ".")
-	for shard in broken_path
-		curr_field = getfield(curr_field, Symbol(shard))
-	end
-	return curr_field
-end
-=#
-
 # Read the instance, build the model, solve the model, and print related stats.
-function read_build_solve_and_print(p_args)
-	no_csv_out = p_args["no-csv-output"]
-	no_solver_out = p_args["no-solver-output"]
-	if !no_csv_out
-		@show instfname
-		seed = p_args["solver-seed"]
-		@show seed
+function read_build_solve_and_print(pp) # pp stands for parsed parameters
+	if !pp["no-csv-output"]
+		println("instfname = $(pp["instfname"])")
+		println("seed = $(pp["solver-seed"])")
 	end
 
-	L_, W_, l_, w_, p, d = InstanceReader.read_from_file(p_args["instfname"])
-	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, p_args)
+	L_, W_, l_, w_, p, d = InstanceReader.read_from_file(pp["instfname"])
+	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 
-	m = empty_configured_model(p_args; no_solver_out = no_solver_out)
+	m = empty_configured_model(pp)
 
 	@timeit "build_model" begin
-	model_builder = get_sibling_field("$(p_args["model"]).build")
-	model_build_output = model_builder(
-		m, d, p, l, w, L, W; p_args = p_args
+	model_id = Val(Symbol(pp["model"]))
+	# This is type-unstable. Check if it is not problem someday.
+	build_model_return = build_model(
+		model_id, m, d, p, l, w, L, W; options = pp
 	)
-	end
+	end # @timeit
 	time_to_build_model = TimerOutputs.time(get_defaulttimer(), "build_model")
 
-	p_args["save-model"] && !no_csv_out &&
-		save_model(m, "./$(basename(instfname)).mps")
+	pp["save-model"] && !pp["no-csv-output"] &&
+		@timeit "save_model" save_model(m, "./$(basename(instfname)).mps")
 
-	if !no_csv_out
+	if !pp["no-csv-output"]
 		@show time_to_build_model
 		n = length(d)
 		@show n
@@ -102,7 +89,7 @@ function read_build_solve_and_print(p_args)
 		@show num_constrs
 		#= TODO: make specific prints for each model inside their module and
 		# call them there?
-		if !p_args["flow-model"] && !p_args["break-hvcut-symmetry"]
+		if !pp["flow-model"] && !pp["break-hvcut-symmetry"]
 			num_plates = length(pli_lwb)
 			@show num_plates
 			ps = m[:picuts]
@@ -115,69 +102,12 @@ function read_build_solve_and_print(p_args)
 		=#
 	end
 
-	if p_args["warm-start"]
-		@assert !p_args["faithful2furini2016"] && !p_args["flow-model"]
-		(heur_obj, heur_sel, heur_pat), heur_time, _, _, _ = @timed iterated_greedy(
-			d, p, l, w, L, W, MersenneTwister(p_args["solver-seed"])
-		)
-		if !no_csv_out
-			@show heur_time
-			@show heur_obj
-			@show heur_sel
-			@show heur_pat
-		end
-		saved_bounds = PPG2KP.disable_unrestricted_cuts!(
-			m, sort(l), sort(w), hvcuts, pli_lwb
-		)
-		heur_ws_time = @elapsed PPG2KP.warm_start(
-			m, l, w, L, W, heur_pat, pli_lwb, hvcuts, np;
-			faithful2furini2016 = p_args["faithful2furini2016"]
-		)
-		!no_csv_out && @show heur_ws_time
-		restricted_time = @elapsed optimize!(m)
-		!no_csv_out && @show restricted_time
-		restricted_sol = value.(all_variables(m))
-		restricted_objval = objective_value(m)
-		PPG2KP.restore_bound!.(saved_bounds)
-		set_start_value.(all_variables(m), restricted_sol)
-	end
+	pp["do-not-solve"] && return nothing
 
-	p_args["do-not-solve"] && return nothing
+	@timeit "optimize!" optimize!(m)
+	time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 
-	vars_before_deletes = all_variables(m)
-	if p_args["final-pricing"] || p_args["relax2lp"]
-		original_settings = relax_all_vars!(m)
-	end
-	time_to_solve_model = @elapsed optimize!(m)
-	if (p_args["final-pricing"] || p_args["relax2lp"]) && !no_csv_out
-		println("time_to_solve_relaxed_model = $(time_to_solve_model)")
-	end
-	if p_args["final-pricing"]
-		# get the given lower bound on the instance if there is one
-		best_lb = get(p_args["lower-bounds"], instfname_idx, 0)
-		# if warm-start is enabled and the lb is better, use it
-		p_args["warm-start"] && (best_lb = max(best_lb, restricted_objval))
-		# delete all variables which would only reduce obj to below the lower bound
-		#if !no_csv_out
-		#  @profile (mask = delete_vars_by_pricing!(m, Float64(best_lb)))
-		#  Profile.print()
-		#else
-		#  mask = delete_vars_by_pricing!(m, Float64(best_lb))
-		#end
-		kept = which_vars_to_keep(m, Float64(best_lb))
-		unrelax_vars!(vars_before_deletes, m, original_settings)
-		saved_bounds = fix_vars!(all_variables(m)[.!kept])
-		if !no_csv_out
-			num_vars_after_pricing = sum(kept)
-			num_vars_del_by_pricing = length(kept) - num_vars_after_pricing
-			@show num_vars_after_pricing
-			@show num_vars_del_by_pricing
-		end
-		time_to_solve_model += @elapsed optimize!(m)
-	end
-	sleep(0.01) # shamefully needed to avoid out of order messages from cplex
-
-	if !no_csv_out
+	if !pp["no-csv-output"]
 		@show time_to_solve_model
 		if primal_status(m) == MOI.FEASIBLE_POINT
 			obj_value = objective_value(m)
@@ -185,7 +115,7 @@ function read_build_solve_and_print(p_args)
 			obj_value = 0
 		end
 		@show obj_value
-		if !p_args["relax2lp"]
+		if !pp["relax2lp"]
 			obj_bound = objective_bound(m)
 			@show obj_bound
 		end
@@ -193,77 +123,6 @@ function read_build_solve_and_print(p_args)
 		@show stop_reason
 		stop_code = Int64(stop_reason)
 		@show stop_code
-		if p_args["flow-model"]
-			ps = value.(m[:edge][pii] for pii = 1:length(d) if is_valid(m, m[:edge][pii]))
-			ps_nz = [iv for iv in enumerate(ps) if iv[2] > 0.001]
-			@show ps_nz
-		else
-			if p_args["break-hvcut-symmetry"]
-				ps = m[:pieces_sold]
-				cm = m[:cuts_made]
-				ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if is_valid(m, ps[i]) && value(ps[i]) > 0.001]
-				cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if is_valid(m, cm[i]) && value(cm[i]) > 0.001]
-				@show ps_nz
-				@show cm_nz
-				println("(piece length, piece width) => (piece index, amount in solution, profit of single piece, total profit contributed in solution) ")
-				foreach(ps_nz) do e
-					pii, v = e
-					println((l[pii], w[pii]) => (pii, v, p[pii], v * p[pii]))
-				end
-				println("(parent plate length, parent plate width) => ((first child plate length, first child plate width), (second child plate length, second child plate width))")
-				foreach(cm_nz) do e
-					i, _ = e
-					parent, fchild, schild = hvcuts[i]
-					if iszero(schild)
-						println((pli2lwsb[parent][1], pli2lwsb[parent][2]) => ((pli2lwsb[fchild][1], pli2lwsb[fchild][2]), (0, 0)))
-					else
-						println((pli2lwsb[parent][1], pli2lwsb[parent][2]) => ((pli2lwsb[fchild][1], pli2lwsb[fchild][2]), (pli2lwsb[schild][1], pli2lwsb[schild][2])))
-					end
-				end
-			else # same as: if !p_args["break-hvcut-symmetry"]
-				p_args["relax2lp"] && @warn "relax2lp flag used, be careful regarding solution"
-				ps_nz = Vector{Tuple{Int, Float64}}()
-				cm_nz = Vector{Tuple{Int, Float64}}()
-				for i = 1:length(ps)
-					if is_valid(m, ps[i]) && value(ps[i]) > 0.0001
-						push!(ps_nz, (i, value(ps[i])))
-					end
-				end
-				for i = 1:length(cm)
-					if is_valid(m, cm[i]) && value(cm[i]) > 0.0001
-						push!(cm_nz, (i, value(cm[i])))
-					end
-				end
-				#ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if (is_valid(m, ps[i]) && value(ps[i]) > 0.001)]
-				#cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if (is_valid(m, cm[i]) && value(cm[i]) > 0.001)]
-				@show ps_nz
-				@show cm_nz
-				println("(plate length, plate width) => (number of times this extraction happened, piece length, piece width)")
-				foreach(ps_nz) do e
-					i, v = e
-					pli, pii = np[i]
-					println((pli_lwb[pli][1], pli_lwb[pli][2]) => (v, l[pii], w[pii]))
-				end
-				println("(parent plate length, parent plate width) => (number of times this cut happened, (first child plate length, first child plate width), (second child plate length, second child plate width))")
-				foreach(cm_nz) do e
-					i, v = e
-					parent, fchild, schild = hvcuts[i]
-		@assert !iszero(parent)
-		@assert !iszero(fchild)
-		if iszero(schild)
-			@assert p_args["faithful2furini2016"]
-			if pli_lwb[parent][1] == pli_lwb[fchild][1]
-							println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1], pli_lwb[parent][2] - pli_lwb[fchild][2])))
-			else
-				@assert pli_lwb[parent][2] == pli_lwb[fchild][2]
-							println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1] - pli_lwb[fchild][1], pli_lwb[parent][2])))
-			end
-		else
-						println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[schild][1], pli_lwb[schild][2])))
-		end
-				end
-			end
-		end
 	end
 
 	return nothing
@@ -274,7 +133,7 @@ function generate_model_argparse_settings(
 ) :: ArgParse.ArgParseSettings
 	s = ArgParseSettings()
 	ArgParse.add_arg_group(
-		s, "$(model_name)-Specific Options", "$(model_name)-specific-options"
+		s, "$(model_name)-specific Options", "$(model_name)-specific-options"
 	)
 	original_args = accepted_arg_list(Val(Symbol(model_name)))
 	prefixed_args = map(original_args) do arg
@@ -319,7 +178,7 @@ function generic_args() :: Vector{Arg}
 		),
 		Arg(
 			"no-csv-output", false,
-			"Disable some extra output that the author of this package uses to assemble CSVs and/or debug."
+			"Disable some extra output that the author of this package uses to assemble CSVs and/or debug. Also disables --save-model."
 		),
 		Arg(
 			"relax2lp", false,
@@ -356,29 +215,28 @@ function argparse_settings(models_list :: Vector{Symbol})
 	s = core_argparse_settings()
 	ArgParse.import_settings(s, generic_argparse_settings())
 	ArgParse.import_settings(s, SolversArgs.argparse_settings())
-	s = common_parse_settings()
 	for model in models_list
 		ArgParse.import_settings(s, generate_model_argparse_settings(model))
 	end
 	s
 end
 
-function throw_if_incompatible_options(p_args)
-	# Generic Flags conflicts
-	num_rounds = sum(.! isone.(map(flag -> p_args[flag],
-		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
-	)))
-	num_rounds > 1 && @error(
-		"only one of --div-and-round-{nearest,up,down} may be passed at the" *
-		" same time (what the fuck you expected?)"
-	)
+function warn_if_unrecognized_options(p_args)
 	# Check if all options are from common or the model selected.
 	# NOTE: if someday we have solver-specific arguments we need to treat them
 	# here too.
-	# TODO: Adapt this to prefix the argument names with the model
-	sel_model = p_args["model"]
-	valid_options = [common_parse_settings(); model_parse_settings(sel_model)]
-	valid_option_names = getfield.(valid_options, :name)
+	model = p_args["model"]
+	model_id = Val(Symbol(model))
+	model_arg_names = getfield.(accepted_arg_list(model_id), :name)
+	model_arg_names = map(name -> model * "-" * name, model_arg_names)
+
+	core_arg_names = ["solver", "model", "instfname"]
+	generic_arg_names = getfield.(generic_args(), :name)
+	solver_arg_names = getfield.(SolversArgs.accepted_arg_list(), :name)
+
+	valid_options_names = [
+		model_arg_names; core_arg_names; generic_arg_names; solver_arg_names
+	]
 	for option in keys(p_args)
 		if option ∉ valid_option_names
 			@warn(
@@ -388,17 +246,41 @@ function throw_if_incompatible_options(p_args)
 			)
 		end
 	end
+
+	return nothing
+end
+
+function throw_if_incompatible_common_options(p_args)
+	# Generic Flags conflicts
+	num_rounds = sum(.! isone.(map(flag -> p_args[flag],
+		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
+	)))
+	num_rounds > 1 && @error(
+		"only one of --div-and-round-{nearest,up,down} may be passed at the" *
+		" same time (what the fuck you expected?)"
+	)
 	# The check below needs to be here because uses a generic flag and a specific
 	# flag at same time.
-	p_args["final-pricing"] && p_args["relax2lp"] && @error(
+	p_args["PPG2KP-final-pricing"] && p_args["relax2lp"] && @error(
 		"The flags --final-pricing and --relax2lp should not be used together;" *
 		" it is not clear what they should do, and the best interpretation" *
 		" (solving the relaxed model and doing the final pricing, without" *
 		" solving the unrelaxed reduced model after) is not specially useful" *
 		" and need extra code to work that is not worth it."
 	)
-	# Model specific checking
-	throw_if_incompatible_options(Val(Symbol(sel_model)), p_args)
+end
+
+function remove_model_prefixes(p_args)
+	model_id = Val(Symbol(p_args["model"]))
+	model_options_names = getfield.(accepted_arg_list(model_id), :name)
+	for name in model_options_names
+		prefixed_name = p_args["model"] * "-" * name
+		if haskey(p_args, prefixed_name)
+			p_args[name] = p_args[prefixed_name]
+			delete!(p_args, prefixed_name)
+		end
+	end
+	p_args
 end
 
 # Definition of the command line arguments.
@@ -406,7 +288,10 @@ function parse_args(args, models_list) :: Dict{String, Any}
 	@timeit "parse_args" begin
 	s = argparse_settings(models_list)
 	p_args = ArgParse.parse_args(args, s) :: Dict{String, Any}
-	throw_if_incompatible_options(p_args)
+	warn_if_unrecognized_options(p_args)
+	throw_if_incompatible_common_options(p_args)
+	remove_model_prefixes(p_args)
+	throw_if_incompatible_options(Val(Symbol(p_args["model"])), p_args)
 	end # timeit
 
 	return p_args

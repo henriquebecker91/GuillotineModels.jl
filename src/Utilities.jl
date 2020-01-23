@@ -2,7 +2,8 @@ module Utilities
 
 module Args
 	using ArgParse
-	export Arg#, IntList
+	export Arg
+	#export IntList
 
 	struct Arg{T}
 		name :: String
@@ -10,7 +11,7 @@ module Args
 		help :: String
 	end
 
-	#= TODO: check if it really may be remove
+	#= TODO: check if it really may be removed
 	function Arg(name :: String, default, help :: String)
 		Arg{typeof(default)}(name, default, help)
 	end
@@ -34,6 +35,9 @@ module Args
 		# only long options are accepted, enforced clarity
 		ArgParse.add_arg_table(settings, "--" * arg.name, conf)
 	end
+
+	# TODO: create here the method for merging given args with the defaults
+	# of all accepted args. maybe: add_default_of_missing_args
 
 	#=
 	# The code below was kept as an example of how to parse custom items but

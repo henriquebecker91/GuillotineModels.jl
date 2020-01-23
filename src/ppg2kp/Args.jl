@@ -71,4 +71,6 @@ function throw_if_incompatible_options(::Val(:PPG2KP), p_args)
 		"the flag --final-pricing only makes sense if a lower bound is provided (either directly by --lower-bound or indirectly by --warm-start)"
 	)
 end
+
 end # module
+

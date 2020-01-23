@@ -560,6 +560,72 @@ function unsafe_build(
 	model, hvcuts, pli_lwb, np
 end
 
+#=
+# This block of code needs to find a home here, as it is model specific.
+# Before, it inhabited the script code.
+	if p_args["warm-start"]
+		@assert !p_args["faithful2furini2016"] && !p_args["flow-model"]
+		(heur_obj, heur_sel, heur_pat), heur_time, _, _, _ = @timed iterated_greedy(
+			d, p, l, w, L, W, MersenneTwister(p_args["solver-seed"])
+		)
+		if !no_csv_out
+			@show heur_time
+			@show heur_obj
+			@show heur_sel
+			@show heur_pat
+		end
+		saved_bounds = PPG2KP.disable_unrestricted_cuts!(
+			m, sort(l), sort(w), hvcuts, pli_lwb
+		)
+		heur_ws_time = @elapsed PPG2KP.warm_start(
+			m, l, w, L, W, heur_pat, pli_lwb, hvcuts, np;
+			faithful2furini2016 = p_args["faithful2furini2016"]
+		)
+		!no_csv_out && @show heur_ws_time
+		restricted_time = @elapsed optimize!(m)
+		!no_csv_out && @show restricted_time
+		restricted_sol = value.(all_variables(m))
+		restricted_objval = objective_value(m)
+		PPG2KP.restore_bound!.(saved_bounds)
+		set_start_value.(all_variables(m), restricted_sol)
+	end
+
+	# HERE IT WAS THE DIVISION OF BEFORE BUILDING THE MODEL AND AFTER BUILDING IT
+
+	vars_before_deletes = all_variables(m)
+	if p_args["final-pricing"] || p_args["relax2lp"]
+		original_settings = relax_all_vars!(m)
+	end
+	time_to_solve_model = @elapsed optimize!(m)
+	if (p_args["final-pricing"] || p_args["relax2lp"]) && !no_csv_out
+		println("time_to_solve_relaxed_model = $(time_to_solve_model)")
+	end
+	if p_args["final-pricing"]
+		# get the given lower bound on the instance if there is one
+		best_lb = get(p_args["lower-bounds"], instfname_idx, 0)
+		# if warm-start is enabled and the lb is better, use it
+		p_args["warm-start"] && (best_lb = max(best_lb, restricted_objval))
+		# delete all variables which would only reduce obj to below the lower bound
+		#if !no_csv_out
+		#  @profile (mask = delete_vars_by_pricing!(m, Float64(best_lb)))
+		#  Profile.print()
+		#else
+		#  mask = delete_vars_by_pricing!(m, Float64(best_lb))
+		#end
+		kept = which_vars_to_keep(m, Float64(best_lb))
+		unrelax_vars!(vars_before_deletes, m, original_settings)
+		saved_bounds = fix_vars!(all_variables(m)[.!kept])
+		if !no_csv_out
+			num_vars_after_pricing = sum(kept)
+			num_vars_del_by_pricing = length(kept) - num_vars_after_pricing
+			@show num_vars_after_pricing
+			@show num_vars_del_by_pricing
+		end
+		time_to_solve_model += @elapsed optimize!(m)
+	end
+	sleep(0.01) # shamefully needed to avoid out of order messages from cplex
+=#
+
 function build_model(
 	::Val{:PPG2KP}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,

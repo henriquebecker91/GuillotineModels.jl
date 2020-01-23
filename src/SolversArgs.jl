@@ -1,6 +1,6 @@
 module SolversArgs
 
-export empty_configured_model
+export empty_configured_model, accepted_arg_list
 
 using TimerOutputs
 using JuMP
@@ -53,6 +53,8 @@ function argparse_settings()
 	s
 end
 
+# While solver-specific arguments and checking is not relevant, let us
+# have this ::Val{Solvers} aberration.
 function throw_if_incompatible_options(::Val{:Solvers}, p_args)
 	# This method is called on CommandLine.jl, if conflicts arise they may
 	# be just checked hered.
@@ -64,17 +66,18 @@ function throw_if_incompatible_options(::Val{:Solvers}, p_args)
 	=#
 end
 
-function empty_configured_model(
-	::Val{:Cbc}, p_args; no_solver_out = no_solver_out
-)
-	Base.require(:Cbc)
+function import_if_necessary(module_sym :: Symbol)
+	Base.include_string(@__MODULE__, "import $(module_sym)")
+end
+
+function cbc_empty_configured_model(p_args)
 	JuMP.direct_model(
 		# TODO: the options of cbc were not studied so, for now it does
 		# the same thing independent of the value of disable-solver-tricks
 		Cbc.Optimizer(
 			threads = p_args["threads"],
 			ratioGap = 1e-6,
-			logLevel = no_solver_out ? 0 : 1,
+			logLevel = p_args["no-solver-output"] ? 0 : 1,
 			randomSeed = p_args["solver-seed"],
 			barrier = true,
 			seconds = p_args["time-limit"]
@@ -82,8 +85,13 @@ function empty_configured_model(
 	)
 end
 
-function cplex_inner_call(p_args, no_solver_out)
-	scrind_value = no_solver_out ? CPLEX.CPX_OFF : CPLEX.CPX_ON
+function empty_configured_model(::Val{:Cbc}, p_args)
+	Base.invokelatest(import_if_necessary(:Cbc))
+	Base.invokelatest(cbc_empty_configured_model, p_args)
+end
+
+function cplex_empty_configured_model(p_args)
+	scrind_value = p_args["no-solver-output"] ? CPLEX.CPX_OFF : CPLEX.CPX_ON
 	# TODO: just append options if disable-solver-tricks is on, do not
 	# write the common options two times
 	#=
@@ -148,22 +156,12 @@ function cplex_inner_call(p_args, no_solver_out)
 	model
 end
 
-function empty_configured_model(
-	::Val{:CPLEX}, p_args; no_solver_out = no_solver_out
-)
-	#Base.require(
-	#	Base.PkgId(Base.UUID("a076750e-1247-5638-91d2-ce28b192dca0"), "CPLEX")
-	#)
-	Base.include_string(@__MODULE__, "import CPLEX")
-	Base.invokelatest(cplex_inner_call, p_args, no_solver_out)
-	#CPLEX = getfield(Main, :CPLEX)
-	#:CPLEX)
+function empty_configured_model(::Val{:CPLEX}, p_args)
+	Base.invokelatest(import_if_necessary(:CPLEX))
+	Base.invokelatest(cplex_empty_configured_model, p_args)
 end
 
-function empty_configured_model(
-	::Val{:Gurobi}, p_args; no_solver_out = no_solver_out
-)
-	Base.require(:Gurobi)
+function gurobi_empty_configured_model(p_args)
 	JuMP.direct_model(
 		if p_args["disable-solver-tricks"]
 			Gurobi.Optimizer(
@@ -191,23 +189,22 @@ function empty_configured_model(
 	)
 end
 
+function empty_configured_model(::Val{:Gurobi}, p_args)
+	Base.invokelatest(import_if_necessary(:Gurobi))
+	Base.invokelatest(gurobi_empty_configured_model, p_args)
+end
+
 function empty_configured_model(
-	::Val{T}, p_args; no_solver_out = no_solver_out
+	::Val{T}, p_args
 ) where {T}
-	@error("model " * T * "is not implemented, define an implementation of" *
+	@error("solver " * T * "is not implemented, define an implementation of" *
 		" empty_configured_model for it")
 end
 
 # Create a new model with a configured underlying solver.
-function empty_configured_model(p_args; no_solver_out = no_solver_out)
+function empty_configured_model(p_args)
 	@timeit "empty_configured_model" begin
-	solver_sym = Symbol(p_args["solver"])
-
-	@show solver_sym
-	model = empty_configured_model(
-		Val(solver_sym), p_args; no_solver_out = no_solver_out
-	)
-	@show model
+	model = empty_configured_model(Val(Symbol(p_args["solver"])), p_args)
 	end # timeit
 
 	return model

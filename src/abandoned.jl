@@ -237,3 +237,83 @@ function build_model_with_symmbreak(
 	model, hvcuts, pli2lwsb, pii2plis, pli2piis
 end # build_model_with_symmbreak
 
+
+#=
+# CODE that lived inside the script method, and printed the solutions
+# from the models. Need to be broken in many model-specific methods
+# that take a solved model, and maybe the model building output, and
+# create a common and structured representation of the solution.
+		if p_args["flow-model"]
+			ps = value.(m[:edge][pii] for pii = 1:length(d) if is_valid(m, m[:edge][pii]))
+			ps_nz = [iv for iv in enumerate(ps) if iv[2] > 0.001]
+			@show ps_nz
+		else
+			if p_args["break-hvcut-symmetry"]
+				ps = m[:pieces_sold]
+				cm = m[:cuts_made]
+				ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if is_valid(m, ps[i]) && value(ps[i]) > 0.001]
+				cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if is_valid(m, cm[i]) && value(cm[i]) > 0.001]
+				@show ps_nz
+				@show cm_nz
+				println("(piece length, piece width) => (piece index, amount in solution, profit of single piece, total profit contributed in solution) ")
+				foreach(ps_nz) do e
+					pii, v = e
+					println((l[pii], w[pii]) => (pii, v, p[pii], v * p[pii]))
+				end
+				println("(parent plate length, parent plate width) => ((first child plate length, first child plate width), (second child plate length, second child plate width))")
+				foreach(cm_nz) do e
+					i, _ = e
+					parent, fchild, schild = hvcuts[i]
+					if iszero(schild)
+						println((pli2lwsb[parent][1], pli2lwsb[parent][2]) => ((pli2lwsb[fchild][1], pli2lwsb[fchild][2]), (0, 0)))
+					else
+						println((pli2lwsb[parent][1], pli2lwsb[parent][2]) => ((pli2lwsb[fchild][1], pli2lwsb[fchild][2]), (pli2lwsb[schild][1], pli2lwsb[schild][2])))
+					end
+				end
+			else # same as: if !p_args["break-hvcut-symmetry"]
+				p_args["relax2lp"] && @warn "relax2lp flag used, be careful regarding solution"
+				ps_nz = Vector{Tuple{Int, Float64}}()
+				cm_nz = Vector{Tuple{Int, Float64}}()
+				for i = 1:length(ps)
+					if is_valid(m, ps[i]) && value(ps[i]) > 0.0001
+						push!(ps_nz, (i, value(ps[i])))
+					end
+				end
+				for i = 1:length(cm)
+					if is_valid(m, cm[i]) && value(cm[i]) > 0.0001
+						push!(cm_nz, (i, value(cm[i])))
+					end
+				end
+				#ps_nz = [(i, value(ps[i])) for i = 1:length(ps) if (is_valid(m, ps[i]) && value(ps[i]) > 0.001)]
+				#cm_nz = [(i, value(cm[i])) for i = 1:length(cm) if (is_valid(m, cm[i]) && value(cm[i]) > 0.001)]
+				@show ps_nz
+				@show cm_nz
+				println("(plate length, plate width) => (number of times this extraction happened, piece length, piece width)")
+				foreach(ps_nz) do e
+					i, v = e
+					pli, pii = np[i]
+					println((pli_lwb[pli][1], pli_lwb[pli][2]) => (v, l[pii], w[pii]))
+				end
+				println("(parent plate length, parent plate width) => (number of times this cut happened, (first child plate length, first child plate width), (second child plate length, second child plate width))")
+				foreach(cm_nz) do e
+					i, v = e
+					parent, fchild, schild = hvcuts[i]
+		@assert !iszero(parent)
+		@assert !iszero(fchild)
+		if iszero(schild)
+			@assert p_args["faithful2furini2016"]
+			if pli_lwb[parent][1] == pli_lwb[fchild][1]
+							println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1], pli_lwb[parent][2] - pli_lwb[fchild][2])))
+			else
+				@assert pli_lwb[parent][2] == pli_lwb[fchild][2]
+							println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1] - pli_lwb[fchild][1], pli_lwb[parent][2])))
+			end
+		else
+						println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[schild][1], pli_lwb[schild][2])))
+		end
+				end
+			end
+		end
+	end
+=#
+
