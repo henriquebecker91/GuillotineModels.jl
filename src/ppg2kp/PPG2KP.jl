@@ -394,7 +394,7 @@ end
 # The number of times a pair pli-pii appear is at most the min between:
 # d[pii] and the number of subplates pli that fit in the original plate.
 #   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
-function unsafe_build(
+function no_arg_check_build_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}

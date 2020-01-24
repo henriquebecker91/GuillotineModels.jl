@@ -38,7 +38,7 @@ module Args
 
 	function create_normalized_arg_subset(
 		p_args :: Dict{String, Any}, selected :: Vector{Arg}
-	)
+	) :: Dict{String, Any}
 		new_dict = Dict{String, Any}()
 		for arg in selected
 			if haskey(p_args, arg.name)
@@ -47,32 +47,16 @@ module Args
 				new_dict[arg.name] = arg.default
 			end
 		end
+		sel_keys = sort(getfield.(selected, :name))
+		old_keys = keys(p_args)
+		for k in old_keys
+			isempty(searchsorted(sel_keys, k)) && @warn(
+				"Key $(k) is not recognized, it will not be used."
+			)
+		end
 
-		new_dict
+		return new_dict
 	end
-
-	#=
-	# The code below was kept as an example of how to parse custom items but
-	# it is not necessary anymore (since the script was changed to work over
-	# a single instance at time).
-	struct IntList
-		vector :: Vector{Int}
-	end
-
-	function IntList()
-		IntList(Vector{Int}())
-	end
-
-	function ArgParse.parse_item(::Type{IntList}, s :: AbstractString)
-			if match(r"^([1-9][0-9]*|0)(,([1-9][0-9]*|0))*$", s) === nothing
-				@error("tried to parse an $(string(IntList)), but argument '$(s)' does" *
-					" not follow the desired format: integer,integer,... (no comma after" *
-					" last number)"
-				)
-			end
-			IntList(parse.(Int, split(s, ',')))
-	end
-	=#
 end # submodule Args
 
 using JuMP

@@ -63,11 +63,14 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 
 	m = empty_configured_model(pp)
 
-	@timeit "build_model" begin
 	model_id = Val(Symbol(pp["model"]))
 	# This is type-unstable. Check if it is not problem someday.
+	model_options_names = getfield.(accepted_arg_list(model_id), :name)
+	model_pp = filter(p -> p[1] ∈ model_options_names, pp)
+
+	@timeit "build_model" begin
 	build_model_return = build_model(
-		model_id, m, d, p, l, w, L, W; options = pp
+		model_id, m, d, p, l, w, L, W; options = model_pp
 	)
 	end # @timeit
 	time_to_build_model = TimerOutputs.time(get_defaulttimer(), "build_model")
