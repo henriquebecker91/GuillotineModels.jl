@@ -1,6 +1,6 @@
 module Args
 
-import .Utilities.Args.Arg
+import ...Utilities.Args.Arg
 export accepted_arg_list, throw_if_incompatible_options
 
 function accepted_arg_list(::Val{:PPG2KP})
@@ -60,7 +60,7 @@ function accepted_arg_list(::Val{:PPG2KP})
 	]
 end
 
-function throw_if_incompatible_options(::Val(:PPG2KP), p_args)
+function throw_if_incompatible_options(::Val{:PPG2KP}, p_args)
 	is_revised_furini = !p_args["faithful2furini2016"]
 	p_args["final-pricing"] && !is_revised_furini && @error(
 		"the final pricing technique is implemented just for Enhanced Furini" *

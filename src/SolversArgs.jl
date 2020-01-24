@@ -36,7 +36,9 @@ end
 function argparse_settings()
 	s = ArgParseSettings()
 	ArgParse.add_arg_group(s, "Solvers Common Flags", "solver_common_flags")
-	ArgParse.add_arg_table.(s, accepted_arg_list(Val{:Solvers}))
+	for arg in accepted_arg_list(Val(:Solvers))
+		ArgParse.add_arg_table(s, arg)
+	end
 	set_default_arg_group(s)
 	#= TODO: if this is added back, it needs to be adapted to the new
 	# style using Utilities.Args.

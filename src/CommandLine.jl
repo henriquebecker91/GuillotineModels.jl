@@ -7,7 +7,8 @@ using TimerOutputs
 using JuMP
 using Random # for rng object passed to heuristic
 import ArgParse
-import ArgParse: set_default_arg_group, add_arg_group, @add_arg_table
+import ArgParse: set_default_arg_group, add_arg_group
+import ArgParse: @add_arg_table, add_arg_table
 
 include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
 using .SolversArgs
@@ -15,8 +16,10 @@ using .SolversArgs
 using ..InstanceReader
 using ..Utilities
 
-import ..Utilities.Args.Arg
-using PPG2KP, PPG2KP.Args, Flow, Flow.Args, KnapsackPlates, KnapsackPlates.Args
+using ..Utilities.Args
+using ..PPG2KP, ..PPG2KP.Args
+using ..Flow, ..Flow.Args
+using ..KnapsackPlates, ..KnapsackPlates.Args
 
 function div_and_round_instance(L, W, l, w, p_args)
 	@timeit "div_and_round_instance" begin
@@ -142,7 +145,9 @@ function generate_model_argparse_settings(
 	prefixed_args = map(original_args) do arg
 		Arg(string(model_name) * "-" * arg.name, arg.default, arg.help)
 	end
-	ArgParse.add_arg_table.(s, prefixed_args)
+	for arg in prefixed_args
+		ArgParse.add_arg_table(s, arg)
+	end
 	set_default_arg_group(s)
 	s
 end
@@ -205,7 +210,9 @@ end
 function generic_argparse_settings()
 	s = ArgParse.ArgParseSettings()
 	add_arg_group(s, "Generic Options", "generic_options")
-	add_arg_group.(s, generic_args())
+	for arg in generic_args()
+		add_arg_table(s, arg)
+	end
 	set_default_arg_group(s)
 	s
 end

@@ -1,7 +1,7 @@
 module KnapsackPlates
 
 module Args
-	import .Utilities.Args.Arg
+	import ...Utilities.Args.Arg
 	export accepted_arg_list, throw_if_incompatible_options
 	# No extra flags for this model yet.
 	accepted_arg_list(::Val{:KnapsackPlates}) = Vector{Arg}()

@@ -1,11 +1,11 @@
 module PPG2KP
 
-include("./Enumeration.jl")
-using .Enumeration
-
 # for now, it does not make use of this module here, just make it available
 include("./Heuristic.jl")
 include("./Args.jl")
+
+include("./Enumeration.jl")
+using .Enumeration
 
 using ..Utilities
 

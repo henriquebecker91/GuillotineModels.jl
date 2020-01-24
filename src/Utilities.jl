@@ -2,7 +2,7 @@ module Utilities
 
 module Args
 	using ArgParse
-	export Arg
+	export Arg, create_normalized_arg_subset
 	#export IntList
 
 	struct Arg{T}
@@ -27,7 +27,7 @@ module Args
 		else
 			conf = Dict{Symbol, Any}(
 				:help => arg.help,
-				:type => typeof(arg.default),
+				:arg_type => typeof(arg.default),
 				:default => arg.default,
 				:action => :store_arg
 			)
@@ -63,6 +63,7 @@ using JuMP
 using MathOptInterface
 const MOI = MathOptInterface
 using MathOptFormat
+using TimerOutputs
 
 # JuMP/'Mathematical Model' related utilities
 export num_all_constraints, reduced_cost, delete_vars_by_pricing!

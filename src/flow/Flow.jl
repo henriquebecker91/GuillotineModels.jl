@@ -1,18 +1,18 @@
 module Flow
 
 module Args
-	import .Utilities.Args.Arg
+	import ...Utilities.Args.Arg
 	export accepted_arg_list, throw_if_incompatible_options
 	# No extra flags for this model yet.
 	accepted_arg_list(::Val{:Flow}) = Vector{Arg}()
 	throw_if_incompatible_options(::Val{:Flow}, p_args) = nothing
 end
 
-# Just include it to make it available to users of this module.
-include("Format.jl")
-# Used for building the model.
+# Used for building the model, used by module Format below.
 include("Enumeration.jl")
 using .Enumeration
+# Just include it to make it available to users of this module.
+include("Format.jl")
 
 using JuMP
 
