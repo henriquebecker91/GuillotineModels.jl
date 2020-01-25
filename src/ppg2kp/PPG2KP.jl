@@ -626,6 +626,7 @@ end
 	sleep(0.01) # shamefully needed to avoid out of order messages from cplex
 =#
 
+import ..build_model
 function build_model(
 	::Val{:PPG2KP}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,

@@ -1,14 +1,19 @@
 module SolversArgs
 
-export empty_configured_model, accepted_arg_list
+export accepted_arg_list, throw_if_incompatible_options
+export empty_configured_model
 
 using TimerOutputs
 using JuMP
 #import CPLEX
-using ArgParse
-using ...Utilities.Args
 
-function accepted_arg_list(::Val{:Solvers}) :: Vector{Arg}
+using ArgParse
+
+import ...Utilities
+import ...Utilities.Args: Arg
+import ...Utilities.Args: accepted_arg_list, throw_if_incompatible_options
+
+function Utilities.Args.accepted_arg_list(::Val{:Solvers}) :: Vector{Arg}
 	return [
 		Arg(
 			"threads", 1,
@@ -57,7 +62,7 @@ end
 
 # While solver-specific arguments and checking is not relevant, let us
 # have this ::Val{Solvers} aberration.
-function throw_if_incompatible_options(::Val{:Solvers}, p_args)
+function Utilities.Args.throw_if_incompatible_options(::Val{:Solvers}, p_args)
 	# This method is called on CommandLine.jl, if conflicts arise they may
 	# be just checked hered.
 	#= Solver-specific flags are disabled for now
@@ -68,8 +73,9 @@ function throw_if_incompatible_options(::Val{:Solvers}, p_args)
 	=#
 end
 
-function import_if_necessary(module_sym :: Symbol)
+function import_if_necessary(module_sym :: Symbol) :: Nothing
 	Base.include_string(@__MODULE__, "import $(module_sym)")
+	Base.include_string(parentmodule(@__MODULE__), "import $(module_sym)")
 end
 
 function cbc_empty_configured_model(p_args)
@@ -88,7 +94,7 @@ function cbc_empty_configured_model(p_args)
 end
 
 function empty_configured_model(::Val{:Cbc}, p_args)
-	Base.invokelatest(import_if_necessary(:Cbc))
+	Base.invokelatest(import_if_necessary, :Cbc)
 	Base.invokelatest(cbc_empty_configured_model, p_args)
 end
 
@@ -159,7 +165,7 @@ function cplex_empty_configured_model(p_args)
 end
 
 function empty_configured_model(::Val{:CPLEX}, p_args)
-	Base.invokelatest(import_if_necessary(:CPLEX))
+	import_if_necessary(:CPLEX)
 	Base.invokelatest(cplex_empty_configured_model, p_args)
 end
 
@@ -192,7 +198,7 @@ function gurobi_empty_configured_model(p_args)
 end
 
 function empty_configured_model(::Val{:Gurobi}, p_args)
-	Base.invokelatest(import_if_necessary(:Gurobi))
+	Base.invokelatest(import_if_necessary, :Gurobi)
 	Base.invokelatest(gurobi_empty_configured_model, p_args)
 end
 

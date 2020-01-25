@@ -2,8 +2,8 @@ module Utilities
 
 module Args
 	using ArgParse
-	export Arg, create_normalized_arg_subset
-	#export IntList
+	export Arg, accepted_arg_list, throw_if_incompatible_options
+	export create_normalized_arg_subset
 
 	struct Arg{T}
 		name :: String
@@ -11,11 +11,21 @@ module Args
 		help :: String
 	end
 
-	#= TODO: check if it really may be removed
-	function Arg(name :: String, default, help :: String)
-		Arg{typeof(default)}(name, default, help)
+	function accepted_arg_list(::Val{T}) :: Vector{Arg} where {T}
+		@error (
+			"A specialized method for $(T) should exist, but instead this " *
+			" generic error fallback was called."
+		)
 	end
-	=#
+
+	function throw_if_incompatible_options(
+		::Val{T}, p_args
+	) where {T}
+		@error (
+			"A specialized method for $(T) should exist, but instead this " *
+			" generic error fallback was called."
+		)
+	end
 
 	function ArgParse.add_arg_table(settings :: ArgParseSettings, arg :: Arg)
 		if isa(arg.default, Bool)

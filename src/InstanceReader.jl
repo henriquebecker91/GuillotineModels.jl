@@ -19,7 +19,7 @@ function read_from_string(s :: AbstractString)
 		else    # all other lines
 			# cp_ == current plate
 			(cp_l, cp_w, cp_p, cp_q) = map(x -> parse(Int64, x), split(ln))
-			push!((l, w, p, q), (cp_l, cp_w, cp_p, cp_q))
+			push!.((l, w, p, q), (cp_l, cp_w, cp_p, cp_q))
 		end
 		# The instances of paper "Improved state space relaxation for
 		# constrained two-dimensional guillotine cutting problems" have a N

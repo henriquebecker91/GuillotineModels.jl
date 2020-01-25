@@ -7,15 +7,15 @@ using TimerOutputs
 using JuMP
 using Random # for rng object passed to heuristic
 import ArgParse
-import ArgParse: set_default_arg_group, add_arg_group
+import ArgParse: ArgParseSettings, set_default_arg_group, add_arg_group
 import ArgParse: @add_arg_table, add_arg_table
 
 include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
 using .SolversArgs
 
 using ..InstanceReader
+import ..build_model
 using ..Utilities
-
 using ..Utilities.Args
 using ..PPG2KP, ..PPG2KP.Args
 using ..Flow, ..Flow.Args
@@ -61,7 +61,7 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 		println("seed = $(pp["solver-seed"])")
 	end
 
-	L_, W_, l_, w_, p, d = InstanceReader.read_from_file(pp["instfname"])
+	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(pp["instfname"])
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 
 	m = empty_configured_model(pp)
@@ -73,10 +73,17 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 
 	@timeit "build_model" begin
 	build_model_return = build_model(
-		model_id, m, d, p, l, w, L, W; options = model_pp
+		model_id, m, d, p, l, w, L, W, model_pp
 	)
 	end # @timeit
-	time_to_build_model = TimerOutputs.time(get_defaulttimer(), "build_model")
+	#= This does not work unless we give the full path, what is a load of shit.
+	# Needs to be fixed either by: (1) PR to the package solving the problem;
+	# (2) using an @elapsed inside the block (or outside it); (3) hacking the
+	# package internals to know the already existing stack of sections.
+	time_to_build_model = TimerOutputs.time(
+		TimerOutputs.get_defaulttimer()["build_model"]
+	)
+	=#
 
 	pp["save-model"] && !pp["no-csv-output"] &&
 		@timeit "save_model" save_model(m, "./$(basename(instfname)).mps")
@@ -111,7 +118,8 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	pp["do-not-solve"] && return nothing
 
 	@timeit "optimize!" optimize!(m)
-	time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
+	#See comment above about TimerOutputs.
+	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 
 	if !pp["no-csv-output"]
 		@show time_to_solve_model
@@ -242,13 +250,13 @@ function warn_if_unrecognized_options(p_args)
 
 	core_arg_names = ["solver", "model", "instfname"]
 	generic_arg_names = getfield.(generic_args(), :name)
-	solver_arg_names = getfield.(SolversArgs.accepted_arg_list(), :name)
+	solver_arg_names = getfield.(accepted_arg_list(Val(:Solvers)), :name)
 
 	valid_options_names = [
 		model_arg_names; core_arg_names; generic_arg_names; solver_arg_names
 	]
 	for option in keys(p_args)
-		if option ∉ valid_option_names
+		if option ∉ valid_options_names
 			@warn(
 				"option $(option) was recognized by the parsing but is not from" *
 				" the common options, nor the model selected, are you sure this" *
@@ -320,7 +328,7 @@ function mock_for_compilation(p_args)
 	@timeit "mock_for_compilation" begin
 	mktemp() do path, io
 		copyed_args = copy(p_args)
-		write(io, mock_instance)
+		write(io, mock_instance())
 		close(io) # it will be opened again inside read_build_solve_and_print
 		copyed_args["instfname"] = path
 		copyed_args["no-csv-output"] = true

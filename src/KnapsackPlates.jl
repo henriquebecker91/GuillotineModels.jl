@@ -1,20 +1,24 @@
 module KnapsackPlates
 
 module Args
-	import ...Utilities.Args.Arg
-	export accepted_arg_list, throw_if_incompatible_options
+	import ...Utilities
+	import ...Utilities.Args: Arg
+	#export accepted_arg_list, throw_if_incompatible_options
 	# No extra flags for this model yet.
-	accepted_arg_list(::Val{:KnapsackPlates}) = Vector{Arg}()
-	throw_if_incompatible_options(::Val{:KnapsackPlates}, p_args) = nothing
+	Utilities.Args.accepted_arg_list(::Val{:KnapsackPlates}) = Vector{Arg}()
+	function Utilities.Args.throw_if_incompatible_options(
+		::Val{:KnapsackPlates}, p_args
+	)
+		nothing
+	end
 end
-
-export build_model
 
 using JuMP
 
+import ..build_model
 function build_model(
 	::Val{:KnapsackPlates}, model, d :: Vector{D}, p :: Vector{P},
-	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S;
+	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
 	options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
 	@assert length(d) == length(l) && length(l) == length(w)

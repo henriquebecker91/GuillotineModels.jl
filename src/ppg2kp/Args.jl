@@ -1,9 +1,10 @@
 module Args
 
-import ...Utilities.Args.Arg
+import ...Utilities
+import ...Utilities.Args: Arg
 export accepted_arg_list, throw_if_incompatible_options
 
-function accepted_arg_list(::Val{:PPG2KP})
+function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 	return [
 		Arg(
 			"lower-bound", 0.0,
@@ -24,10 +25,6 @@ function accepted_arg_list(::Val{:PPG2KP})
 		Arg(
 			"no-redundant-cut", false,
 			"Disables Furini2016 Redundant-Cut reduction: a bunch of flags is used to check if some trim cut is necessary for optimality, or is dominated by other trim cuts."
-		),
-		Arg(
-			"no-cut-position", false,
-			"Disables Furini2016 Cut-Position reduction: if a trivial heuristic shows that no combination of six or more pieces fit a plate, then the plate may be cut with restricted cuts without loss to optimality."
 		),
 		Arg(
 			"no-cut-position", false,
@@ -60,7 +57,7 @@ function accepted_arg_list(::Val{:PPG2KP})
 	]
 end
 
-function throw_if_incompatible_options(::Val{:PPG2KP}, p_args)
+function Utilities.Args.throw_if_incompatible_options(::Val{:PPG2KP}, p_args)
 	is_revised_furini = !p_args["faithful2furini2016"]
 	p_args["final-pricing"] && !is_revised_furini && @error(
 		"the final pricing technique is implemented just for Enhanced Furini" *
