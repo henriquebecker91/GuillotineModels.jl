@@ -89,7 +89,7 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 		@timeit "save_model" save_model(m, "./$(basename(instfname)).mps")
 
 	if !pp["no-csv-output"]
-		@show time_to_build_model
+		#@show time_to_build_model
 		n = length(d)
 		@show n
 		n_ = sum(d)
@@ -117,12 +117,14 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 
 	pp["do-not-solve"] && return nothing
 
-	@timeit "optimize!" optimize!(m)
+	# Note that optimize! is not the JuMP but our own version, because the solver
+	# used is an "optional dependency" managed inside SolversArgs.
+	@timeit "optimize!" SolversArgs.optimize!(Symbol(pp["solver"]), m)
 	#See comment above about TimerOutputs.
 	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 
 	if !pp["no-csv-output"]
-		@show time_to_solve_model
+		#@show time_to_solve_model
 		if primal_status(m) == MOI.FEASIBLE_POINT
 			obj_value = objective_value(m)
 		else

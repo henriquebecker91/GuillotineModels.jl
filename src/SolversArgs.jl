@@ -5,7 +5,7 @@ export empty_configured_model
 
 using TimerOutputs
 using JuMP
-#import CPLEX
+import CPLEX
 
 using ArgParse
 
@@ -28,11 +28,11 @@ function Utilities.Args.accepted_arg_list(::Val{:Solvers}) :: Vector{Arg}
 			"The random seed used by the solver."
 		),
 		Arg(
-			"disable-solver-tricks", false,
+			"no-solver-tricks", false,
 			"Vary between solvers but disable things like heuristics, probe, repeat presolve, and dive."
 		),
 		Arg(
-			"disable-solver-output", false,
+			"no-solver-output", false,
 			"Disables the solver output."
 		)
 	]
@@ -74,8 +74,14 @@ function Utilities.Args.throw_if_incompatible_options(::Val{:Solvers}, p_args)
 end
 
 function import_if_necessary(module_sym :: Symbol) :: Nothing
-	Base.include_string(@__MODULE__, "import $(module_sym)")
-	Base.include_string(parentmodule(@__MODULE__), "import $(module_sym)")
+	if !Base.isdefined(@__MODULE__, module_sym)
+		Base.include_string(@__MODULE__, "import $(module_sym)")
+	end
+end
+
+function optimize!(solver_sym :: Symbol, m)
+	Base.invokelatest(import_if_necessary, solver_sym)
+	Base.invokelatest(JuMP.optimize!, m)
 end
 
 function cbc_empty_configured_model(p_args)
@@ -100,10 +106,10 @@ end
 
 function cplex_empty_configured_model(p_args)
 	scrind_value = p_args["no-solver-output"] ? CPLEX.CPX_OFF : CPLEX.CPX_ON
-	# TODO: just append options if disable-solver-tricks is on, do not
+	# TODO: just append options if no-solver-tricks is on, do not
 	# write the common options two times
 	#=
-	if p_args["disable-solver-tricks"]
+	if p_args["no-solver-tricks"]
 		configuration = [
 			"CPX_PARAM_EPGAP" => 1e-6
 			, "CPX_PARAM_PROBE" => -1
@@ -171,7 +177,7 @@ end
 
 function gurobi_empty_configured_model(p_args)
 	JuMP.direct_model(
-		if p_args["disable-solver-tricks"]
+		if p_args["no-solver-tricks"]
 			Gurobi.Optimizer(
 				Method = 2, # use barrier for LP
 				#PreSparsify = 1, # try to reduce nonzeros

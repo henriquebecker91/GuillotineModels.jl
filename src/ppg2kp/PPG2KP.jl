@@ -10,6 +10,7 @@ using .Enumeration
 using ..Utilities
 
 using JuMP
+using TimerOutputs
 
 function min_l_fitting_piece(l, w, L, W)
 	@assert length(l) == length(w)
@@ -398,9 +399,7 @@ function no_arg_check_build_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
-	if print_debug
-		before_enumeration = time()
-	end
+	@timeit "enumeration_related" begin
 	@assert length(d) == length(l) && length(l) == length(w)
 	num_piece_types = convert(D, length(d))
 
@@ -468,13 +467,9 @@ function no_arg_check_build_model(
 		push!(pli2pair[pli], i)
 		push!(pii2pair[pii], i)
 	end
+	end # @timeit "enumeration_related", old: time_to_enumerate_plates
 
-	if print_debug
-		time_to_enumerate_plates = time() - before_enumeration
-		@show time_to_enumerate_plates
-		before_solver_build = time()
-	end
-
+	@timeit "calls_to_JuMP" begin
 	# If all pieces have demand one, a binary variable will suffice to make the
 	# connection between a piece type and the plate it is extracted from.
 	naturally_only_binary = all(di -> di <= 1, d)
@@ -551,11 +546,7 @@ function no_arg_check_build_model(
 			sum(p[pii]*sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types) <= ub
 		)
 	end
-
-	if print_debug
-		time_to_solver_build = time() - before_solver_build
-		@show time_to_solver_build
-	end
+	end # @timeit "calls_to_JuMP", old: time_to_solver_build
 
 	model, hvcuts, pli_lwb, np
 end
@@ -626,13 +617,19 @@ end
 	sleep(0.01) # shamefully needed to avoid out of order messages from cplex
 =#
 
+import ..Utilities.Args.create_normalized_arg_subset
+import ..Utilities.Args.accepted_arg_list
 import ..build_model
 function build_model(
 	::Val{:PPG2KP}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
 	options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
-	@warn "PPG2KP build_model is not linked with the rest yet"
+	norm_options = create_normalized_arg_subset(
+		options, accepted_arg_list(Val(:PPG2KP))
+	)
+	@warn("no_arg_check_build_model not linked yet")
+	return nothing #no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
 end
 
 end # module

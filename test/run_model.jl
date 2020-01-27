@@ -9,5 +9,5 @@ import TimerOutputs
 
 #TimerOutputs.enable_debug_timings(GuillotineModels)
 GuillotineModels.CommandLine.run()
-TimeOutputs.print_timer() # global timer used
+TimerOutputs.print_timer() # global timer used
 
