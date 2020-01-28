@@ -65,6 +65,7 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 
 	m = empty_configured_model(pp)
+	@show m
 
 	model_id = Val(Symbol(pp["model"]))
 	# This is type-unstable. Check if it is not problem someday.
@@ -76,6 +77,7 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 		model_id, m, d, p, l, w, L, W, model_pp
 	)
 	end # @timeit
+	@show build_model_return
 	#= This does not work unless we give the full path, what is a load of shit.
 	# Needs to be fixed either by: (1) PR to the package solving the problem;
 	# (2) using an @elapsed inside the block (or outside it); (3) hacking the
@@ -119,7 +121,8 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 
 	# Note that optimize! is not the JuMP but our own version, because the solver
 	# used is an "optional dependency" managed inside SolversArgs.
-	@timeit "optimize!" SolversArgs.optimize!(Symbol(pp["solver"]), m)
+	#@timeit "optimize!" SolversArgs.optimize!(Symbol(pp["solver"]), m)
+	@timeit "optimize!" optimize!(m)
 	#See comment above about TimerOutputs.
 	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 

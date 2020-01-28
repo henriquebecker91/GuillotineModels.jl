@@ -629,7 +629,7 @@ function build_model(
 		options, accepted_arg_list(Val(:PPG2KP))
 	)
 	@warn("no_arg_check_build_model not linked yet")
-	return nothing #no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
+	return model #no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
 end
 
 end # module
