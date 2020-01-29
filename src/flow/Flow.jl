@@ -16,6 +16,7 @@ end
 # Used for building the model, used by module Format below.
 include("Enumeration.jl")
 using .Enumeration
+
 # Just include it to make it available to users of this module.
 include("Format.jl")
 

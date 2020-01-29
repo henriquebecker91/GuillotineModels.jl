@@ -5,7 +5,6 @@ module CommandLine
 # External packages used.
 using TimerOutputs
 using JuMP
-using Random # for rng object passed to heuristic
 import ArgParse
 import ArgParse: ArgParseSettings, set_default_arg_group, add_arg_group
 import ArgParse: @add_arg_table, add_arg_table
@@ -64,11 +63,13 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(pp["instfname"])
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 
+	solver_id = Val(Symbol(pp["solver"]))
+	solver_options_names = getfield.(accepted_arg_list(solver_id), :name)
+	solver_pp = filter(p -> p[1] ∈ solver_options_names, pp)
+
 	m = empty_configured_model(pp)
-	@show m
 
 	model_id = Val(Symbol(pp["model"]))
-	# This is type-unstable. Check if it is not problem someday.
 	model_options_names = getfield.(accepted_arg_list(model_id), :name)
 	model_pp = filter(p -> p[1] ∈ model_options_names, pp)
 
@@ -77,7 +78,7 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 		model_id, m, d, p, l, w, L, W, model_pp
 	)
 	end # @timeit
-	@show build_model_return
+	#@show build_model_return
 	#= This does not work unless we give the full path, what is a load of shit.
 	# Needs to be fixed either by: (1) PR to the package solving the problem;
 	# (2) using an @elapsed inside the block (or outside it); (3) hacking the
@@ -119,9 +120,6 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 
 	pp["do-not-solve"] && return nothing
 
-	# Note that optimize! is not the JuMP but our own version, because the solver
-	# used is an "optional dependency" managed inside SolversArgs.
-	#@timeit "optimize!" SolversArgs.optimize!(Symbol(pp["solver"]), m)
 	@timeit "optimize!" optimize!(m)
 	#See comment above about TimerOutputs.
 	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
@@ -147,16 +145,16 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	return nothing
 end
 
-function generate_model_argparse_settings(
-	model_name :: Union{String, Symbol}
+function gen_prefixed_argparse_settings(
+	prefix :: Union{String, Symbol}
 ) :: ArgParse.ArgParseSettings
 	s = ArgParseSettings()
 	ArgParse.add_arg_group(
-		s, "$(model_name)-specific Options", "$(model_name)-specific-options"
+		s, "$(prefix)-specific Options", "$(prefix)-specific-options"
 	)
-	original_args = accepted_arg_list(Val(Symbol(model_name)))
+	original_args = accepted_arg_list(Val(Symbol(prefix)))
 	prefixed_args = map(original_args) do arg
-		Arg(string(model_name) * "-" * arg.name, arg.default, arg.help)
+		Arg(string(prefix) * "-" * arg.name, arg.default, arg.help)
 	end
 	for arg in prefixed_args
 		ArgParse.add_arg_table(s, arg)
@@ -234,28 +232,30 @@ end
 # The reasons for that are: (1) we do not know the model before the parsing
 # unless we manipulate ARGS directly; (2) if they are not included in the
 # parsing they do not appear in the help message.
-function argparse_settings(models_list :: Vector{Symbol})
+function argparse_settings(
+	models_list :: Vector{Symbol}, solvers_list :: Vector{Symbol}
+)
 	s = core_argparse_settings()
 	ArgParse.import_settings(s, generic_argparse_settings())
-	ArgParse.import_settings(s, SolversArgs.argparse_settings())
-	for model in models_list
-		ArgParse.import_settings(s, generate_model_argparse_settings(model))
+	for sym in [solvers_list; models_list]
+		ArgParse.import_settings(s, gen_prefixed_argparse_settings(sym))
 	end
 	s
 end
 
 function warn_if_unrecognized_options(p_args)
-	# Check if all options are from common or the model selected.
-	# NOTE: if someday we have solver-specific arguments we need to treat them
-	# here too.
+	core_arg_names = ["solver", "model", "instfname"]
+	generic_arg_names = getfield.(generic_args(), :name)
+
 	model = p_args["model"]
 	model_id = Val(Symbol(model))
 	model_arg_names = getfield.(accepted_arg_list(model_id), :name)
 	model_arg_names = map(name -> model * "-" * name, model_arg_names)
-
-	core_arg_names = ["solver", "model", "instfname"]
-	generic_arg_names = getfield.(generic_args(), :name)
-	solver_arg_names = getfield.(accepted_arg_list(Val(:Solvers)), :name)
+	# the same as the block above just with "model" replaced by "solver"
+	solver = p_args["solver"]
+	solver_id = Val(Symbol(solver))
+	solver_arg_names = getfield.(accepted_arg_list(solver_id), :name)
+	solver_arg_names = map(name -> solver * "-" * name, solver_arg_names)
 
 	valid_options_names = [
 		model_arg_names; core_arg_names; generic_arg_names; solver_arg_names
@@ -293,11 +293,11 @@ function throw_if_incompatible_common_options(p_args)
 	)
 end
 
-function remove_model_prefixes(p_args)
-	model_id = Val(Symbol(p_args["model"]))
-	model_options_names = getfield.(accepted_arg_list(model_id), :name)
-	for name in model_options_names
-		prefixed_name = p_args["model"] * "-" * name
+function remove_option_prefix(prefix, p_args)
+	prefix_id = Val(Symbol(prefix))
+	prefix_options_names = getfield.(accepted_arg_list(prefix_id), :name)
+	for name in prefix_options_names
+		prefixed_name = prefix * "-" * name
 		if haskey(p_args, prefixed_name)
 			p_args[name] = p_args[prefixed_name]
 			delete!(p_args, prefixed_name)
@@ -307,15 +307,17 @@ function remove_model_prefixes(p_args)
 end
 
 # Definition of the command line arguments.
-function parse_args(args, models_list) :: Dict{String, Any}
+function parse_args(args, models_list, solvers_list) :: Dict{String, Any}
 	@timeit "parse_args" begin
-	s = argparse_settings(models_list)
+	s = argparse_settings(models_list, solvers_list)
 	p_args = ArgParse.parse_args(args, s) :: Dict{String, Any}
 	warn_if_unrecognized_options(p_args)
 	throw_if_incompatible_common_options(p_args)
-	remove_model_prefixes(p_args)
+	remove_option_prefix(p_args["model"], p_args)
 	throw_if_incompatible_options(Val(Symbol(p_args["model"])), p_args)
-	end # timeit
+	remove_option_prefix(p_args["solver"], p_args)
+	throw_if_incompatible_options(Val(Symbol(p_args["solver"])), p_args)
+	end # @timeit
 
 	return p_args
 end
@@ -337,7 +339,7 @@ function mock_for_compilation(p_args)
 		close(io) # it will be opened again inside read_build_solve_and_print
 		copyed_args["instfname"] = path
 		copyed_args["no-csv-output"] = true
-		copyed_args["no-solver-output"] = true
+		copyed_args[p_args["solver"] * "-" * "no-output"] = true
 		read_build_solve_and_print(copyed_args)
 	end
 	end # @timeit
@@ -346,12 +348,14 @@ end
 # Parse the command line arguments, and call the solve for each instance.
 function run(
 	args = ARGS;
-	implemented_models = [:Flow, :PPG2KP, :KnapsackPlates]
+	implemented_models = [:Flow, :PPG2KP, :KnapsackPlates],
+	# TODO: add the rest of the solvers below [:Gurobi, :Cbc, :GLPK]
+	supported_solvers = [:CPLEX]
 )
 	@timeit "run" begin
-	@show args
-	@show implemented_models
-	p_args = parse_args(args, implemented_models)
+	#@show args
+	#@show implemented_models
+	p_args = parse_args(args, implemented_models, supported_solvers)
 
 	!p_args["do-not-mock-for-compilation"] && mock_for_compilation(p_args)
 	# remaining code should not depend on this option

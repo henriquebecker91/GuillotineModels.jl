@@ -12,6 +12,11 @@ function read_from_string(s :: AbstractString)
 	)
 	lnc = 1
 	for ln in split(s, isequal('\n'); keepempty = false)
+		if lnc - 2 == N + 1 # use N and not all the lines in the file
+			@warn "There are more plate lines than the specified number of plates." *
+				" The extra lines will not be used."
+			break
+		end
 		if      lnc == 1
 			(L, W) = map(x->parse(Int64, x), split(ln))
 		elseif  lnc == 2
@@ -26,11 +31,6 @@ function read_from_string(s :: AbstractString)
 		# different of the real number of lines because the instances with 50
 		# and 25 items are the same, only changing the value (they could
 		# have removed the unused lines...).
-		if lnc - 2 == N # use N and not all the lines in the file
-			@warn "There are more plate lines than the specified number of plates." *
-				" The extra lines will not be used."
-			break
-		end
 		lnc = lnc + 1
 	end
 	end # @timeit

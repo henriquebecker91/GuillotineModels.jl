@@ -881,8 +881,11 @@ function gen_cuts(
 		end
 	end
 
-	# TODO: create flag for print variables
-	# DEBUG FOR CHECKING AGAINST MARTIN REMOVE AFTER
+	# The two commented 'for' loops below print all variable indexes. They were
+	# used to check the variable generated against the Martin's code. They were
+	# kept commented given the necessity arises again, but may be removed in the
+	# future (or a flag may be created to output them).
+	#=
 	for hcut in hnnn
 		pp, fc, _ = hcut
 		ppl, ppw, _ = pli_lwb[pp]
@@ -895,8 +898,8 @@ function gen_cuts(
 		q = pli_lwb[fc][2]
 		println("$(ppl) $(ppw) 0 $(q)")
 	end
+	=#
 
-	#println("finished plate enumeration")
 	return pli_lwb, hnnn, vnnn, np
 end
 
