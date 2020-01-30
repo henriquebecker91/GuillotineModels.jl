@@ -57,7 +57,6 @@ end
 function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	if !pp["no-csv-output"]
 		println("instfname = $(pp["instfname"])")
-		println("seed = $(pp["solver-seed"])")
 	end
 
 	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(pp["instfname"])
@@ -73,6 +72,8 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	model_options_names = getfield.(accepted_arg_list(model_id), :name)
 	model_pp = filter(p -> p[1] ∈ model_options_names, pp)
 
+	# TODO: change the prefix removal to be done in a copy just before passing
+	# to the relevant method (solver configuration, or model building)
 	@timeit "build_model" begin
 	build_model_return = build_model(
 		model_id, m, d, p, l, w, L, W, model_pp
@@ -349,8 +350,8 @@ end
 function run(
 	args = ARGS;
 	implemented_models = [:Flow, :PPG2KP, :KnapsackPlates],
-	# TODO: add the rest of the solvers below [:Gurobi, :Cbc, :GLPK]
-	supported_solvers = [:CPLEX]
+	# TODO: add the rest of the solvers below [:Cbc, :GLPK]
+	supported_solvers = [:CPLEX, :Gurobi]
 )
 	@timeit "run" begin
 	#@show args

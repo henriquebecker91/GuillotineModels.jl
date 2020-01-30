@@ -57,6 +57,7 @@ module Args
 				new_dict[arg.name] = arg.default
 			end
 		end
+		#=
 		sel_keys = sort(getfield.(selected, :name))
 		old_keys = keys(p_args)
 		for k in old_keys
@@ -64,6 +65,7 @@ module Args
 				"Key $(k) is not recognized, it will not be used."
 			)
 		end
+		=#
 
 		return new_dict
 	end
