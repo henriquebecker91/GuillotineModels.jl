@@ -1,77 +1,5 @@
 module Utilities
 
-module Args
-	using ArgParse
-	export Arg, accepted_arg_list, throw_if_incompatible_options
-	export create_normalized_arg_subset
-
-	struct Arg{T}
-		name :: String
-		default :: T
-		help :: String
-	end
-
-	Base.iterate(a :: Arg) = (a, nothing)
-	Base.iterate(a :: Arg, nothing) = nothing
-
-	function accepted_arg_list(::Val{T}) :: Vector{Arg} where {T}
-		@error (
-			"A specialized method for $(T) should exist, but instead this" *
-			" generic error fallback was called."
-		)
-	end
-
-	function throw_if_incompatible_options(
-		::Val{T}, p_args
-	) where {T}
-		@error (
-			"A specialized method for $(T) should exist, but instead this " *
-			" generic error fallback was called."
-		)
-	end
-
-	function ArgParse.add_arg_table(settings :: ArgParseSettings, arg :: Arg)
-		if isa(arg.default, Bool)
-			conf = Dict{Symbol, Any}(
-				:help => arg.help,
-				# default == true means that passing it as a flag turns it false
-				:action => (arg.default ? :store_false : :store_true)
-			)
-		else
-			conf = Dict{Symbol, Any}(
-				:help => arg.help,
-				:arg_type => typeof(arg.default),
-				:default => arg.default,
-				:action => :store_arg
-			)
-		end
-		# only long options are accepted, enforced clarity
-		ArgParse.add_arg_table(settings, "--" * arg.name, conf)
-	end
-
-	function create_normalized_arg_subset(
-		p_args :: Dict{String, Any}, selected :: Vector{Arg}
-	) :: Dict{String, Any}
-		new_dict = Dict{String, Any}()
-		for arg in selected
-			if haskey(p_args, arg.name)
-				new_dict[arg.name] = p_args[arg.name]
-			else
-				new_dict[arg.name] = arg.default
-			end
-		end
-		sel_keys = sort(getfield.(selected, :name))
-		old_keys = keys(p_args)
-		for k in old_keys
-			isempty(searchsorted(sel_keys, k)) && @warn(
-				"Key $(k) is not recognized, it will not be used."
-			)
-		end
-
-		return new_dict
-	end
-end # submodule Args
-
 using JuMP
 using MathOptInterface
 const MOI = MathOptInterface
@@ -274,5 +202,8 @@ function unrelax_all_vars!(model, original_settings)
 	# check_validity is false because all_variables only return valid variables
 	unrelax_vars!(all_vars, original_settings; check_validity = false)
 end
+
+# Not used by the rest of Utilities, just made available to other modules.
+include("Args.jl")
 
 end # module
