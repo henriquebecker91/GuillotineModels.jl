@@ -1,3 +1,15 @@
+"""
+Flow.Format consists uniquely of optional methods for making it easier to
+visualize the structure of the Flow model. It requires the user to install and
+import packages not in the GuillotineModels dependencies in order to have
+access to its methods. The `flow2digraph` method needs LightGraphs, and the
+other three (`flow2file`, `flow2tikzpic`, `flow2pdf`) need LightGraphs,
+TikzGraphs, and TikzGraphs.
+
+The `Node` and `Edge` types are defined by Flow.Enumeration and the Vectors
+of all nodes and all edges of the model is returned by
+`GuillotineModels.build_model(::Val{:Flow}, ...)`.
+"""
 module Format
 
 # CONSIDER MIGRATING TO GraphRecipes

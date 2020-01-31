@@ -16,6 +16,24 @@ end
 using JuMP
 
 import ..build_model
+"""
+    build_model(::Val{:KnapsackPlates}, model, d, p, l, w, L, W, [options])
+
+The KnapsackPlates models each plate as a 1D knapsack of pieces and smaller
+subplates. Basically, a plate is allowed to be cut in just one orientation
+(except the original plate, that has a hack to allow the first stage to
+be any of the two orientations) and, this way, the plate is treated as a
+1D knapsack problem using the size of pieces and plates in the considered
+dimension.
+
+NOTE: THIS MODEL IS BROKEN. The source has the skeleton of the implementation
+but it fails compilation as it is.
+
+```
+TODO: add high-level description of the mathematical model here.
+```
+
+"""
 function build_model(
 	::Val{:KnapsackPlates}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
@@ -61,6 +79,8 @@ function build_model(
 			wip2cv[iip2cv] * ip2cv[iip2cv]
 		)
 	end
+
+	model
 end
 
 end # module

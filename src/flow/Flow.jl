@@ -83,7 +83,7 @@ function build_model(
 	::Val{:Flow}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
 	options :: Dict{String, Any} = Dict{String, Any}()
-) where {D, S, P}
+) :: Tuple{Vector{Node{S, P}}, Vector{Edge{P, P}}} where {D, S, P}
 	# TODO: fix (L, W, l, w, d) = (20, 5, [20, 4, 18], [4, 5, 2], [1, 1, 1])
 	@assert length(d) == length(l)
 	@assert length(d) == length(w)
@@ -119,7 +119,7 @@ function build_model(
 	#@assert isempty(back2indxs[vroot_back_edge])
 	push!(back2indxs[vroot_back_edge], dummy_vroot_enabler)
 
-	@variable(model, edge[1:last_gedge_idx] >= 0, integer = !relax2lp)
+	@variable(model, edge[1:last_gedge_idx] >= 0, Int)
 
 	@objective(model, Max,
 		sum(p[pii] * edge[pii] for pii = 1:num_piece_types)
@@ -171,7 +171,7 @@ function build_model(
 	# Order the edges by their index.
 	sort!(edges_data, by = e -> e.indx)
 
-	model, nodes_data, edges_data
+	nodes_data, edges_data
 end # build_model_no_symmbreak
 
 end # module

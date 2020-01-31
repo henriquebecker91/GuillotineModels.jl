@@ -370,7 +370,7 @@ end
 # Parse the command line arguments, and call the solve for each instance.
 function run(
 	args = ARGS;
-	implemented_models = [:Flow, :PPG2KP, :KnapsackPlates],
+	implemented_models = [:Flow, :PPG2KP],#, :KnapsackPlates],
 	supported_solvers = [:CPLEX, :Gurobi, :Cbc, :GLPK]
 )
 	@timeit "run" begin
