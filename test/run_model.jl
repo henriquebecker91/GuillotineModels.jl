@@ -11,12 +11,13 @@ import TimerOutputs
 # Supported solvers as of Tue 28 Jan 2020 02:06:06 AM -03:
 #import CPLEX
 #import Gurobi
-#import Cbc # Cbc does not support --no-solver-tricks for now.
+#import Cbc
+#import GLPK
 
 # New solvers may be added by defining a function
 # empty_configured_model(::Val{:SolverName}, p_args) (which return a
 # JuMP.direct_model with the specified solver already configured, see
-# SolversArgs.jl file for more info), and importing the solver package
+# SolversArgs.jl file for more info), and by importing the solver package
 # here, as it is done with the already supported solvers.
 
 GuillotineModels.CommandLine.run()

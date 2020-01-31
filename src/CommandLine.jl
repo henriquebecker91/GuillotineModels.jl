@@ -20,6 +20,18 @@ using ..PPG2KP, ..PPG2KP.Args
 using ..Flow, ..Flow.Args
 using ..KnapsackPlates, ..KnapsackPlates.Args
 
+function create_unprefixed_subset(prefix, p_args)
+	subset = empty(p_args)
+	prefix_id = Val(Symbol(prefix))
+	prefix_options_names = getfield.(accepted_arg_list(prefix_id), :name)
+	for name in prefix_options_names
+		prefixed_name = prefix * "-" * name
+		@assert haskey(p_args, prefixed_name)
+		subset[name] = p_args[prefixed_name]
+	end
+	subset
+end
+
 function div_and_round_instance(L, W, l, w, p_args)
 	@timeit "div_and_round_instance" begin
 	# assert explanation: at least two of the three flags are disabled (i.e., 
@@ -62,21 +74,15 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(pp["instfname"])
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 
-	solver_id = Val(Symbol(pp["solver"]))
-	solver_options_names = getfield.(accepted_arg_list(solver_id), :name)
-	solver_pp = filter(p -> p[1] ∈ solver_options_names, pp)
+	solver_pp = create_unprefixed_subset(pp["solver"], pp)
+	@timeit "empty_configured_model" begin
+	m = empty_configured_model(Val(Symbol(pp["solver"])), solver_pp)
+	end # timeit
 
-	m = empty_configured_model(pp)
-
-	model_id = Val(Symbol(pp["model"]))
-	model_options_names = getfield.(accepted_arg_list(model_id), :name)
-	model_pp = filter(p -> p[1] ∈ model_options_names, pp)
-
-	# TODO: change the prefix removal to be done in a copy just before passing
-	# to the relevant method (solver configuration, or model building)
 	@timeit "build_model" begin
+	model_pp = create_unprefixed_subset(pp["model"], pp)
 	build_model_return = build_model(
-		model_id, m, d, p, l, w, L, W, model_pp
+		Val(Symbol(pp["model"])), m, d, p, l, w, L, W, model_pp
 	)
 	end # @timeit
 	#@show build_model_return
@@ -244,7 +250,7 @@ function argparse_settings(
 	s
 end
 
-function warn_if_unrecognized_options(p_args)
+function warn_if_changed_unused_values(p_args, models_list, solvers_list)
 	core_arg_names = ["solver", "model", "instfname"]
 	generic_arg_names = getfield.(generic_args(), :name)
 
@@ -258,23 +264,47 @@ function warn_if_unrecognized_options(p_args)
 	solver_arg_names = getfield.(accepted_arg_list(solver_id), :name)
 	solver_arg_names = map(name -> solver * "-" * name, solver_arg_names)
 
-	valid_options_names = [
+	expected_arg_names = [
 		model_arg_names; core_arg_names; generic_arg_names; solver_arg_names
 	]
-	for option in keys(p_args)
-		if option ∉ valid_options_names
-			@warn(
-				"option $(option) was recognized by the parsing but is not from" *
-				" the common options, nor the model selected, are you sure this" *
-				" is what you wanted?"
-			)
+	sort!(expected_arg_names)
+
+	used_groups = Symbol.([p_args["model"], p_args["solver"]])
+	unused_groups = setdiff([models_list; solvers_list], used_groups)
+	unused_prefixed_args = Arg[]
+	for unused_group in unused_groups
+		args = accepted_arg_list(Val(unused_group))
+		prefixed_args = map(args) do arg
+			Arg(string(unused_group) * "-" * arg.name, arg.default, arg.help)
+		end
+		append!(unused_prefixed_args, prefixed_args)
+	end
+	unused_prefixed_args = collect(Iterators.flatten(unused_prefixed_args))
+
+	for arg_name in keys(p_args)
+		if isempty(searchsorted(expected_arg_names, arg_name))
+			unused_arg_idx = findfirst(a -> a.name == arg_name, unused_prefixed_args)
+			if isnothing(unused_arg_idx)
+				@error(
+					"ArgParse accepted option --$(arg_name) but it is not a" *
+					" recognized option. This should not be possible."
+				)
+			else
+				unused_arg = unused_prefixed_args[unused_arg_idx]
+				unused_arg.default == p_args[arg_name] && continue
+				@warn(
+					"Option --$(unused_arg.name) has a different value than the" *
+					" default, but it is not from the solver or model selected." *
+					" You probably did use an option of an unselected solver or model."
+				)
+			end
 		end
 	end
 
 	return nothing
 end
 
-function throw_if_incompatible_common_options(p_args)
+function throw_if_incompatible_options(p_args)
 	# Generic Flags conflicts
 	num_rounds = sum(.! isone.(map(flag -> p_args[flag],
 		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
@@ -292,19 +322,14 @@ function throw_if_incompatible_common_options(p_args)
 		" solving the unrelaxed reduced model after) is not specially useful" *
 		" and need extra code to work that is not worth it."
 	)
-end
-
-function remove_option_prefix(prefix, p_args)
-	prefix_id = Val(Symbol(prefix))
-	prefix_options_names = getfield.(accepted_arg_list(prefix_id), :name)
-	for name in prefix_options_names
-		prefixed_name = prefix * "-" * name
-		if haskey(p_args, prefixed_name)
-			p_args[name] = p_args[prefixed_name]
-			delete!(p_args, prefixed_name)
-		end
-	end
-	p_args
+	Utilities.Args.throw_if_incompatible_options(
+		Val(Symbol(p_args["model"])),
+		create_unprefixed_subset(p_args["model"], p_args)
+	)
+	Utilities.Args.throw_if_incompatible_options(
+		Val(Symbol(p_args["solver"])),
+		create_unprefixed_subset(p_args["solver"], p_args)
+	)
 end
 
 # Definition of the command line arguments.
@@ -312,12 +337,8 @@ function parse_args(args, models_list, solvers_list) :: Dict{String, Any}
 	@timeit "parse_args" begin
 	s = argparse_settings(models_list, solvers_list)
 	p_args = ArgParse.parse_args(args, s) :: Dict{String, Any}
-	warn_if_unrecognized_options(p_args)
-	throw_if_incompatible_common_options(p_args)
-	remove_option_prefix(p_args["model"], p_args)
-	throw_if_incompatible_options(Val(Symbol(p_args["model"])), p_args)
-	remove_option_prefix(p_args["solver"], p_args)
-	throw_if_incompatible_options(Val(Symbol(p_args["solver"])), p_args)
+	warn_if_changed_unused_values(p_args, models_list, solvers_list)
+	throw_if_incompatible_options(p_args)
 	end # @timeit
 
 	return p_args
@@ -350,14 +371,12 @@ end
 function run(
 	args = ARGS;
 	implemented_models = [:Flow, :PPG2KP, :KnapsackPlates],
-	# TODO: add the rest of the solvers below [:Cbc, :GLPK]
-	supported_solvers = [:CPLEX, :Gurobi]
+	supported_solvers = [:CPLEX, :Gurobi, :Cbc, :GLPK]
 )
 	@timeit "run" begin
 	#@show args
-	#@show implemented_models
 	p_args = parse_args(args, implemented_models, supported_solvers)
-
+	#@show p_args
 	!p_args["do-not-mock-for-compilation"] && mock_for_compilation(p_args)
 	# remaining code should not depend on this option
 	delete!(p_args, "do-not-mock-for-compilation")

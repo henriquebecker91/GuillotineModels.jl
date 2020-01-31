@@ -11,9 +11,12 @@ module Args
 		help :: String
 	end
 
+	Base.iterate(a :: Arg) = (a, nothing)
+	Base.iterate(a :: Arg, nothing) = nothing
+
 	function accepted_arg_list(::Val{T}) :: Vector{Arg} where {T}
 		@error (
-			"A specialized method for $(T) should exist, but instead this " *
+			"A specialized method for $(T) should exist, but instead this" *
 			" generic error fallback was called."
 		)
 	end
@@ -57,7 +60,6 @@ module Args
 				new_dict[arg.name] = arg.default
 			end
 		end
-		#=
 		sel_keys = sort(getfield.(selected, :name))
 		old_keys = keys(p_args)
 		for k in old_keys
@@ -65,7 +67,6 @@ module Args
 				"Key $(k) is not recognized, it will not be used."
 			)
 		end
-		=#
 
 		return new_dict
 	end
@@ -172,7 +173,6 @@ function restore_bound!(b :: SavedBound) :: Nothing
 	if b.was_fixed && !(is_fixed(b.var) && fix_value(b.var) == b.fix_value)
 		fix(b.var, b.fix_value; force = true)
 	else
-		# TODO: only unfix if it is fixed
 		is_fixed(b.var) && unfix(b.var)
 		if b.had_lb && !(has_lower_bound(b.var) && lower_bound(b.var) == b.lb)
 			set_lower_bound(b.var, b.lb)
