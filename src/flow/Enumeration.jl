@@ -16,30 +16,24 @@ struct Edge{N, E}
 	back :: E # The backward edge global index, if it exists, otherwise zero.
 end
 
-#=
-struct FlowModel{S, N, E}
-	nodes :: Vector{Node{S, N}}
-	edges :: Vector{Edge{N, E}}
-end
+"""
+    gen_rr_fow_edges!(::Type{N}, d :: [D], l :: [S], L :: S) :: ([N], [(S, S)])
 
-function append!(
-	lhs :: FlowModel{S, N, E}, rhs :: FlowModel{S, N, E}
-) :: FlowModel{S, N, E}
-	append!(lhs.nodes, rhs.nodes)
-	append!(lhs.edges, rhs.edges)
-end
-=#
+# Arguments
 
-#     gen_rr_fow_edges!
-# Take the pieces demand, the pieces length (or width), and the plate
-# corresponding dimension. Returns: (1) a vector with the same size as the
-# plate dimension where vector[y] == 1 if there is a linear combination
-# of piece sizes that give `y` and zero otherwise; (2) every pair of such
-# "one-positions" for which there exists a piece with the same exact size as
-# the distance between the two positions.
-# NOTE: N is the type of the node indexes, to allow the method to already
-# create one of the returned structures with the right element type.
-# NOTE: THIS ASSUMES ALL PIECES FIT THE PLATE ON BOTH DIMENSIONS.
+An integer type capable of representing the nodes `N`. The pieces demand `d`,
+their length (or width) `l`, and a plate length (or width) `L`. This method
+assumes the selected pieces fit the selected plate (on both dimensions, this
+is, in the one that was given and the one that wasn't).
+
+# Return
+
+A tuple of two vectors:
+1) a vector `v` of length `L`; `v[y] == 1` iff there is a linear combination
+  of the pieces (respecting demand) that gives `y`; otherwise `v[y] == 0`.
+2) a vector containing all ordered pairs of linear combinations in which the
+  difference between the two is exactly the size of a piece.
+"""
 function gen_rr_fow_edges!(
 	::Type{N}, # eltype of the marked vector
 	d :: Vector{D}, l :: Vector{S}, L :: S
@@ -91,10 +85,14 @@ function gen_rr_fow_edges!(
 	marked, edges
 end
 
-# TODO: decide where the pieces will be pieces will be reduced, and if
-# it is necessary to expand them back, and how this will be done. The
-# first version of the code will not reduce them and instead will just
-# check the dimensions every time.
+"""
+    reduce_dlw(d::[D], l::[S], w::[S], L::S, W::S) :: ([D], [S], [S], D)
+
+Create a copy of `d`, `l`, and `w` with only the pieces that fit the plate
+`L` x `W` (i.e., pieces with both dimensions smaller than the corresponding
+plate dimension). The last value returned is the number of pieces that pass
+this criteria (and, consequently, the common size of the returned vectors).
+"""
 function reduce_dlw(
 	d :: Vector{D}, l :: Vector{S}, w :: Vector{S}, L :: S, W :: S
 ) :: Tuple{Vector{D}, Vector{S}, Vector{S}, D} where {D, S}
@@ -118,7 +116,17 @@ function reduce_dlw(
 	d_, l_, w_, j
 end
 
-# TODO: this could be O(n log n) instead of pseudopolynomial
+"""
+    merge_duplicates(d :: [D], per :: [S]) :: ([D], [S])
+
+If `per` has no repeated values just return the parameters. Otherwise,
+for each value in `per` with duplicates, keep just one copy of such value
+inside `per` and delete the other copies, and the same positions in `d`;
+the position in `d` corresponding to the kept copy will have the sum of
+the `d` values for all copies deleted and the copy kept.
+Sort `per` by increasing value and swap positions in `d` to keep the
+correspondence.
+"""
 function merge_duplicates(
 	d :: Vector{D}, per :: Vector{S}
 ) :: Tuple{Vector{D}, Vector{S}} where {D, S}
@@ -126,9 +134,13 @@ function merge_duplicates(
 	#isempty(d) && return d, per
 
 	y2d = fill(zero(D), maximum(per))
+	has_duplicates = false
 	for i in eachindex(d)
+		!iszero(y2d[per[i]]) && (has_duplicates = true)
 		y2d[per[i]] += d[i]
 	end
+
+	!has_duplicates && return d, per
 
 	per_ = Vector{S}()
 	d_ = Vector{D}()
@@ -142,11 +154,31 @@ function merge_duplicates(
 	d_, per_
 end
 
-# Takes the y2node_idx discretization and globalize it (i.e., change the ones
-# to the global node indexes). Create a list of discretized positions as sub-
-# product. Create a list of globalized forward edges based on the list of
-# raw_fow_edges passed as argument. Also return the updated values of
-# last_gnode_idx and last_gedge_idx after registering the edges and nodes.
+"""
+    globalize!(...)
+
+The model may be seen as constituted of many independent graphs, but as there
+is interaction between them (i.e., subplate edges increase the flow of a
+backward edge in other graph) their nodes and edges must follow a global
+numbering and the backward edges must be known by all of graphs (as subplate
+edges need to refer to them as child plates).
+
+This method takes the "local/raw" lists of node (`y2node_idx`) and edge
+(`raw_fow_edges`) numbering (that is just the normal cut positions); the index
+of the last globalized node (`last_gnode_idx`) and edge (`last_gedge_idx`); a
+matrix that gives the piece index given the piece dimensions (`lw2pii`); a
+tridimensional array that gives the backward edge index given its plate
+dimensions and allowed cut orientation (`ppo2gbedge_idx`); the allowed cut
+`ori`entation of the given graph; and the size of the plate dimension parallel
+to the allowed cuts (`PAR`).
+
+The method return the "globalized" list of nodes and edges, as the index of
+the last globalized node and edge.
+
+The method changes `ppo2gbedge_idx`: if a subplate (forward) edge is created
+and the corresponding backward edge was not yet numbered, it is given a
+"globalized" index (all backward edges are created at another step at the end).
+"""
 function globalize!(
 	y2node_idx     :: Vector{N},
 	raw_fow_edges  :: Vector{Tuple{S, S}}, # raw forward edges
@@ -217,6 +249,11 @@ function globalize!(
 	glo_nodes, glo_fow_edges, lgni, lgei
 end
 
+# The unrestrict edges are generated by the following procedure:
+# loop through all pairs `i` and `j` (i < j) of disc_per indexes (not
+# counting a possibly dummy sink node, but counting the source node),
+# create a edge between the two nodes if `disc_per[j] - disc_per[i] <=
+# disc_per[i]`.
 # TODO: this is generating all unrestricted arcs again, solve this
 function gen_u_fow_edges(
 	glo_nodes :: Vector{Node{S, N}},
@@ -266,6 +303,17 @@ function gen_u_fow_edges(
 	u_fow_edges, lgei
 end
 
+"""
+    gen_w_fow_edges(glo_nodes, last_gedge_idx) :: ([Edge], E)
+
+Given a set of "globalized" nodes, and the index of the last "globalized"
+edge, create the set of corresponding waste edges (already "globalized").
+
+For now, it is not very smart and just connect the second node to the third,
+third to the fourth, and so on. Ideally, it should connect every node
+(except the first) to the next node *that has a backward edge associated*
+(not counting the node in question, clearly, no self-loops allowed).
+"""
 function gen_w_fow_edges(
 	glo_nodes :: Vector{Node{S, N}},
 	last_gedge_idx :: E
@@ -291,38 +339,55 @@ function gen_w_fow_edges(
 	w_fow_edges, lgei
 end
 
-# TODO: We need a better way to deal with the pieces. Technically, two
-#   distinct pieces may have the same length and width, but cannot be
-#   merged because they have different profits. For now, we will ignore
-#   this case, as this case does not seem common (may be even prohibited
-#   in some instance generations), but in the future, we cannot identify
-#   single pieces by their dimensions, we need to repeat whatever is being
-#   done for each piece with the same dimensions, or pass a true identifier
-#   along.
+"""
+    gen_closed_flow(...)
+
+Given some "global" structures/counters (`last_gnode_idx`, `last_gedge_idx`,
+`lw2pii`, `ppo2gbedge_idx`), the piece set (`d`, `par`, `per`) and the plate
+dimensions and its allowed cut orientation (`ori`, `PAR`, `PER`), this method
+builds the graph that represents all allowed cuts over such plate. The only
+changed parameter is `ppo2gbedge_idx`.
+
+# Arguments
+
+* `last_gnode_idx::N`: The highest global node identifier already in use.
+* `last_gedge_idx::E`: The highest global edge identifier already in use.
+* `lw2pii::AbstractArray{D, 2}`: A convenient table that translates the
+  dimensions of a piece to the global piece code if there exists a piece
+  that fits the description. It is not changed but a transposition of it is
+  made frequently.
+* `ppo2gbedge_idx::Array{E, 3}`: A table that translates the
+  parallel-perpendicular-orientation triple to the global backward
+  edge index, if it exists. If there is the need to refer to a circulation
+  edge but its global identifier does not yet exists, it is created and
+  saved to the table.
+* `d::Vector{D}`: The demand of the pieces.
+* `par::Vector{S}`: The size of the pieces in the dimension that is
+  parallel to the cuts made in this flow.
+* `per::Vector{S}`: The size of the pieces in the dimension that is
+  perpendicular to the cuts made in this flow.
+* `ori::UInt8`: If it is one, the flow is making vertical cuts, and
+  therefore `par` is `l` and `per` is `w`. If it is two, the flow is making
+  horizontal cuts and therefore `par` is `w` and `per` is `l`.
+* `PAR::S`: The size of the flow/plate in the dimension that is parallel to
+  the cuts made.
+* `PER::S`: The size of the flow/plate in the dimension that is perpendicular
+  to the cuts made.
+
+# Returns
+
+* A dense list of globalized nodes (all nodes in sequence).
+* A sparse list of globalized nodes (if position `y` has a corresponding node,
+  then `v[y] == globalized_node_id`, otherwise `v[y] == 0`).
+* A dense list of the globalized edges.
+* The index of the last globalized node (after the procedure).
+* The index of the last globalized edge (after the procedure).
+"""
 function gen_closed_flow(
-	last_gnode_idx :: N, # The highest global node identifier already in use.
-	last_gedge_idx :: E, # The highest global edge identifier already in use.
-	lw2pii :: AbstractArray{D, 2}, # A convenient table that translates the
-		# dimensions of a piece to the global piece code if there exists a piece
-		# that fits the description. It is not changed but a transposition of it is
-		# made frequently.
-	ppo2gbedge_idx :: Array{E, 3}, # A table that translates the
-		# parallel-perpendicular-orientation triple to the global backward
-		# edge index, if it exists. If there is the need to refer to a circulation
-		# edge but its global identifier does not yet exists, it is created and
-		# saved to the table.
-	d :: Vector{D}, # The demand of the pieces.
-	par :: Vector{S}, # The size of the pieces in the dimension that is parallel
-		# to the cuts made in this flow.
-	per :: Vector{S}, # The size of the pieces in the dimension that is
-		# perpendicular to the cuts made in this flow.
-	ori :: UInt8, # If it is one, the flow is making vertical cuts, and therefore
-		# `par` is `l` and `per` is `w`. If it is two, the flow is making
-		# horizontal cuts and therefore `par` is `w` and `per` is `l`.
-	PAR :: S, # The size of the flow/plate in the dimension that is parallel to
-		# the cuts made.
-	PER :: S # The size of the flow/plate in the dimension that is perpendicular
-		# to the cuts made.
+	last_gnode_idx :: N, last_gedge_idx :: E,
+	lw2pii :: AbstractArray{D, 2}, ppo2gbedge_idx :: Array{E, 3},
+	d :: Vector{D}, par :: Vector{S}, per :: Vector{S},
+	ori :: UInt8, PAR :: S, PER :: S
 ) :: Tuple{Vector{Node{S, N}}, Vector{N}, Vector{Edge{N, E}}, N, E} where {D, S, N, E}
 	# Abbreviate.
 	lgni = last_gnode_idx
@@ -358,15 +423,6 @@ function gen_closed_flow(
 
 	w_fow_edges, lgei = gen_w_fow_edges(glo_nodes, lgei)
 
-	# TODO: make the first version without the unrestricted edges and check if
-	# it get the same values as the old_bender. Execute against A5 and
-	# check if it get the restricted value, then implement the unrestricted
-	# edges and check if it get the unrestricted value for A5.
-	# The unrestrict edges are generated by the following procedure:
-	# loop through all pairs `i` and `j` (i < j) of disc_per indexes (not
-	# counting a possibly dummy sink node, but counting the source node),
-	# create a edge between the two nodes if `disc_per[j] - disc_per[i] <=
-	# disc_per[i]`.
 	# NOTE: symmetries may be broken with extra constraints. If some edge e1 is
 	# used, then no edge e2, that is both "larger" than that e1 and that may be
 	# reached after traversing e1, may be used.
@@ -379,21 +435,41 @@ function gen_closed_flow(
 	=#
 end
 
-#= Completely inutile. We need to be able to traverse the per dimension.
-function add_nodes_to_dict(
-	d :: Dict{Tuple{S, S, UInt8}, N},
-	nodes :: Vector{Node{S, N}}
-) :: Dict{Tuple{S, S, UInt8}, N}
-	for node in nodes
-		ppo = (node.par, node.per, node.ori)
-		@assert !haskey(d, ppo)
-		d[ppo] = node.idx
-	end
+"""
+    gen_normal_nodes_and_edges(N, E, d, l, w, L, W) :: ([Node], [Edge], N, E)
 
-	d
-end
-=#
+Given the integer types used to number nodes and edges, the piece set, and the
+original plate length, create all nodes and edges except by some dummy ones
+(that are handled specially and, so, should not even be mixed here).
 
+# Notes
+
+* This method is aware the edge identifiers `1` to `n+4` are special.
+* This method creates the special edges n+2 and n+4, but not any other in
+  
+
+# High-level procedure description
+
+0. Compute the discretized lengths (widths).
+0. For each discretized length (width), create a flow with max width (length).
+	The backward edges connect a position in some flow to the source of the
+	same flow, they may be identified by which dimension is parallel to the cut,
+	the size of that dimension (these two identify the flow), and the size of the
+	perpendicular dimension (this one identifies which one of the multiple
+	circulation arcs inside a flow is being referred to)
+0. The backward edges are referred between different edge disjoing subgraphs,
+	so their global identifier needs to be created at the moment some subplate
+	edge has the backward edge as their CP field.
+0. A global structure is passed around, it is a matrix of three dimension,
+	which may indexed by the values that are unique for a backward edge (par_dim,
+	cut_ori, per_dim), and stores the identifier for the unique backward edge
+	with such attributes. All the backward edges are created at the end. They
+	will have CP zero as would a waste arc, because a backward edge never enables
+	another backward edge, and they are the only edges for which the first vertex
+	comes after the second (and the second is always the subgraph source), but
+	none of those peculiarities prevent us of modeling the same way waste arcs
+	are modeled.
+"""
 function gen_all_edges(
 	::Type{N}, ::Type{E},
 	d :: Vector{D}, l :: Vector{S}, w :: Vector{S},
@@ -409,7 +485,12 @@ function gen_all_edges(
 	lw2pii = fill(zero(E), L, W)
 	for pii = 1:n
 		if !iszero(lw2pii[l[pii], w[pii]])
-			@warn "CAUTION: the instance has two pieces with the exact same length and width, the first is piece nº $(lw2pii[l[pii], w[pii]]) and the second is nº $(pii), both have length $(l[pii]) and width $(w[pii])"
+			@warn(
+				"CAUTION: the instance has two pieces with the exact same length" *
+				" and width, the first is piece nº $(lw2pii[l[pii], w[pii]]) and" *
+				" the second is nº $(pii), both have length $(l[pii]) and width " *
+				"$(w[pii])"
+			)
 		end
 		lw2pii[l[pii], w[pii]] = pii
 	end
@@ -488,13 +569,6 @@ function gen_all_edges(
 	#@show vflows_by_L
 	#@show hflows_by_W
 
-	# TO CREATE THE CIRCULATION EDGES AT THE END, WE NEED TO KNOW THE NAME OF
-	# THE NODES FOR THE ORIGIN OF EVERY FLOW WITH PAR WITH SOME SIZE, AND THE
-	# INTERNAL NODE
-	#@show vflows_by_L
-	#@show origin_vf_by_L
-	#@show hflows_by_W
-	#@show origin_hf_by_W
 	for ppo in CartesianIndices(ppo2gbedge_idx)
 		pari, peri, orii = ppo[1], ppo[2], ppo[3]
 		iszero(ppo2gbedge_idx[ppo]) && continue
@@ -520,31 +594,6 @@ function gen_all_edges(
 		end
 	end
 
-	# There is a flow for every discretized point on the dimension parallel to
-	# the cut, for each of the dimensions/'cut orientations'. Therefore, the
-	# worst case is L + W.
-	#
-	# PSEUDOCODE (first version, not very optimized)
-	# compute the discretized lengths (widths)
-	# for each discretized length (width), create a flow with max width (length)
-	# the circulation arcs connect a position in some flow to the source of the
-	#   same flow, they may be identified by which dimension is parallel to
-	#   the cut, the size of that dimension (these two identify the flow), and
-	#   the size of the perpendicular dimension (this one identifies which one
-	#   of the multiple circulation arcs inside a flow is being referred to)
-	# the circulation arcs are referred between different closed flows, so their
-	#   global name needs to be created at the moment some arc has the
-	#   circulation arc as their CP field
-	# a global structure is passed around, it is a matrix of three dimension,
-	#   which may indexed by the values that are unique for a circulation arc
-	#   (par_dim, cut_ori, per_dim), and stores the code for the unique
-	#   circulation arc with such attributes. All the circulation arc variables
-	#   are created at the end. They will have CP zero as would a waste arc,
-	#   because a circulation arc never enables another circulation arc, and
-	#   they are the only arcs for which the first vertex comes after the second
-	#   (and the second is always the source), but none of those peculiarities
-	#   prevent us of modeling the same way waste arcs are modeled.
-	#
 	nodes, edges, lgni, lgei
 end
 

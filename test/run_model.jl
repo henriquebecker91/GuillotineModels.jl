@@ -9,10 +9,10 @@ import TimerOutputs
 # just a subset of such solvers installed).
 
 # Supported solvers as of Tue 28 Jan 2020 02:06:06 AM -03:
-#import CPLEX
-#import Gurobi
-#import Cbc
-#import GLPK
+import CPLEX
+import Gurobi
+import Cbc
+import GLPK
 
 # New solvers may be added by defining a function
 # empty_configured_model(::Val{:SolverName}, p_args) (which return a
