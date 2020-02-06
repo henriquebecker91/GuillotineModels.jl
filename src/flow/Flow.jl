@@ -118,10 +118,12 @@ Maximize the profit of the pieces cut.
 * The number of pieces of some type is always less than or equal to its demand.
   - `edge[i] <= d[i] : for each i in 1:number_of_pieces`
 
-## Conventions:
-* 0 - The plate is waste. This may only appear at the CP index of edges.
+## Dummy Plate Identifiers:
+* 0 - No plate. Waste and backward edges use this value in the `back` field.
 * 1:n - A dummy edge corresponding to a piece index, used in the objective
-  function.
+  function. Edges cutting pieces do not actually appear in the objective
+  function but, in fact, allow more flow to pass through by some of these
+	dummy piece edges.
 * n+1 - A dummy edge that is upper bounded at one and allows one extra flow
   to the original plate default cutting (vertical) backward edge (i.e.,
   n+2). Necessary to avoid n+2 to be restricted by a possible edge that
@@ -209,9 +211,7 @@ function build_model(
 	for i = 1:last_gedge_idx
 		@assert i ∉ back2indxs[i]
 		if !isempty(back2indxs[i])
-			@constraint(model,
-				edge[i] <= sum(edge[back2indxs[i]])
-			)
+			@constraint(model, edge[i] <= sum(edge[back2indxs[i]]))
 		end
 	end
 
