@@ -8,12 +8,18 @@ using ArgParse
 export Arg, accepted_arg_list, throw_if_incompatible_options
 export create_normalized_arg_subset
 
+"An argument with `name`, `default` value, and `help` message."
 struct Arg{T}
+  "The name with no initial double dashes but with dashes instead of spaces."
 	name :: String
+	"The default value if the argument is not specified. Use `false` for flags."
 	default :: T
+	"The help message to be displayed about this argument."
 	help :: String
 end
 
+# The re-definition of Base.iterate is necessary to allow the flattening
+# of arrays of arrays of Args.
 Base.iterate(a :: Arg) = (a, nothing)
 Base.iterate(a :: Arg, nothing) = nothing
 
