@@ -20,7 +20,16 @@ using ..PPG2KP, ..PPG2KP.Args
 using ..Flow, ..Flow.Args
 using ..KnapsackPlates, ..KnapsackPlates.Args
 
-function create_unprefixed_subset(prefix, p_args)
+"""
+    create_unprefixed_subset(prefix, p_args :: T) :: T
+
+Given some `prefix`, query the `accepted_arg_list(Val{Symbol(prefix)})`,
+to know which arguments were prefixed this way, search for them (with
+the prefix) in `p_args` and return a new `typeof(p_args)` object in
+which there is only the searched key-value pairs but the keys are
+changed to not have the prefix anymore.
+"""
+function create_unprefixed_subset(prefix, p_args :: T) :: T
 	subset = empty(p_args)
 	prefix_id = Val(Symbol(prefix))
 	prefix_options_names = getfield.(accepted_arg_list(prefix_id), :name)
@@ -32,6 +41,16 @@ function create_unprefixed_subset(prefix, p_args)
 	subset
 end
 
+"""
+    div_and_round_instance(L, W, l, w, p_args) -> L', W', l', w'
+
+Given two integers and two integer arrays, uses `p_args` keys
+`div-and-round-{nearest,up,down}` to either: (1) return them unmodified
+if all keys have value one; (2) return a copy of them that is rounded
+the specified way (no two keys may have a value different than one).
+If a copy is returned, the type of the scalars and the element type of
+the arrays is converted to typeof(L).
+"""
 function div_and_round_instance(L, W, l, w, p_args)
 	@timeit "div_and_round_instance" begin
 	# assert explanation: at least two of the three flags are disabled (i.e., 
@@ -66,6 +85,17 @@ function div_and_round_instance(L, W, l, w, p_args)
 end
 
 # Read the instance, build the model, solve the model, and print related stats.
+"""
+    read_build_solve_and_print(pp)
+
+Given the parsed parameters (`pp`), read the instance file, build the model,
+solve the model (unless `pp['do-not-solve']` is true), and print statistics
+related to this process (unless `pp['no-csv-output']` is true).
+The list of options recognized and implemented by this method is the
+list returned by `generic_args()` (it also needs the required arguments
+in `core_argparse_settings()`). The other arguments are solver or model
+specific and are extracted and passed to their specific methods.
+"""
 function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	if !pp["no-csv-output"]
 		println("instfname = $(pp["instfname"])")
@@ -152,9 +182,20 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	return nothing
 end
 
+"""
+    gen_prefixed_argparse_settings(solver_or_model_name) :: ArgParseSettings
+
+Builds and returns an ArgParseSettings object representing all options
+of the given solver or model already prefixed with its name.
+
+The `solver_or_model_name` may be a Symbol or String (none is prefered),
+and the method works because the solver or model implements
+`accepted_arg_list(Val{Symbol(solver_or_model_name)})`
+"""
 function gen_prefixed_argparse_settings(
-	prefix :: Union{String, Symbol}
+	solver_or_model_name :: Union{String, Symbol}
 ) :: ArgParse.ArgParseSettings
+	prefix = solver_or_model_name # long name only for documentation
 	s = ArgParseSettings()
 	ArgParse.add_arg_group(
 		s, "$(prefix)-specific Options", "$(prefix)-specific-options"
@@ -170,7 +211,14 @@ function gen_prefixed_argparse_settings(
 	s
 end
 
-function core_argparse_settings()
+"""
+    core_argparse_settings() :: ArgParseSettings
+
+An ArgParseSettings with the three core positional arguments `model`,
+`solver`, and `instfname`. They cannot be modeled as `Arg` objects by design
+all extra arguments must be options (i.e., be optional and preceded by dashes).
+"""
+function core_argparse_settings() :: ArgParseSettings
 	s = ArgParse.ArgParseSettings()
 	ArgParse.add_arg_group(s, "Core Parameters", "core_parameters")
 	@add_arg_table s begin
@@ -188,6 +236,11 @@ function core_argparse_settings()
 	s
 end
 
+"""
+    generic_args() :: Vector{Arg}
+
+All the `Arg`s representing options that are independent from solver or model.
+"""
 function generic_args() :: Vector{Arg}
 	return [
 		Arg(
@@ -225,6 +278,12 @@ function generic_args() :: Vector{Arg}
 	]
 end
 
+"""
+    generic_argparse_settings() :: ArgParseSettings
+
+An ArgParseSettings containing all options (not positional arguments) that are
+independent from the chosen solver or model.
+"""
 function generic_argparse_settings()
 	s = ArgParse.ArgParseSettings()
 	add_arg_group(s, "Generic Options", "generic_options")
@@ -235,13 +294,22 @@ function generic_argparse_settings()
 	s
 end
 
-# NOTE: all options are parsed, even if just one model is selected at a time.
-# The reasons for that are: (1) we do not know the model before the parsing
-# unless we manipulate ARGS directly; (2) if they are not included in the
-# parsing they do not appear in the help message.
+"""
+    argparse_settings(models_list, solvers_list) :: ArgParseSettings
+
+Create an ArgParseSettings which includes the core arguments, generic
+arguments, and all arguments from models and solvers available (prefixed by
+their model or solver name).
+
+Options of all models and solvers are added even if just one model is selected
+at a time. The reasons for this are: (1) we do not know the model before the
+parsing unless we manipulate ARGS directly; (2) if the unused solvers and
+models are not included in the ArgParseSettings they do not appear in the help
+message.
+"""
 function argparse_settings(
 	models_list :: Vector{Symbol}, solvers_list :: Vector{Symbol}
-)
+) :: ArgParseSettings
 	s = core_argparse_settings()
 	ArgParse.import_settings(s, generic_argparse_settings())
 	for sym in [solvers_list; models_list]
@@ -250,6 +318,28 @@ function argparse_settings(
 	s
 end
 
+"""
+    warn_if_changed_unused_values(p_args, models_list, solvers_list)
+
+Gives warning messages if `p_args` has a value different from the default
+for an option of a model or solver that is not the one used. In other words,
+help a distracted user to not keep thinking it has passed an option to the
+used solver/model when they have not. Many solvers have the same option
+but with a different prefix, it is easy to change the solver used and forget
+to also change the prefix in the parameter options.
+
+It is actually impossible to know if an argument was passed or not by the
+command-line after they are parsed by ArgParse because all of the arguments
+must have a default value and if the argument is not present in the
+command-line their default value is placed in the dict by ArgParse. This is
+the reason we just check if non-used options have values different from
+default, instead of just checking if they were provided.
+
+This should work out-of-the-box for any third-party models or solvers
+given they implement their own version of `accepted_arg_list` and also
+have their identifying symbol passed in either `models_list` or
+`solvers_list`.
+"""
 function warn_if_changed_unused_values(p_args, models_list, solvers_list)
 	core_arg_names = ["solver", "model", "instfname"]
 	generic_arg_names = getfield.(generic_args(), :name)
@@ -304,6 +394,12 @@ function warn_if_changed_unused_values(p_args, models_list, solvers_list)
 	return nothing
 end
 
+"""
+    throw_if_incompatible_options(p_args)
+
+Check the already parsed arguments and test if options that are incompatible
+with each other were used.
+"""
 function throw_if_incompatible_options(p_args)
 	# Generic Flags conflicts
 	num_rounds = sum(.! isone.(map(flag -> p_args[flag],
@@ -333,6 +429,14 @@ function throw_if_incompatible_options(p_args)
 end
 
 # Definition of the command line arguments.
+"""
+    parse_args(args, models_list, solvers_list) :: Dict{String, Any}
+
+Given a vector of the command-line arguments `args` and the lists of
+available models and solvers, parse the arguments. If the `args`
+refer to a model or solver not in `models_list` or `solvers_list`
+exceptions may be thrown.
+"""
 function parse_args(args, models_list, solvers_list) :: Dict{String, Any}
 	@timeit "parse_args" begin
 	s = argparse_settings(models_list, solvers_list)
@@ -344,6 +448,12 @@ function parse_args(args, models_list, solvers_list) :: Dict{String, Any}
 	return p_args
 end
 
+"""
+    mock_instance() :: String
+
+Just return a string of a small instance to be used by `mock_for_compilation`
+if `--do-not-mock-for-compilation` is not specified.
+"""
 function mock_instance() :: String
 	"""
 	100	200
@@ -353,6 +463,15 @@ function mock_instance() :: String
 	"""
 end
 
+"""
+    mock_for_compilation(p_args)
+
+Creates a temporary file with the content returned by `mock_instance` and pass
+to `read_build_solve_and_print` a copy of `p_args` pointing to this instance
+with `no-csv-output` and `USED_SOLVER_NAME-no-output` as true.
+
+See also: [`mock_instance`](@ref), [`read_build_solve_and_print`](@ref)
+"""
 function mock_for_compilation(p_args)
 	@timeit "mock_for_compilation" begin
 	mktemp() do path, io
