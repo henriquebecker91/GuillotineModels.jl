@@ -1,3 +1,21 @@
+"""
+SolversArgs module aggregates the methods necessary for making solvers
+available to use with GuillotineModels.CommandLine methods.
+
+The package Requires is used to implement solver-specific methods only if the
+solver package is loaded. The only non-solver-specific method implemented
+is the error fallback for `empty_configured_model`.
+
+The solver-specific methods this module implements for each supported solver
+are: `GuillotineModels.Utilities.Args.{accepted_arg_list,
+throw_if_incompatible_options}`, and `GuillotineModels.CommandLine.SolversArgs.
+empty_configured_model`.
+
+The supported solvers are `CPLEX`, `Gurobi`, `Cbc`, and `GLPK`.
+Supporting new solvers is just a question of implementing a specialization
+of the three methods mentioned above for the specific solver (see the
+code for examples).
+"""
 module SolversArgs
 
 export empty_configured_model
@@ -233,6 +251,17 @@ function __init__()
 	end # @require GLPK
 end
 
+"""
+    empty_configured_model(::Val{T}, p_args) :: JuMP-like Model
+
+Creates an empty (no variables or constraints) and configured (`p_args` is used
+to set the parameters of an attached solver) model of the solver `::Val{T}`
+(for example, passing `::Val{:CPLEX}` will call the specialized method for
+CPLEX solver).
+
+The options available for `p_args` are available in `GuillotineModels.
+Utilities.Args.accepted_arg_list(::Val{SOLVER_PACKAGE_SYMBOL})`.
+"""
 function empty_configured_model(
 	::Val{T}, p_args
 ) where {T}

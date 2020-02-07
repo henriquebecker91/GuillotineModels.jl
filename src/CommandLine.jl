@@ -486,7 +486,33 @@ function mock_for_compilation(p_args)
 	end # @timeit
 end
 
-# Parse the command line arguments, and call the solve for each instance.
+"""
+    run(args = ARGS; implemented_models = [...], supported_solvers = [...])
+
+Parse the command-line arguments and take appropriate action: prints help
+or solves the problem instance using the specified solver, model, and
+their options.
+
+The parameters available (listed in the help message and actually parsed)
+depend on the `implemented_models` and `supported_solvers`. The default values
+are the models and solvers made available by the GuillotineModels package. If
+you implement your own models or add support for more solvers you need to pass
+them there for them to be considered (and if you want the old ones to keep
+working you need to specify them also).
+
+The best way to know everything this command is capable is to call:
+```
+import SUPPORTED_SOLVERS_YOU_HAVE_AVAILABLE
+import GuillotineModels
+GuillotineModels.CommandLine.run(
+	["--help"];
+	supported_solvers = [SUPPORTED_SOLVERS_YOU_HAVE_AVAILABLE]
+)
+```
+
+Which will give you the help message. If you want to use it as an script
+you just need to remove the `["--help"]` from the call.
+"""
 function run(
 	args = ARGS;
 	implemented_models = [:Flow, :PPG2KP],#, :KnapsackPlates],
