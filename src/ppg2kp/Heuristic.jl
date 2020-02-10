@@ -5,7 +5,7 @@ Thomopulos, ``Modeling Two-Dimensional Guillotine Cutting Problems via Integer
 Programming,'' INFORMS Journal on Computing, vol. 28, no. 4, pp. 736–751, Oct.
 2016, doi: 10.1287/ijoc.2016.0710.````. The heuristic itself, however, is older
 and described in: ````M. Dolatabadi, A. Lodi, and M. Monaci, ``Exact algorithms
-for the two-dimensional guillotine knapsack,'' Computers \& Operations
+for the two-dimensional guillotine knapsack,'' Computers \\& Operations
 Research, vol. 39, no. 1, pp. 48–53, Jan. 2012, doi: 10.1016/j.cor.2010.12.018.
 ````.
 

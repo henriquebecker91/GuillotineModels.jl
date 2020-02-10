@@ -12,6 +12,17 @@ using ..Utilities
 using JuMP
 using TimerOutputs
 
+# TODO: Check why this method is used if a structure like SortedLinkedLW
+# would answer this more efficiently and be aware of the type used for the
+# index.
+"""
+    min_l_fitting_piece(l, w, L, W)
+
+Given a plate `L`x`W` and a pieces dimensions list (`l`, `w`),
+return the index of the piece of smallest length that fits the
+plate (the width dimension may preclude this from being just
+the piece of smallest length).
+"""
 function min_l_fitting_piece(l, w, L, W)
 	@assert length(l) == length(w)
 	n = length(l)
@@ -27,6 +38,10 @@ function min_l_fitting_piece(l, w, L, W)
 	min_i
 end
 
+"""
+    search_approx_cut(pp, fcl, fcw, max_diff, approx_l, nnn, pli_lwb) :: P
+
+"""
 function search_approx_cut(
 	pp :: P, # parent plate
 	fcl :: S, # first child length
@@ -55,6 +70,10 @@ function search_approx_cut(
 	@assert false # this should not be reachable
 end
 
+"""
+    search_cut_or_symmetry(pp, fcl, fcw, nnn, pli_lwb)
+
+"""
 function search_cut_or_symmetry(
 	pp :: P, # parent plate
 	fcl :: S, # first child length
@@ -72,6 +91,10 @@ function search_cut_or_symmetry(
 	@assert false # this should not be reachable
 end
 
+"""
+    disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
+
+"""
 function disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
 	@assert length(sl) == length(sw)
 	n = length(sl)
@@ -114,6 +137,11 @@ function disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
 	reg
 end
 
+"""
+    search_cut(pp, fcl, fcw, nnn, pli_lwb)
+
+
+"""
 function search_cut(
 	pp :: P, # parent plate
 	fcl :: S, # first child length
@@ -152,6 +180,9 @@ end
 # (3) the first piece of each strip gives the width of the strip;
 # If you need to warm-start with a more complex pattern, create another
 # method with the same name, and another type for parameter `pat`.
+"""
+    warm_start(model, l, w, L, W, pat, pli_lwb, nnn, np; faithful2furini = false)
+"""
 function warm_start(
 	model, l, w, L, W,
 	pat :: Vector{Vector{D}},
@@ -614,6 +645,11 @@ end
 import ..Utilities.Args.create_normalized_arg_subset
 import ..Utilities.Args.accepted_arg_list
 import ..build_model
+"""
+    build_model(::Val{:PPG2KP}, model, d, p, l, w, L, W[, options])
+
+
+"""
 function build_model(
 	::Val{:PPG2KP}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,

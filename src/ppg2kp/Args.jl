@@ -65,7 +65,9 @@ function Utilities.Args.throw_if_incompatible_options(::Val{:PPG2KP}, p_args)
 	)
 	p_args["final-pricing"] && isempty(p_args["lower-bounds"].vector) &&
 		!p_args["warm-start"] && @error(
-		"the flag --final-pricing only makes sense if a lower bound is provided (either directly by --lower-bound or indirectly by --warm-start)"
+		"the flag --final-pricing only makes sense if a lower bound is" *
+		" provided (either directly by --lower-bound or indirectly by" *
+		" --warm-start)"
 	)
 end
 

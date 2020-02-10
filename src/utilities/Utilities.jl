@@ -1,5 +1,58 @@
 module Utilities
 
+# SortedLinkedLW is an immutable structure and constructor that does not
+# need any package imports.
+export SortedLinkedLW
+"""
+Grouping of the length and width piece vectors (in original and sorted order),
+and their reverse indexes, allowing to, for example, iterate the pieces
+by length while having `O(1)` access to their width.
+"""
+struct SortedLinkedLW{D, S}
+  "The pieces length in the original order."
+	l :: Vector{S}
+	"The pieces width in the original order."
+	w :: Vector{S}
+	"The pieces length sorted by increase-or-same order."
+	sl :: Vector{S}
+	"The pieces width sorted by increase-or-same order."
+	sw :: Vector{S}
+	"Translator from indexes in `sl` to piece index (`l` and `w`)."
+	sli2pii :: Vector{D}
+	"Translator from indexes in `sw` to piece index (`l` and `w`)."
+	swi2pii :: Vector{D}
+	"Translator from piece indexes (`l` and `w`) to index in `sl`."
+	pii2sli :: Vector{D}
+	"Translator from piece indexes (`l` and `w`) to index in `sw`."
+	pii2swi :: Vector{D}
+end
+
+"""
+    SortedLinkedLW(::Type{D}, l :: [S], w :: [S])
+
+Construts a SortedLinkedLW structure using type `D` as the type for indexes,
+and `l` and `w` as the pieces length and width in the 'original' ordering.
+NOTE: `l` and `w` are not copyed, so mutating them after  will silently and
+completely invalidate the entire structure. They are not copyed for performance
+reasons and because if the original vectors may be changed then the concept of
+'original order' is not really relevant.
+"""
+function SortedLinkedLW(::Type{D}, l :: Vector{S}, w :: Vector{S}) where {D, S}
+	@assert length(l) == length(w)
+	n = length(l)
+	sl = sort(l)
+	sw = sort(w)
+	sli2pii = sort!(collect(1:n), by = pii -> l[pii])
+	swi2pii = sort!(collect(1:n), by = pii -> w[pii])
+	pii2sli = Vector{D}(undef, n)
+	pii2swi = Vector{D}(undef, n)
+	for si = 1:n
+		pii2sli[sli2pii[si]] = si
+		pii2swi[swi2pii[si]] = si
+	end
+	SortedLinkedLW(l, w, sl, sw, sli2pii, swi2pii, pii2sli, pii2swi)
+end
+
 using JuMP
 using MathOptInterface
 const MOI = MathOptInterface

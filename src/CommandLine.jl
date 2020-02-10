@@ -29,7 +29,7 @@ the prefix) in `p_args` and return a new `typeof(p_args)` object in
 which there is only the searched key-value pairs but the keys are
 changed to not have the prefix anymore.
 """
-function create_unprefixed_subset(prefix, p_args :: T) :: T
+function create_unprefixed_subset(prefix, p_args :: T) :: T where {T}
 	subset = empty(p_args)
 	prefix_id = Val(Symbol(prefix))
 	prefix_options_names = getfield.(accepted_arg_list(prefix_id), :name)

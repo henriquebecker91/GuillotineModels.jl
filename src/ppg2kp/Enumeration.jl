@@ -8,65 +8,35 @@ module Enumeration
 # makes the code far more complex (because I have to have code that respects
 # and ignores a basic assumption).
 
-export SortedLinkedLW
-export becker2019_discretize, gen_cuts, gen_cuts_sb
+import ...Utilities.SortedLinkedLW
+
+export gen_cuts, gen_cuts_sb
 export should_extract_piece_from_plate
 
-# Structure for keeping the piece lengths and widths both in the original order
-# and sorted order, and allow to access the piece index or the width (length)
-# counterpart when iterating the sorted lengths (widths).
-struct SortedLinkedLW{D, S}
-	l :: Vector{S}
-	w :: Vector{S}
-	sl :: Vector{S}
-	sw :: Vector{S}
-	sli2pii :: Vector{D} # sorted length index to piece index
-	swi2pii :: Vector{D} # sorted width index to piece index
-	pii2sli :: Vector{D} # piece index to sorted length index
-	pii2swi :: Vector{D} # piece index to sorted width index
-end
+"""
+    discretize(d::[D], l::[S], w::[S], L::S, W::S; kwords...) :: [S]
 
-# IMPORTANT: this constructor does not copy l and w, so any changes to l or w
-# will reflect in it, silently and completely invalidating the structure.
-# The first parameter is the type of integer to be used in the indexes.
-# This constructor basically creates a sorted copy of both vectors, then
-# create the four inverse indexes, and return them all in a single structure.
-# This constructor is not implemente in the most efficient way but it is
-# called one single time for each instance, so, irrelevant.
-function SortedLinkedLW(::Type{D}, l :: Vector{S}, w :: Vector{S}) where {D, S}
-	@assert length(l) == length(w)
-	n = length(l)
-	sl = sort(l)
-	sw = sort(w)
-	sli2pii = sort!(collect(1:n), by = pii -> l[pii])
-	swi2pii = sort!(collect(1:n), by = pii -> w[pii])
-	pii2sli = Vector{D}(undef, n)
-	pii2swi = Vector{D}(undef, n)
-	for si = 1:n
-		pii2sli[sli2pii[si]] = si
-		pii2swi[swi2pii[si]] = si
-	end
-	SortedLinkedLW(l, w, sl, sw, sli2pii, swi2pii, pii2sli, pii2swi)
-end
+Given the pieces demand, length, and width (`d`, `l`, `w`), as well the plate
+dimensions (`L`, `W`), return a vector of all linear combinations (constrained
+by demand) of the length of pieces that fit the plate (the returned vector is
+sorted by increasing value and no value is greater than `L`). To discretize the
+width just swap `l` with `w` and `L` with `W`.
 
-# TODO: break this method into two (like it was done for the flow model)
-#       one for reducing the input, other to discretize only over one dimension
-# Intelligent discretization method that: (1) takes demand into account;
-# (2) takes the dimension that is not being discretized into account. It can
-# also be used to discover which lengths are only shared by single pieces
-# and not linear combinations of two or more pieces.
-# d: piece demand (d)
-# l: piece dimensions for dim that is being discretized (may be `l` or `w`)
-# w: piece dimensions for dim that is NOT being discretized (may be `l` or `w`)
-# L: plate dimension for dim that is being discretized (may be `L` or `W)`
-# W: plate dimension for dim that is NOT being discretized (may be `L` or `W`)
-# mark_single_piece: instead of discretizing the plate dimension, give all
-#   the piece dimensions (for the dimension being discretized) that are shared
-#   only by single pieces and not by two or more pieces (even of the same type)
-#   combinations.
-function becker2019_discretize(
+# Keyword arguments
+
+All keyword arguments are of type `Bool` and have `false` as default.
+
+* `only_single_pieces`: Instead of discretizing the length, return the
+  piece lengths that exist only as the length of a piece and not as the
+  combination of two or more smaller piece lengths.
+* `ignore_W`: Do not use `W` to exclude pieces that do not fit the plate.
+* `ignore_d`: Do not use `d`emand information to discretize (consider
+  an unlimited amount of each piece type available).
+"""
+function discretize(
 	d :: Vector{D}, l :: Vector{S}, w :: Vector{S}, L :: S, W :: S;
-	only_single_pieces = false, ignore_W = false, ignore_d = false
+	only_single_pieces :: Bool = false, ignore_W :: Bool = false,
+	ignore_d :: Bool = false
 ) where {D, S}
 	# If two pieces have the same dimension they should be merged into a single
 	# piece (summing their demands) for performance reasons.
@@ -151,15 +121,30 @@ function becker2019_discretize(
 	cuts
 end
 
-# Check if such piece should be extracted from a plate. This method may be used
-# from both symmetry-breaking and non-symmetry-breaking contexts, because
-# the default value of parameter symm is the allow-any-cut-direction value.
-# A piece should be extracted from a plate if:
-# (1) The plate allows the piece size.
-# (2) The plate will not be cut in a way that leaves a second child large
-#     enough to allow the piece size (i.e., if the piece extraction may be
-#     postponed to be done in a second child of the current plate, it will be
-#     postponed).
+"""
+    should_extract_piece_from_plate(pii, L, W, sllw, symm = 0x03) :: Bool
+
+Considering the enhanced PP-G2KP model, it is necessary to known if there
+will be an 'extraction' variable representing the extraction of piece
+with index `pii` from a plate with length `L` and width `L`.
+
+A piece should be extracted from a plate if:
+1. The piece fits inside the plate.
+2. It is not possible to extract the piece in consideration together with any
+  other piece (even other copy of the same piece) from the plate in
+  consideration (for the cut orientations allowed by `symm` which by default
+	are both vertical and horizontal).
+
+# Arguments
+
+1. `pii::D`: The index of the piece.
+2. `L::S`: The length of the plate.
+3. `W::S`: The width of the plate.
+4. `sllw::SortedLinkedLW{D, S}`: The SortedLinkedLW struct for the pieces.
+5. `symm::UInt8 = 0x03`: which cut orientations are allowed: `0x01` means
+  'allow only horizontal cuts', `0x02` means 'allow only vertical cuts',
+	and `0x03` means 'allow both kinds of cuts'.
+"""
 function should_extract_piece_from_plate(
 	pii :: D, L :: S, W :: S, sllw :: SortedLinkedLW{D, S}, symm :: UInt8 = 0x03
 ) :: Bool where {D, S}
@@ -208,203 +193,21 @@ function should_extract_piece_from_plate(
 	return true
 end
 
-# TODO: internal change. The symmetry tag dimension of plis should be the
-# first one, given how columnwise memory layout works.
-function gen_cuts_sb(
-	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
-	ignore_2th_dim = false, ignore_d = false, round2disc = true
-) where {D, S, P}
-	(ignore_d || ignore_2th_dim || round2disc) && @error "ignore_2th_dimm, ignore_d, and round2disc are not yet implemented for gen_cuts_sb, also, first improve the performance by memoizing the discretizations"
-	l = sllw.l
-	w = sllw.w
-	@assert length(d) == length(l)
-	@assert length(d) == length(w)
-	only_single_l = becker2019_discretize(
-		d, l, w, L, W; only_single_pieces = true, ignore_W = ignore_2th_dim,
-		ignore_d = ignore_d
-	)
-	only_single_w = becker2019_discretize(
-		d, w, l, W, L; only_single_pieces = true, ignore_W = ignore_2th_dim,
-		ignore_d = ignore_d
-	)
-	max_piece_type = convert(D, length(l))
-	max_num_plates = convert(P, L) * convert(P, W) * 3
-	min_pil = minimum(l)
-	min_piw = minimum(w)
-	# If (n1, n2, n3) is in hcut (vcuts), then n1 may be partitioned in n2 and n3
-	# by the means of a horizontal (vertical) cut. Not every possible partition
-	# is present, just the ones which each child plate can fit at least one
-	# piece, and the ones where one child plate has the same dimension as a piece
-	# and the other is the dummy waste plate.
-	hcuts = Vector{NTuple{3, P}}()
-	vcuts = Vector{NTuple{3, P}}()
-	# If the plate has the exact same size that a piece, then it is added to
-	# the vector at pii2plis[piece_type].
-	pii2plis = [Vector{P}() for _ = 1:max_piece_type]
-	# If the piece has the exact same size that a plate, then it is added to
-	# the vector at pli2piis[plate_type].
-	pli2piis = Vector{D}[]
-	# The list of plates attributes: plate length, plate width, plate symmetry,
-	# and plate bound. The plate index is the same as the index in pli_lwsb.
-	pli2lwsb = Vector{Tuple{S, S, UInt8, P}}()
-	# plis: matrix of the plate dimensions in which zero means "never seen that
-	# plate before" and nonzero means "this nonzero number is the plate index".
-	plis = zeros(P, L, W, 3)
-	plis[L, W, 3] = one(P)
-	# next: plates already indexed but not yet processed, starts with (L, W,
-	# 3, 1). The size of the original plate, the code for being able to cut
-	# in any direction (same as third dimension of plis), and the plate index.
-	# Storing the index as the third value is not necessary (as it could be
-	# queried from plis) but this is probably more efficient this way.
-	next = Vector{Tuple{S, S, UInt8, P}}()
-	next_idx = one(P)
-	#sizehint!(next, max_num_plates)
-	push!(next, (L, W, 3, one(P)))
-	# n: The amount of plates (the index of the highest plate type).
-	n = one(P) # there is already the original plate
-	piece_cuts_avoided_by_symmb = 0
-	while next_idx <= length(next)
-		# PLate Length, Width, Symmetry, and Index
-		pll, plw, pls :: UInt8, pli = next[next_idx]
-		next_idx += 1
-		plb = (L ÷ pll) * (W ÷ plw) # PLate Bound
-		# It is not necessary to store the plate id in pli2lwsb because they are
-		# added in order (a queue is used), so the array index is the plate index.
-		push!(pli2lwsb, (pll, plw, pls, plb))
-		# the pli2piis vector grows with the number of plates processed
-		push!(pli2piis, D[])
-		for pii in 1:max_piece_type # pii: PIece Index
-			pil, piw = l[pii], w[pii] # PIece Length and Width (homophones, I know)
-			if pil == pll && piw == plw
-				# If the current plate is exactly the size of a plate, add it to
-				# the list of plate codes that correspond to a piece.
-				push!(pii2plis[pii], pli)
-				push!(pli2piis[pli], pii)
-			elseif should_extract_piece_from_plate(pii, pll, plw, sllw, pls)
-				# If there is no way to cut the current piece from the current plate
-				# except if we cut after the half of the plate... (i.e., the most
-				# unbalanced cut possible, that is, making a cut with the minimal
-				# length or width among the pieces, removes the possibility of getting
-				# such piece from the larger child plate)
-				if pil < pll && (pls == 1 || pls == 3)
-					# If the current plate is allowed to be cut horizontally (i.e.,
-					# reducing the length) and we need to reduce the length to make the
-					# plate into the piece, then we do so.
-					if iszero(plis[pil, plw, 2])
-						push!(next, (pil, plw, 2, n += 1))
-						plis[pil, plw, 2] = n
-					end
-					push!(hcuts, (pli, plis[pil, plw, 2], 0))
-				elseif piw < plw && (pls == 2 || pls == 3)
-					# If the current plate is allowed to be cut vertically (i.e.,
-					# reducing the width) and we need to reduce the width to make the
-					# plate into the piece, then we do so.
-					if iszero(plis[pll, piw, 1])
-						push!(next, (pll, piw, 1, n += 1))
-						plis[pll, piw, 1] = n
-					end
-					push!(vcuts, (pli, plis[pll, piw, 1], 0))
-				else
-					piece_cuts_avoided_by_symmb += 1
-				end
-			end
-		end
-		# TODO: after is working, refactor the code below to use a single loop
-		# using a vector saved in a variable, or an inner function
-		sorted_in(a, v) = searchsortedfirst(a, v) <= length(a)
-		if pls == 1 && sorted_in(only_single_w, plw)
-			indexes = filter(i -> w[i] == plw && l[i] < pll, collect(1:max_piece_type))
-			#@assert !isempty(indexes)
-			for y in l[indexes]
-				if iszero(plis[y, plw, 2])
-					push!(next, (y, plw, 2, n += 1))
-					plis[y, plw, 2] = n
-				end
-				if iszero(plis[pll - y, plw, 3])
-					push!(next, (pll - y, plw, 3, n += 1))
-					plis[pll - y, plw, 3] = n
-				end
-				push!(hcuts, (pli, plis[y, plw, 2], plis[pll - y, plw, 3]))
-			end
-		elseif pls == 1 || pls == 3
-			for y in becker2019_discretize(
-				d, l, w, pll ÷ 2, plw; ignore_2th_dim = ignore_2th_dim
-			)
-				#y > pll ÷ 2 && break
-				@assert plw >= min_piw
-				@assert y >= min_pil
-				@assert pll - y >= min_pil
-				if iszero(plis[y, plw, 2])
-					push!(next, (y, plw, 2, n += 1))
-					plis[y, plw, 2] = n
-				end
-				if iszero(plis[pll - y, plw, 3])
-					push!(next, (pll - y, plw, 3, n += 1))
-					plis[pll - y, plw, 3] = n
-				end
-				push!(hcuts, (pli, plis[y, plw, 2], plis[pll - y, plw, 3]))
-			end
-		end
-		if pls == 2 && sorted_in(only_single_l, pll)
-			indexes = filter(i -> l[i] == pll && w[i] < plw, collect(1:max_piece_type))
-			#@assert !isempty(indexes)
-			for x in w[indexes]
-				if iszero(plis[pll, x, 1])
-					push!(next, (pll, x, 1, n += 1))
-					plis[pll, x, 1] = n
-				end
-				if iszero(plis[pll, plw - x, 3])
-					push!(next, (pll, plw - x, 3, n += 1))
-					plis[pll, plw - x, 3] = n
-				end
-				push!(vcuts, (pli, plis[pll, x, 1], plis[pll, plw - x, 3]))
-			end
-		elseif pls == 2 || pls == 3
-			for x in becker2019_discretize(
-				d, w, l, plw ÷ 2, pll; ignore_2th_dim = ignore_2th_dim
-			)
-				#x > plw ÷ 2 && break
-				@assert pll >= min_pil
-				@assert x >= min_piw
-				@assert plw - x >= min_piw
-				if iszero(plis[pll, x, 1])
-					push!(next, (pll, x, 1, n += 1))
-					plis[pll, x, 1] = n
-				end
-				if iszero(plis[pll, plw - x, 3])
-					push!(next, (pll, plw - x, 3, n += 1))
-					plis[pll, plw - x, 3] = n
-				end
-				push!(vcuts, (pli, plis[pll, x, 1], plis[pll, plw - x, 3]))
-			end
-		end
-	end
-	#@show piece_cuts_avoided_by_symmb
+"""
+    ub_num_pieces_fit(d, l, w, a, L, W, A, cutoff; ignore_2th_dim = false)
 
-	# For each possible subplatex size, same_size_plis groups the plate indexes
-	# that refer to the plates with the same size, and distinct symmetry tags.
-	same_size_plis = Vector{Vector{P}}()
-	# The length of same_size_plis may be as low as one third of length(pli2lwsb)
-	# and as high as length(pli2lwsb).
-	sizehint!(same_size_plis, length(pli2lwsb))
-	for j = 1:W, i = 1:L # column-major for performance
-		temp = Vector{P}()
-		!iszero(plis[i, j, 1]) && push!(temp, plis[i, j, 1])
-		!iszero(plis[i, j, 2]) && push!(temp, plis[i, j, 2])
-		!iszero(plis[i, j, 3]) && push!(temp, plis[i, j, 3])
-		!iszero(length(temp)) && (push!(same_size_plis, temp); temp = Vector{P}())
-	end
-	@assert last(same_size_plis) == P[1]
-	pop!(same_size_plis)
+Given a piece set (defined by `d`emand, `l`ength, `w`idth, and `a`rea),
+and a plate (defined by `L`ength, `W`idth, and `A`rea), returns the `min`
+between `cutoff` and an upper bound on the number of pieces that fit inside
+the plate. If `ignore_2th_dim` is true, do not use `w` and `W` to filter
+pieces that do not even fit the plate when alone.
 
-	return pli2lwsb, hcuts, vcuts, pii2plis, pli2piis, same_size_plis
-end
-
-# Take pieces and a plate, return an upper bound on the number of pieces
-# that fit inside the plate. If cutoff becomes greater than limit, return
-# immediately (does not provide a real upper bound, you just know the real
-# upper bound is greater than cutoff). If ignore_2th_dim is true, then it
-# does not use the information of w and W.
+In other words, `ub_num_pieces_fit(..., 6)` will return `6` if it is
+possible (but not guaranteed) for `6` or more pieces to fit in the plate,
+and will return `x` if `x < 6` is the greatest number of pieces that have
+yet some possibility of being packed together; `x + 1` is already
+guaranteed to be impossible.
+"""
 function ub_num_pieces_fit(
 	d :: Vector{D},
 	l :: Vector{S},
@@ -425,13 +228,22 @@ function ub_num_pieces_fit(
 				A < a[i] && return ub
 				A -= a[i]
 				ub += 1
-				ub > cutoff && return ub
+				ub > cutoff && return cutoff
 			end
 		end
 	end
 	return ub
 end
 
+"""
+    no_chance_to_fit_6_piece(d, l, w, a, L, W, A; ignore_2th_dim = false)
+
+Returns true if it is demonstrably impossible to fit six pieces into the plate;
+and false if there is some possibility (but no guarantee) of fitting six pieces
+in the plate.
+
+If `ignore_2th_dim` is true, `w` and `W` are ignored by the algorithm.
+"""
 function no_chance_to_fit_6_piece(
 	d :: Vector{D},
 	l :: Vector{S},
@@ -443,11 +255,29 @@ function no_chance_to_fit_6_piece(
 	ignore_2th_dim = false
 ) :: Bool where {D, S, P}
 	ub = ub_num_pieces_fit(
-		d, l, w, a, L, W, A, 5; ignore_2th_dim = ignore_2th_dim
+		d, l, w, a, L, W, A, 6; ignore_2th_dim = ignore_2th_dim
 	)
-	return ub <= 5
+	return ub < 6
 end
 
+"""
+    reduce2fit_usl(sl, sli2pii, w, L, W) :: [S]
+
+Given a plate (`L`, `W`), and the pieces sorted by length (`sl`, `sli2pii`,
+`w`), return an increasing vector of unique lengths that pertain to a piece
+that fits the plate. If two or more pieces share length and fit the plate, only
+one copy of that length is included in the returned vector.
+
+# Arguments
+
+1. `sl::Vector{S}`: The piece lengths sorted by increase-or-stay order.
+2. `sli2pii::Vector{D}`: If `sli2pii[i] == j` then `sl[i]` and `w[j]`
+  correspond to the same item.
+3. `w::Vector{S}`: The piece widths (in 'original' order).
+4. `L::S`: The length of the plate.
+5. `W::S`: The width of the plate.
+
+"""
 function reduce2fit_usl(
 	sl :: Vector{S},
 	sli2pii :: Vector{D},
@@ -465,6 +295,12 @@ function reduce2fit_usl(
 	xs
 end
 
+"""
+    fits_at_least_one(sllw, L, W) :: Bool
+
+True if at least one piece in `sllw` fits inside a `L`x`W` plate;
+false otherwise.
+"""
 function fits_at_least_one(
 	sllw :: SortedLinkedLW{D, S}, L :: S, W :: S
 ) :: Bool where {D, S}
@@ -476,6 +312,15 @@ function fits_at_least_one(
 	return false
 end
 
+"""
+    filter_symm_pos(disc, dim, disc_copy = copy(disc)) -> disc_copy
+
+Implement the symmetry-breaking described in Section 2.1 of
+10.1287/ijoc.2016.0710 (just after equation 10). Given a list of discretized
+lengths (or widths) `disc` and the plate length (or width) `dim`, return a
+copy of `disc` without all positions `i` in which ```disc[i] > div(dim/2)
+\\land (\\exists. disc[j] == dim - disc[i])```.
+"""
 function filter_symm_pos(
 	disc :: Vector{S},
 	dim :: S,
@@ -483,7 +328,6 @@ function filter_symm_pos(
 ) :: Vector{S} where {S}
 	half_dim = dim ÷ 2
 	for xy in disc
-		# If the plate has
 		(xy > half_dim || (xy == dim - xy)) && break
 		symm_pos = dim - xy
 		symm_idx = searchsortedlast(disc, symm_pos)
@@ -514,13 +358,76 @@ function filter_redundant_cuts!(
 	end
 end
 
+"""
+    gen_cuts(::Type{P}, d, sllw, L, W; [kword_args])
+
+The main method responsible for generating all the cuts used to create both the
+original PP-G2KP model as its enhanced version (in this case, it generates the
+piece extractions too).
+
+# Arguments
+
+## Positional and required arguments
+
+1. `::Type{P}`: The type of the piece profits (and area).
+2. `d::Vector{D}`: The pieces demand.
+3. `sllw::SortedLinkedLW{D, S}`: The SortedLinkedLW containing the length and
+  width of the pieces.
+4. `L::S`: The plate length.
+5. `W::S`: The plate width.
+
+## Keyword arguments
+
+All keyword arguments are of type `Bool`.
+
+* `ignore_2th_dim`: Default: false. Ignore the dimension not being discretized
+  during discretization.
+* `ignore_d`: Default: false. Ignore the demand information during
+  discretization.
+* `round2disc`: Default: true. Round the size of the second child of a
+  cut to a discretized position.
+* `faithful2furini2016`: Default: false. Tries to be the most faithful possible
+  to the description in 10.1287/ijoc.2016.0710.
+* `no_redundant_cut`: Default: false. Disables the Redundant-Cut reduction
+  described in 10.1287/ijoc.2016.0710.
+* `no_cut_position`: Default: false. Disables the Cut-Position reduction
+  described in 10.1287/ijoc.2016.0710.
+* `no_furini_symmbreak`: Default: false. Ignored if `faithful2furini2016`
+  is `false`. Disables the symmetry-breaking used in 10.1287/ijoc.2016.0710
+  (consequently all discretized positions are used, none is removed).
+
+# Returns
+
+1. List of all generated plates. The triple is: plate length, plate width,
+  and plate bound (how many of the plate fit inside the original plate).
+  The index/identifier of a plate is the same as its position in this list.
+2. If `(pp, cp1, cp2)` is present in this list, then the model has an
+  horizontal cut that divides parent plate `pp` into child plates `cp1` and
+  `cp2`. The three values are indexes in the list of all generated plates
+  (except `cp2` may be zero, i.e., a trim/waste).
+3. The same as the second returned value, but for the vertical cuts.
+4. A list of plate-piece pairs in which the plate may be sold as the
+  respective piece. If `faithful2furini2016` is `true`, then this list
+  has always the same size than the number of piece types and each
+  plate that may be sold as a piece has the exact dimensions of the respective
+  piece. If `faithful2furini2016` is `false` then this is the list of
+  'extraction variables' and the plates may have dimensions slight
+  different from their respective pieces, and each plate may be sold as
+  one of many distinct pieces, and each piece may be extracted from many
+  different plates.
+"""
 function gen_cuts(
 	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
 	ignore_2th_dim = false, ignore_d = false, round2disc = true,
 	faithful2furini2016 = false,
 	no_redundant_cut = false, no_cut_position = false,
 	no_furini_symmbreak = false
-) where {D, S, P}
+) :: Tuple{
+	Vector{Tuple{S, S, P}},
+  Vector{NTuple{3, P}},
+  Vector{NTuple{3, P}},
+  Vector{Tuple{P, D}}
+} where {D, S, P}
 	faithful2furini2016 && round2disc && @warn(
 		"Enabling both faithful2furini2016 and round2disc is allowed, but you are not being entirely faithful to Furini2016 if you do so."
 	)
@@ -594,11 +501,11 @@ function gen_cuts(
 	# and may be needed (even if Cut-Position is used) for reducing the size of
 	# the second child to the last discretized position (if round2disc is
 	# enabled).
-	dl1 = dl2 = dls[W] = becker2019_discretize(
+	dl1 = dl2 = dls[W] = discretize(
 		d, l, w, L, W; ignore_W = ignore_2th_dim, ignore_d = ignore_d
 	)
 	#@show length(dl1)
-	dw1 = dw2 = dws[L] = becker2019_discretize(
+	dw1 = dw2 = dws[L] = discretize(
 		d, w, l, W, L; ignore_W = ignore_2th_dim, ignore_d = ignore_d
 	)
 	#fpr_count = 0
@@ -628,12 +535,12 @@ function gen_cuts(
 			dl1 = dl2 = dls[W]
 			dw1 = dw2 = dws[L]
 		else
-			isempty(dls[plw]) && (dls[plw] = becker2019_discretize(
+			isempty(dls[plw]) && (dls[plw] = discretize(
 				d, l, w, L, plw; ignore_d = ignore_d
 			))
 			dl1 = dl2 = dls[plw]
 
-			isempty(dws[pll]) && (dws[pll] = becker2019_discretize(
+			isempty(dws[pll]) && (dws[pll] = discretize(
 				d, w, l, W, pll; ignore_d = ignore_d
 			))
 			dw1 = dw2 = dws[pll]
@@ -902,6 +809,202 @@ function gen_cuts(
 
 	return pli_lwb, hnnn, vnnn, np
 end
+
+# TODO: Consider if this should be enabled back again considering that, for
+# now, the idea of a symmetry-breaking version of PP-G2KP was abandoned.
+# TODO: internal change. The symmetry tag dimension of plis should be the
+# first one, given how columnwise memory layout works.
+#=
+function gen_cuts_sb(
+	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
+	ignore_2th_dim = false, ignore_d = false, round2disc = true
+) where {D, S, P}
+	(ignore_d || ignore_2th_dim || round2disc) && @error "ignore_2th_dimm, ignore_d, and round2disc are not yet implemented for gen_cuts_sb, also, first improve the performance by memoizing the discretizations"
+	l = sllw.l
+	w = sllw.w
+	@assert length(d) == length(l)
+	@assert length(d) == length(w)
+	only_single_l = discretize(
+		d, l, w, L, W; only_single_pieces = true, ignore_W = ignore_2th_dim,
+		ignore_d = ignore_d
+	)
+	only_single_w = discretize(
+		d, w, l, W, L; only_single_pieces = true, ignore_W = ignore_2th_dim,
+		ignore_d = ignore_d
+	)
+	max_piece_type = convert(D, length(l))
+	max_num_plates = convert(P, L) * convert(P, W) * 3
+	min_pil = minimum(l)
+	min_piw = minimum(w)
+	# If (n1, n2, n3) is in hcut (vcuts), then n1 may be partitioned in n2 and n3
+	# by the means of a horizontal (vertical) cut. Not every possible partition
+	# is present, just the ones which each child plate can fit at least one
+	# piece, and the ones where one child plate has the same dimension as a piece
+	# and the other is the dummy waste plate.
+	hcuts = Vector{NTuple{3, P}}()
+	vcuts = Vector{NTuple{3, P}}()
+	# If the plate has the exact same size that a piece, then it is added to
+	# the vector at pii2plis[piece_type].
+	pii2plis = [Vector{P}() for _ = 1:max_piece_type]
+	# If the piece has the exact same size that a plate, then it is added to
+	# the vector at pli2piis[plate_type].
+	pli2piis = Vector{D}[]
+	# The list of plates attributes: plate length, plate width, plate symmetry,
+	# and plate bound. The plate index is the same as the index in pli_lwsb.
+	pli2lwsb = Vector{Tuple{S, S, UInt8, P}}()
+	# plis: matrix of the plate dimensions in which zero means "never seen that
+	# plate before" and nonzero means "this nonzero number is the plate index".
+	plis = zeros(P, L, W, 3)
+	plis[L, W, 3] = one(P)
+	# next: plates already indexed but not yet processed, starts with (L, W,
+	# 3, 1). The size of the original plate, the code for being able to cut
+	# in any direction (same as third dimension of plis), and the plate index.
+	# Storing the index as the third value is not necessary (as it could be
+	# queried from plis) but this is probably more efficient this way.
+	next = Vector{Tuple{S, S, UInt8, P}}()
+	next_idx = one(P)
+	#sizehint!(next, max_num_plates)
+	push!(next, (L, W, 3, one(P)))
+	# n: The amount of plates (the index of the highest plate type).
+	n = one(P) # there is already the original plate
+	piece_cuts_avoided_by_symmb = 0
+	while next_idx <= length(next)
+		# PLate Length, Width, Symmetry, and Index
+		pll, plw, pls :: UInt8, pli = next[next_idx]
+		next_idx += 1
+		plb = (L ÷ pll) * (W ÷ plw) # PLate Bound
+		# It is not necessary to store the plate id in pli2lwsb because they are
+		# added in order (a queue is used), so the array index is the plate index.
+		push!(pli2lwsb, (pll, plw, pls, plb))
+		# the pli2piis vector grows with the number of plates processed
+		push!(pli2piis, D[])
+		for pii in 1:max_piece_type # pii: PIece Index
+			pil, piw = l[pii], w[pii] # PIece Length and Width (homophones, I know)
+			if pil == pll && piw == plw
+				# If the current plate is exactly the size of a plate, add it to
+				# the list of plate codes that correspond to a piece.
+				push!(pii2plis[pii], pli)
+				push!(pli2piis[pli], pii)
+			elseif should_extract_piece_from_plate(pii, pll, plw, sllw, pls)
+				# If there is no way to cut the current piece from the current plate
+				# except if we cut after the half of the plate... (i.e., the most
+				# unbalanced cut possible, that is, making a cut with the minimal
+				# length or width among the pieces, removes the possibility of getting
+				# such piece from the larger child plate)
+				if pil < pll && (pls == 1 || pls == 3)
+					# If the current plate is allowed to be cut horizontally (i.e.,
+					# reducing the length) and we need to reduce the length to make the
+					# plate into the piece, then we do so.
+					if iszero(plis[pil, plw, 2])
+						push!(next, (pil, plw, 2, n += 1))
+						plis[pil, plw, 2] = n
+					end
+					push!(hcuts, (pli, plis[pil, plw, 2], 0))
+				elseif piw < plw && (pls == 2 || pls == 3)
+					# If the current plate is allowed to be cut vertically (i.e.,
+					# reducing the width) and we need to reduce the width to make the
+					# plate into the piece, then we do so.
+					if iszero(plis[pll, piw, 1])
+						push!(next, (pll, piw, 1, n += 1))
+						plis[pll, piw, 1] = n
+					end
+					push!(vcuts, (pli, plis[pll, piw, 1], 0))
+				else
+					piece_cuts_avoided_by_symmb += 1
+				end
+			end
+		end
+		# TODO: after is working, refactor the code below to use a single loop
+		# using a vector saved in a variable, or an inner function
+		sorted_in(a, v) = searchsortedfirst(a, v) <= length(a)
+		if pls == 1 && sorted_in(only_single_w, plw)
+			indexes = filter(i -> w[i] == plw && l[i] < pll, collect(1:max_piece_type))
+			#@assert !isempty(indexes)
+			for y in l[indexes]
+				if iszero(plis[y, plw, 2])
+					push!(next, (y, plw, 2, n += 1))
+					plis[y, plw, 2] = n
+				end
+				if iszero(plis[pll - y, plw, 3])
+					push!(next, (pll - y, plw, 3, n += 1))
+					plis[pll - y, plw, 3] = n
+				end
+				push!(hcuts, (pli, plis[y, plw, 2], plis[pll - y, plw, 3]))
+			end
+		elseif pls == 1 || pls == 3
+			for y in discretize(
+				d, l, w, pll ÷ 2, plw; ignore_2th_dim = ignore_2th_dim
+			)
+				#y > pll ÷ 2 && break
+				@assert plw >= min_piw
+				@assert y >= min_pil
+				@assert pll - y >= min_pil
+				if iszero(plis[y, plw, 2])
+					push!(next, (y, plw, 2, n += 1))
+					plis[y, plw, 2] = n
+				end
+				if iszero(plis[pll - y, plw, 3])
+					push!(next, (pll - y, plw, 3, n += 1))
+					plis[pll - y, plw, 3] = n
+				end
+				push!(hcuts, (pli, plis[y, plw, 2], plis[pll - y, plw, 3]))
+			end
+		end
+		if pls == 2 && sorted_in(only_single_l, pll)
+			indexes = filter(i -> l[i] == pll && w[i] < plw, collect(1:max_piece_type))
+			#@assert !isempty(indexes)
+			for x in w[indexes]
+				if iszero(plis[pll, x, 1])
+					push!(next, (pll, x, 1, n += 1))
+					plis[pll, x, 1] = n
+				end
+				if iszero(plis[pll, plw - x, 3])
+					push!(next, (pll, plw - x, 3, n += 1))
+					plis[pll, plw - x, 3] = n
+				end
+				push!(vcuts, (pli, plis[pll, x, 1], plis[pll, plw - x, 3]))
+			end
+		elseif pls == 2 || pls == 3
+			for x in discretize(
+				d, w, l, plw ÷ 2, pll; ignore_2th_dim = ignore_2th_dim
+			)
+				#x > plw ÷ 2 && break
+				@assert pll >= min_pil
+				@assert x >= min_piw
+				@assert plw - x >= min_piw
+				if iszero(plis[pll, x, 1])
+					push!(next, (pll, x, 1, n += 1))
+					plis[pll, x, 1] = n
+				end
+				if iszero(plis[pll, plw - x, 3])
+					push!(next, (pll, plw - x, 3, n += 1))
+					plis[pll, plw - x, 3] = n
+				end
+				push!(vcuts, (pli, plis[pll, x, 1], plis[pll, plw - x, 3]))
+			end
+		end
+	end
+	#@show piece_cuts_avoided_by_symmb
+
+	# For each possible subplatex size, same_size_plis groups the plate indexes
+	# that refer to the plates with the same size, and distinct symmetry tags.
+	same_size_plis = Vector{Vector{P}}()
+	# The length of same_size_plis may be as low as one third of length(pli2lwsb)
+	# and as high as length(pli2lwsb).
+	sizehint!(same_size_plis, length(pli2lwsb))
+	for j = 1:W, i = 1:L # column-major for performance
+		temp = Vector{P}()
+		!iszero(plis[i, j, 1]) && push!(temp, plis[i, j, 1])
+		!iszero(plis[i, j, 2]) && push!(temp, plis[i, j, 2])
+		!iszero(plis[i, j, 3]) && push!(temp, plis[i, j, 3])
+		!iszero(length(temp)) && (push!(same_size_plis, temp); temp = Vector{P}())
+	end
+	@assert last(same_size_plis) == P[1]
+	pop!(same_size_plis)
+
+	return pli2lwsb, hcuts, vcuts, pii2plis, pli2piis, same_size_plis
+end
+=#
 
 end # module
 
