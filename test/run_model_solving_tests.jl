@@ -10,6 +10,14 @@ const TINY_HANDMADE_INSTANCES = Tuple{String, Int64, String}[
 		15 15 1 1
 		15 10 1 1
 		10 15 1 1
+	"""),
+	("One piece fit the plate others do not.", 10, """
+		10 10
+		4
+		10 10 10 1
+		15 15 1 1
+		15 10 1 1
+		10 15 1 1
 	""")
 ]
 
@@ -75,7 +83,7 @@ function test_obj_val_of_all_combinations(
 end
 
 test_obj_val_of_all_combinations(
-	[#=:PPG2KP,=# :Flow],
+	[:PPG2KP, :Flow],
 	[:GLPK],
 	[TINY_HANDMADE_INSTANCES; EASY_LITERATURE_INSTANCES]
 )
