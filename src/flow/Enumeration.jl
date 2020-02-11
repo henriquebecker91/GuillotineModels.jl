@@ -52,6 +52,7 @@ function gen_rr_fow_edges!(
 	n = length(d)
 	marked :: Vector{N} = fill(zero(N), L)
 	edges = Vector{Tuple{S, S}}() # start point and end point
+	iszero(n) && return marked, edges
 	# Mark the cuts of the first piece.
 	marked[l[1]] = one(N)
 	push!(edges, (zero(S), l[1]))
@@ -141,7 +142,7 @@ function merge_duplicates(
 	d :: Vector{D}, per :: Vector{S}
 ) :: Tuple{Vector{D}, Vector{S}} where {D, S}
 	@assert length(d) == length(per)
-	#isempty(d) && return d, per
+	isempty(d) && return d, per
 
 	y2d = fill(zero(D), maximum(per))
 	has_duplicates = false
@@ -520,6 +521,7 @@ function gen_all_edges(
 	nodes = Vector{Node{S, N}}()
 	lw2pii = fill(zero(E), L, W)
 	for pii = 1:n
+		(l[pii] > L || w[pii] > W) && continue
 		if !iszero(lw2pii[l[pii], w[pii]])
 			@warn(
 				"CAUTION: the instance has two pieces with the exact same length" *

@@ -179,9 +179,11 @@ function build_model(
 
 	@variable(model, edge[1:last_gedge_idx] >= 0, Int)
 
-	@objective(model, Max,
-		sum(p[pii] * edge[pii] for pii = 1:num_piece_types)
-	)
+	fitting = (pii for pii = 1:num_piece_types if (l[pii] <= L && w[pii] <= W))
+
+	if !isempty(fitting)
+		@objective(model, Max, sum(p[pii] * edge[pii] for pii in fitting))
+	end
 
 	# There is just one of the original plate. Sets the dummy edge to one and
 	# consequently allow one unit of flow to the original plate default
@@ -189,12 +191,18 @@ function build_model(
 	@constraint(model, edge[dummy_vroot_enabler] == 1)
 
 	for i = 1:last_gnode_idx
+		# The flow model should not have vertexes that have no arc arriving
+		# or leaving it (flow must be able to reach the vertex and leave it,
+		# however in the rare case of an instance with pieces that do not fit
+		# the plate, or a empty set of pieces, this may happen.
+		#=
 		if isempty(head2indxs[i]) || isempty(tail2indxs[i])
 			@show i
 			@show head2indxs[i]
 			@show tail2indxs[i]
 		end
-		#@assert !isempty(head2indxs[i]) && !isempty(tail2indxs[i])
+		@assert !isempty(head2indxs[i]) && !isempty(tail2indxs[i])
+		=#
 		@constraint(model,
 			sum(edge[head2indxs[i]]) == sum(edge[tail2indxs[i]])
 		)
@@ -225,8 +233,8 @@ function build_model(
 	))
 	# Order the edges by their index.
 	sort!(edges_data, by = e -> e.indx)
-	@show num_piece_types
-	@show edges_data[num_piece_types+1:num_piece_types+4]
+	#@show num_piece_types
+	#@show edges_data[num_piece_types+1:num_piece_types+4]
 
 	nodes_data, edges_data
 end # build_model_no_symmbreak

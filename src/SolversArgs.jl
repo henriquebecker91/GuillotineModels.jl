@@ -157,12 +157,19 @@ function __init__()
 	@require Cbc="9961bab8-2fa3-5c5a-9d89-47fab24efd76" begin
 	function empty_configured_model(::Val{:Cbc}, p_args)
 		configuration = Pair{String, Any}[
-			"barrier" => true # use barrier for LP
+			# TODO: discover if the barrier algorithm is being correctly used.
+			# The `barrier` command-line "parameter" is in fact an action/command
+			# that solves the model relaxation with the barrier algorithm, and
+			# not an argument for which linear algorithm the branch-and-bound
+			# should use in the root node. The `logLevel` parameter, for example,
+			# does not work with barrier, which will output even if `logLevel` is
+			# set to zero.
+			"logLevel" => p_args["no-output"] ? 0 : 1
 			, "threads" => p_args["threads"]
-			, "logLevel" => p_args["no-output"] ? 0 : 1
+			, "randomCbcSeed" => p_args["seed"]
 			, "seconds" => p_args["time-limit"]
-			, "randomSeed" => p_args["seed"]
 			, "ratioGap" => 1e-6
+			, "barrier" => ""
 		]
 		# TODO: implement a no-trick flag for Cbc?
 		raw_parameters = eval(
@@ -188,7 +195,7 @@ function __init__()
 			),
 			Arg(
 				"seed", 1,
-				"Set Cbc parameter: randomSeed. Our default is 1 (different from Cbc default that is 1234567)."
+				"Set Cbc parameter: randomCbcSeed. Our default is 1 (different from Cbc default that is -1)."
 			),
 			Arg(
 				"no-output", false,
@@ -198,7 +205,6 @@ function __init__()
 				"raw-parameters", "Pair{String, Any}[]",
 				"A string of Julia code to be evaluated to Cbc parameters. For example: 'Pair{String, Any}[\"logLevel\" => 0]' will have the same effect as --Cbc-no-output. Obviously, this is a security breach. The complete list of parameters can be found by running the cbc executable and typing ? at the prompt."
 			)
-
 		]
 	end
 
@@ -266,10 +272,11 @@ function empty_configured_model(
 	::Val{T}, p_args
 ) where {T}
 	@error(
-		"solver " * string(T) * " is not supported (i.e., there is not" *
-		" an implementation of Julia method 'empty_configured_model(" *
-		"::Val{:SolverPackageName}, p_args)' for it) or the solver package" *
-		" was not imported before this method was called."
+		"Solver " * string(T) * " is not supported (i.e., there is not" *
+		" an implementation of Julia method `GuillotineModels.CommandLine" *
+		".SolversArgs.empty_configured_model(::Val{Symbol(\"$(string(T))\")}," *
+		"p_args)` for it) or the solver package was not imported before this" *
+		"method was called."
 	)
 end
 

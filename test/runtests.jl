@@ -1,3 +1,3 @@
 
-println("No test implemented yet.")
+include("run_model_solving_tests.jl")
 

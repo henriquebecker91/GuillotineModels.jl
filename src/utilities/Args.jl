@@ -45,9 +45,11 @@ name of the supported solvers and implemented methods need to be passed to the
 See also: [`run`](@ref)
 """
 function accepted_arg_list(::Val{T}) :: Vector{Arg} where {T}
-	@error (
-		"A specialized method for $(T) should exist, but instead this" *
-		" generic error fallback was called."
+	@error(
+		"Solver " * string(T) * " is not supported (i.e., there is not" *
+		" an implementation of Julia method `GuillotineModels.Utilities." *
+		".Args.accepted_arg_list(::Val{Symbol(\"$(string(T))\")})` for it) or" *
+		" the solver package was not imported before this method was called."
 	)
 end
 
@@ -55,7 +57,7 @@ end
     throw_if_incompatible_options(::Val{T}, p_args) where {T}
 
 Generic error fallback. Any model or solver to be supported by
-GuillotineModules.SolversArgs.run should implement their own version of this
+GuillotineModels.SolversArgs.run should implement their own version of this
 method (replacing the `T` in `::Val{T}` by a Symbol identifying the solver
 package or the name of the model). Look at module SolversArgs source for
 examples of the implementation for a solver, and at PPG2KP module source for
