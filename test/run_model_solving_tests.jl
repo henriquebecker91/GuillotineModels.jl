@@ -3,21 +3,43 @@ const TINY_HANDMADE_INSTANCES = Tuple{String, Int64, String}[
 		1 1
 		1
 		1 1 1 1
-	"""),
-	("Pieces do not fit plate.", 0, """
+	""")
+	, ("Pieces do not fit plate.", 0, """
 		10 10
 		3
 		15 15 1 1
 		15 10 1 1
 		10 15 1 1
-	"""),
-	("One piece fit the plate others do not.", 10, """
+	""")
+	, ("One piece fit the plate others do not.", 10, """
 		10 10
 		4
 		10 10 10 1
 		15 15 1 1
 		15 10 1 1
 		10 15 1 1
+	""")
+	, ("Two halfs instead slightly larger very efficient piece.", 20, """
+		10 20
+		2
+		10 10 10 2
+		10 11 19 1
+	""")
+	, ("The whole plate could be used if the plates were rotated.", 20, """
+		16 20
+		2
+		10 8 10 2
+		10 16 19 1
+	""")
+	, ("Plate 100x100 and 100 pieces 10x10 with profit 7.", 700, """
+		100 100
+		1
+		10 10 7 100
+	""")
+	, ("Plate 50x200 and 200 pieces 10x10 with profit 7.", 700, """
+		100 100
+		1
+		10 10 7 200
 	""")
 ]
 
@@ -35,6 +57,31 @@ const EASY_LITERATURE_INSTANCES = Tuple{String, Int64, String}[
 		66 148 9768 1
 		87 141 12267 1
 		69 165 11385 1
+	""")
+	, ("cgcut1", 244, """
+		15 10
+		7
+		8 4 66 2
+		3 7 35 1
+		8 2 24 3
+		3 4 17 5
+		3 3 11 2
+		3 2  8 2
+		2 1  2 1
+	""")
+	, ("CHL5", 390, """
+		20 20
+		10
+		14  2 28 1
+		1   5  5 1
+		20  4 80 2
+		12  3 36 3
+		11  8 88 2
+		11  6 66 2
+		7   9 63 1
+		17  5 85 1
+		7  14 98 2
+		1   7  7 3
 	""")
 ]
 
@@ -63,7 +110,7 @@ function test_obj_val(
 	build_model(Val(model), m, d, p, l, w, L, W, Dict{String, Any}())
 	JuMP.optimize!(m)
 	@test JuMP.primal_status(m) == MOI.FEASIBLE_POINT
-	@test JuMP.objective_value(m) == obj_val
+	@test JuMP.objective_value(m) ≈ obj_val rtol=1e-6 atol=1e-6
 end
 
 function test_obj_val_of_all_combinations(
