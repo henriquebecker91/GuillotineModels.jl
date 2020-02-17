@@ -18,7 +18,7 @@ using TimerOutputs
 """
     min_l_fitting_piece(l, w, L, W)
 
-Given a plate `L`x`W` and a pieces dimensions list (`l`, `w`),
+Given a plate `L`x`W` and two pieces dimensions list (`l`, `w`),
 return the index of the piece of smallest length that fits the
 plate (the width dimension may preclude this from being just
 the piece of smallest length).

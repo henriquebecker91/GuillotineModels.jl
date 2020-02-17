@@ -1,3 +1,6 @@
+# TODO: for now, many documentation strings do not wrap at 79 characters
+# because this break list items, discover where is the problem (incorrect use
+# of markdown? documenter.jl is broken?).
 """
 GuillotineModels is a collection of mathematical models for 2D Guillotine
 Cutting problems, all implemented using Julia+JuMP.
@@ -6,7 +9,7 @@ It was developed as part of the PhD thesis of Henrique Becker.
 
 The main features are:
 1. The implementation of distinct models using the same technology (Julia+JuMP) which is solver-agnostic.
-2. The implementation of a CommandLine interfact that make it easy to call the implemented models from the command-line to be solved by an specified solver, and also is extendable for new models and solvers.
+2. The implementation of a CommandLine interface that make it easy to call the implemented models from the command-line to be solved by an specified solver, and also is extendable for new models and solvers.
 """
 module GuillotineModels
 
@@ -29,10 +32,8 @@ variables values of a solved model.
 
 # Arguments
 
-1. `::Val{T}`: Must be a `value-type` of a symbol identifying the mathematical
-  to be built.
-2. `model`: Something that behaves as a JuMP model, it wil have variables and
-  constraints added to it.
+1. `::Val{T}`: Must be a `value-type` of a symbol identifying the mathematical to be built.
+2. `model`: Something that behaves as a JuMP model, it wil have variables and constraints added to it.
 3. `d::Vector{D}`: The demand of the pieces.
 4. `p::Vector{D}`: The profit of the pieces.
 5. `l::Vector{D}`: The length of the pieces.
@@ -40,8 +41,6 @@ variables values of a solved model.
 7. `L::S`: The length of the original plate.
 8. `W::S`: The width of the original plate.
 9. `options::Dict{String, Any}`: Model-specific options.
-
-
 """
 function build_model(
 	::Val{T}, model, d :: Vector{D}, p :: Vector{P},

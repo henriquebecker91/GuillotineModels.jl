@@ -9,7 +9,7 @@ and their reverse indexes, allowing to, for example, iterate the pieces
 by length while having `O(1)` access to their width.
 """
 struct SortedLinkedLW{D, S}
-  "The pieces length in the original order."
+	"The pieces length in the original order."
 	l :: Vector{S}
 	"The pieces width in the original order."
 	w :: Vector{S}
