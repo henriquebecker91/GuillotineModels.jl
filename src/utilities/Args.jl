@@ -79,9 +79,9 @@ function throw_if_incompatible_options(
 end
 
 """
-		ArgParse.add_arg_table(settings :: ArgParseSettings, arg :: Arg)
+		ArgParse.add_arg_table!(settings :: ArgParseSettings, arg :: Arg)
 
-A specialization of ArgParse.add_arg_table to transform Arg objects into
+A specialization of ArgParse.add_arg_table! to transform Arg objects into
 options of ArgParseSettings. Boolean arguments become `:store_{true|false}`
 options (depending on the default) and non-boolean arguments become
 `:store_arg` options with a default (and enforcing the same arg_type of the
@@ -103,7 +103,7 @@ function ArgParse.add_arg_table!(settings :: ArgParseSettings, arg :: Arg)
 		)
 	end
 	# only long options are accepted, enforced clarity
-	ArgParse.add_arg_table(settings, "--" * arg.name, conf)
+	ArgParse.add_arg_table!(settings, "--" * arg.name, conf)
 end
 
 """
