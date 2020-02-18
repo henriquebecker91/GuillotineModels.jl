@@ -1,10 +1,10 @@
-# GuillotineModels.CommandLine.SolverArgs
+# GuillotineModels.CommandLine.SolversArgs
 
 ```@meta
 CurrentModule = GuillotineModels
 ```
 
 ```@autodocs
-Modules = [GuillotineModels.CommandLine.SolverArgs]
+Modules = [GuillotineModels.CommandLine.SolversArgs]
 ```
 

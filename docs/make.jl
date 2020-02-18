@@ -8,7 +8,7 @@ makedocs(
   , checkdocs = :exports
   , sitename = "GuillotineModels.jl"
   , pages = Any[
-		"GuillotineModels.md",
+		"GuillotineModels" => "index.md",
 		"Utilities" => [
 			"Utilities.md",
 			"U-Args.md"
@@ -16,7 +16,7 @@ makedocs(
 		"InstanceReader" => "InstanceReader.md",
 		"CommandLine" => [
 			"CommandLine.md",
-			"CommandLine.SolverArgs" => "CL-SolverArgs.md"
+			"CommandLine.SolverArgs" => "CL-SolversArgs.md"
 		],
 		"PPG2KP" => [
 			"PPG2KP.md",

@@ -27,7 +27,7 @@ Base.iterate(a :: Arg, nothing) = nothing
     accepted_arg_list(::Val{T}) :: Vector{Arg} where {T}
 
 Generic error fallback. Any model or solver to be supported by
-GuillotineModules.SolversArgs.run should implement their own version of this
+`GuillotineModules.SolversArgs.run` should implement their own version of this
 method (replacing the `T` in `::Val{T}` by a Symbol identifying the solver
 package or the name of the model). Look at module SolversArgs source for
 examples of the implementation for a solver, and at PPG2KP module source for
@@ -38,11 +38,9 @@ either a boolean default (in this case they take no argument, the presence of
 the option just flips the default value) or a non-boolean default (in this
 case, if they are passed in the command-line, they must have a parameter; if
 they are not passed, the default value is used).  Every solver implementation
-must support the `no-output` and preferably the 'raw-argument' option too. The
+must support the `no-output` and preferably the `raw-argument` option too. The
 name of the supported solvers and implemented methods need to be passed to the
 `run` method for them to be considered by it.
-
-See also: [`run`](@ref)
 """
 function accepted_arg_list(::Val{T}) :: Vector{Arg} where {T}
 	@error(
@@ -57,17 +55,18 @@ end
     throw_if_incompatible_options(::Val{T}, p_args) where {T}
 
 Generic error fallback. Any model or solver to be supported by
-GuillotineModels.SolversArgs.run should implement their own version of this
+`GuillotineModels.SolversArgs.run` should implement their own version of this
 method (replacing the `T` in `::Val{T}` by a Symbol identifying the solver
 package or the name of the model). Look at module SolversArgs source for
 examples of the implementation for a solver, and at PPG2KP module source for
 examples for a model. Every solver implementation must support the `no-output`
-option.
+option, and there is no need to guarantee that conflicts with involving
+the `raw-argument` option are detected.
 
 Often is specialized to an empty method, as is not so often that solvers
 or models have conflicting options.
 
-See also: [`run`](@ref)
+See also: [`GuillotineModules.CommandLine.run`](@ref)
 """
 function throw_if_incompatible_options(
 	::Val{T}, p_args
@@ -81,8 +80,8 @@ end
 """
 		ArgParse.add_arg_table!(settings :: ArgParseSettings, arg :: Arg)
 
-A specialization of ArgParse.add_arg_table! to transform Arg objects into
-options of ArgParseSettings. Boolean arguments become `:store_{true|false}`
+A specialization of `ArgParse.add_arg_table!` to transform `Arg` objects into
+options of `ArgParseSettings`. Boolean arguments become `:store_{true|false}`
 options (depending on the default) and non-boolean arguments become
 `:store_arg` options with a default (and enforcing the same arg_type of the
 default).
