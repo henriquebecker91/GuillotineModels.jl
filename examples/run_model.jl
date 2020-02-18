@@ -1,3 +1,7 @@
+#import Pkg
+#Pkg.activate(".")
+#Pkg.instantiate()
+
 import GuillotineModels
 import TimerOutputs
 # IMPORTANT: the GuillotineModels.CommandLine.run expects a solver to be
@@ -9,9 +13,9 @@ import TimerOutputs
 # just a subset of such solvers installed).
 
 # Supported solvers as of Tue 28 Jan 2020 02:06:06 AM -03:
-import CPLEX
-import Gurobi
-import Cbc
+#import CPLEX
+#import Gurobi
+#import Cbc
 import GLPK
 
 # New solvers may be added by defining a function

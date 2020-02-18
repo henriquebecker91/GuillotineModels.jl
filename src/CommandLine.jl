@@ -5,9 +5,11 @@ module CommandLine
 # External packages used.
 using TimerOutputs
 using JuMP
+import Dates
+import Dates.@dateformat_str
 import ArgParse
-import ArgParse: ArgParseSettings, set_default_arg_group, add_arg_group
-import ArgParse: @add_arg_table, add_arg_table
+import ArgParse: ArgParseSettings, set_default_arg_group!, add_arg_group!
+import ArgParse: @add_arg_table!, add_arg_table!
 
 include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
 using .SolversArgs
@@ -197,7 +199,7 @@ function gen_prefixed_argparse_settings(
 ) :: ArgParse.ArgParseSettings
 	prefix = solver_or_model_name # long name only for documentation
 	s = ArgParseSettings()
-	ArgParse.add_arg_group(
+	ArgParse.add_arg_group!(
 		s, "$(prefix)-specific Options", "$(prefix)-specific-options"
 	)
 	original_args = accepted_arg_list(Val(Symbol(prefix)))
@@ -205,9 +207,9 @@ function gen_prefixed_argparse_settings(
 		Arg(string(prefix) * "-" * arg.name, arg.default, arg.help)
 	end
 	for arg in prefixed_args
-		ArgParse.add_arg_table(s, arg)
+		ArgParse.add_arg_table!(s, arg)
 	end
-	set_default_arg_group(s)
+	set_default_arg_group!(s)
 	s
 end
 
@@ -220,8 +222,8 @@ all extra arguments must be options (i.e., be optional and preceded by dashes).
 """
 function core_argparse_settings() :: ArgParseSettings
 	s = ArgParse.ArgParseSettings()
-	ArgParse.add_arg_group(s, "Core Parameters", "core_parameters")
-	@add_arg_table s begin
+	ArgParse.add_arg_group!(s, "Core Parameters", "core_parameters")
+	@add_arg_table! s begin
 		"model"
 			help = "Model or solution procedure to be used (case sensitive, ex.: Flow, KnapsackPlates, PPG2KP). Required."
 			arg_type = String
@@ -232,7 +234,7 @@ function core_argparse_settings() :: ArgParseSettings
 			help = "The path to the instance to be solved."
 			arg_type = String
 	end
-	set_default_arg_group(s)
+	set_default_arg_group!(s)
 	s
 end
 
@@ -286,11 +288,11 @@ independent from the chosen solver or model.
 """
 function generic_argparse_settings()
 	s = ArgParse.ArgParseSettings()
-	add_arg_group(s, "Generic Options", "generic_options")
+	add_arg_group!(s, "Generic Options", "generic_options")
 	for arg in generic_args()
-		add_arg_table(s, arg)
+		add_arg_table!(s, arg)
 	end
-	set_default_arg_group(s)
+	set_default_arg_group!(s)
 	s
 end
 
@@ -519,14 +521,16 @@ function run(
 	supported_solvers = [:CPLEX, :Gurobi, :Cbc, :GLPK]
 )
 	@timeit "run" begin
-	#@show args
 	p_args = parse_args(args, implemented_models, supported_solvers)
-	#@show p_args
+	!p_args["no-csv-output"] && @show args
+	!p_args["no-csv-output"] && @show p_args
+	date_now = Dates.format(Dates.now(), dateformat"Y-m-dTH:M:S")
+	!p_args["no-csv-output"] && @show date_now
 	!p_args["do-not-mock-for-compilation"] && mock_for_compilation(p_args)
 	# remaining code should not depend on this option
 	delete!(p_args, "do-not-mock-for-compilation")
 	total_instance_time = @elapsed read_build_solve_and_print(p_args)
-	@show total_instance_time
+	!p_args["no-csv-output"] && @show total_instance_time
 	end # timeit
 end
 

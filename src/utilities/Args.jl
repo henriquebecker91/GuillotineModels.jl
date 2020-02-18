@@ -87,7 +87,7 @@ options (depending on the default) and non-boolean arguments become
 `:store_arg` options with a default (and enforcing the same arg_type of the
 default).
 """
-function ArgParse.add_arg_table(settings :: ArgParseSettings, arg :: Arg)
+function ArgParse.add_arg_table!(settings :: ArgParseSettings, arg :: Arg)
 	if isa(arg.default, Bool)
 		conf = Dict{Symbol, Any}(
 			:help => arg.help,

@@ -1,15 +1,17 @@
 """
-SolversArgs module aggregates the methods necessary for making solvers
-available to use with GuillotineModels.CommandLine methods.
+`SolversArgs` module aggregates the methods necessary for making solvers
+available to use with `GuillotineModels.CommandLine` methods (especially
+`run`).
 
-The package Requires is used to implement solver-specific methods only if the
-solver package is loaded. The only non-solver-specific method implemented
-is the error fallback for `empty_configured_model`.
+The package `Requires.jl` is used to implement
+`GuillotineModels.SolversArgs.empty_configured_model(Val(:SOME_SOLVER))`
+only if `SOME_SOLVER` package is loaded.
 
 The solver-specific methods this module implements for each supported solver
 are: `GuillotineModels.Utilities.Args.{accepted_arg_list,
 throw_if_incompatible_options}`, and `GuillotineModels.CommandLine.SolversArgs.
-empty_configured_model`.
+empty_configured_model`. The `GuillotineModels.Utilities` methods are always
+available, not just when the respective solver package was imported.
 
 The supported solvers are `CPLEX`, `Gurobi`, `Cbc`, and `GLPK`.
 Supporting new solvers is just a question of implementing a specialization
@@ -64,39 +66,6 @@ function __init__()
 		end
 		model
 	end
-
-	function Utilities.Args.accepted_arg_list(::Val{:CPLEX}) :: Vector{Arg}
-		return [
-			Arg(
-				"threads", 1,
-				"The value of CPXPARAM_Threads. If zero and no callbacks is the number os cores, if zero and callbacks is one. If a positive number, is that number of cores."
-			),
-			Arg(
-				"time-limit", 31536000.0,
-				"The value of CPX_PARAM_TILIM. Depends on CPX_PARAM_CLOCKTYPE which is by default wall clock time (not CPU time). Time limit in seconds for solver B&B (not root solving). Our default is one year."
-			),
-			Arg(
-				"seed", 1,
-				"The value of CPX_PARAM_RANDOMSEED. The random seed used by CPLEX."
-			),
-			Arg(
-				"no-tricks", false,
-				"Set CPX_PARAM_PROBE, CPX_PARAM_HEURFREQ, and CPX_PARAM_REPEATPRESOLVE to -1. Also, set CPX_PARAM_DIVETYPE to 1. Basically, disable many tricks used by CPLEX to speedup the solving (but that sometimes have the opposite effect)."
-			),
-			Arg(
-				"no-output", false,
-				"Set CPX_PARAM_SCRIND to false. Disables the solver output."
-			),
-			Arg(
-				"raw-parameters", "Pair{String, Any}[]",
-				"A string of Julia code to be evaluated to CPLEX parameters. For example: 'Pair{String, Any}[\"CPX_PARAM_SCRIND\" => CPLEX.CPX_OFF]' will have the same effect as --CPLEX-no-output. Obviously, this is a security breach."
-			)
-		]
-	end
-
-	function Utilities.Args.throw_if_incompatible_options(::Val{:CPLEX}, p_args)
-		# TODO: should we throw if the option does not exist?
-	end
 	end # @require CPLEX
 
 	@require Gurobi="2e9cd046-0924-5485-92f1-d5272153d98b" begin
@@ -121,36 +90,6 @@ function __init__()
 			JuMP.set_parameter(model, c...)
 		end
 		model
-	end
-
-	function Utilities.Args.accepted_arg_list(::Val{:Gurobi}) :: Vector{Arg}
-		return [
-			Arg(
-				"threads", 1,
-				"Number of threads for all Gurobi parallelizable algorithms. Zero is automatic, probably the number of cores but may be fewer. If a positive number, is that number of cores."
-			),
-			Arg(
-				"time-limit", 31536000.0,
-				"Set Gurobi parameter: TimeLimit. Total time limit in seconds. Our default is one year."
-			),
-			Arg(
-				"seed", 1,
-				"The random seed used by Gurobi. Our default (one) is different from Gurobi (which is zero)."
-			),
-			Arg(
-				"no-output", false,
-				"Set OutputFlag to zero. Disables the solver output."
-			),
-			Arg(
-				"raw-parameters", "Pair{String, Any}[]",
-				"A string of Julia code to be evaluated to Gurobi parameters. For example: 'Pair{String, Any}[\"OutputFlag\" => 0]' will have the same effect as --Gurobi-no-output. Obviously, this is a security breach."
-			)
-
-		]
-	end
-
-	function Utilities.Args.throw_if_incompatible_options(::Val{:Gurobi}, p_args)
-		# TODO: should we throw if the option does not exist?
 	end
 	end # @require Gurobi
 
@@ -182,35 +121,6 @@ function __init__()
 		end
 		model
 	end
-
-	function Utilities.Args.accepted_arg_list(::Val{:Cbc}) :: Vector{Arg}
-		return [
-			Arg(
-				"threads", 1,
-				"Number of threads for \"parallel branch-and-bound\"."
-			),
-			Arg(
-				"time-limit", 31536000.0,
-				"Set Cbc parameter: seconds. Total time limit in seconds (? not very well documented)."
-			),
-			Arg(
-				"seed", 1,
-				"Set Cbc parameter: randomCbcSeed. Our default is 1 (different from Cbc default that is -1)."
-			),
-			Arg(
-				"no-output", false,
-				"Set logLevel to zero. Disables the solver output."
-			),
-			Arg(
-				"raw-parameters", "Pair{String, Any}[]",
-				"A string of Julia code to be evaluated to Cbc parameters. For example: 'Pair{String, Any}[\"logLevel\" => 0]' will have the same effect as --Cbc-no-output. Obviously, this is a security breach. The complete list of parameters can be found by running the cbc executable and typing ? at the prompt."
-			)
-		]
-	end
-
-	function Utilities.Args.throw_if_incompatible_options(::Val{:Cbc}, p_args)
-		# TODO: should we throw if the option does not exist?
-	end
 	end # @require Cbc
 
 	@require GLPK="60bf3e95-4087-53dc-ae20-288a0d20c6a6" begin
@@ -232,29 +142,121 @@ function __init__()
 		end
 		model
 	end
-
-	function Utilities.Args.accepted_arg_list(::Val{:GLPK}) :: Vector{Arg}
-		return [
-			Arg(
-				"time-limit", 2097152,
-				"Set GLPK parameter: tm_lim. The original parameter is in milliseconds, but to keep it similar to the other solvers this option takes seconds. To set this parameter with milliseconds precision use the --raw-parameter option. The default is a little over 24 days because GLPK uses a Int32 for milliseconds and 24 days is close to the maximum time-limit supported."
-			),
-			Arg(
-				"no-output", false,
-				"Set msg_lev to GLPK.MSG_OFF. Disables the solver output."
-			),
-			Arg(
-				"raw-parameters", "Pair{String, Any}[]",
-				"A string of Julia code to be evaluated to GLPK parameters. For example: 'Pair{String, Any}[\"msg_lev\" => GLPK.MSG_OFF]' will have the same effect as --GLPK-no-output. Obviously, this is a security breach. If you find the complete list of GLPK parameters please send it to me (henriquebecker91@gmail.com)."
-			)
-
-		]
-	end
-
-	function Utilities.Args.throw_if_incompatible_options(::Val{:GLPK}, p_args)
-		# TODO: should we throw if the option does not exist?
-	end
 	end # @require GLPK
+end
+
+function Utilities.Args.accepted_arg_list(::Val{:CPLEX}) :: Vector{Arg}
+	return [
+		Arg(
+			"threads", 1,
+			"The value of CPXPARAM_Threads. If zero and no callbacks is the number os cores, if zero and callbacks is one. If a positive number, is that number of cores."
+		),
+		Arg(
+			"time-limit", 31536000.0,
+			"The value of CPX_PARAM_TILIM. Depends on CPX_PARAM_CLOCKTYPE which is by default wall clock time (not CPU time). Time limit in seconds for solver B&B (not root solving). Our default is one year."
+		),
+		Arg(
+			"seed", 1,
+			"The value of CPX_PARAM_RANDOMSEED. The random seed used by CPLEX."
+		),
+		Arg(
+			"no-tricks", false,
+			"Set CPX_PARAM_PROBE, CPX_PARAM_HEURFREQ, and CPX_PARAM_REPEATPRESOLVE to -1. Also, set CPX_PARAM_DIVETYPE to 1. Basically, disable many tricks used by CPLEX to speedup the solving (but that sometimes have the opposite effect)."
+		),
+		Arg(
+			"no-output", false,
+			"Set CPX_PARAM_SCRIND to false. Disables the solver output."
+		),
+		Arg(
+			"raw-parameters", "Pair{String, Any}[]",
+			"A string of Julia code to be evaluated to CPLEX parameters. For example: 'Pair{String, Any}[\"CPX_PARAM_SCRIND\" => CPLEX.CPX_OFF]' will have the same effect as --CPLEX-no-output. Obviously, this is a security breach."
+		)
+	]
+end
+
+function Utilities.Args.throw_if_incompatible_options(::Val{:CPLEX}, p_args)
+	# TODO: should we throw if the option does not exist?
+end
+
+function Utilities.Args.accepted_arg_list(::Val{:Gurobi}) :: Vector{Arg}
+	return [
+		Arg(
+			"threads", 1,
+			"Number of threads for all Gurobi parallelizable algorithms. Zero is automatic, probably the number of cores but may be fewer. If a positive number, is that number of cores."
+		),
+		Arg(
+			"time-limit", 31536000.0,
+			"Set Gurobi parameter: TimeLimit. Total time limit in seconds. Our default is one year."
+		),
+		Arg(
+			"seed", 1,
+			"The random seed used by Gurobi. Our default (one) is different from Gurobi (which is zero)."
+		),
+		Arg(
+			"no-output", false,
+			"Set OutputFlag to zero. Disables the solver output."
+		),
+		Arg(
+			"raw-parameters", "Pair{String, Any}[]",
+			"A string of Julia code to be evaluated to Gurobi parameters. For example: 'Pair{String, Any}[\"OutputFlag\" => 0]' will have the same effect as --Gurobi-no-output. Obviously, this is a security breach."
+		)
+
+	]
+end
+
+function Utilities.Args.throw_if_incompatible_options(::Val{:Gurobi}, p_args)
+	# TODO: should we throw if the option does not exist?
+end
+
+function Utilities.Args.accepted_arg_list(::Val{:Cbc}) :: Vector{Arg}
+	return [
+		Arg(
+			"threads", 1,
+			"Number of threads for \"parallel branch-and-bound\"."
+		),
+		Arg(
+			"time-limit", 31536000.0,
+			"Set Cbc parameter: seconds. Total time limit in seconds (? not very well documented)."
+		),
+		Arg(
+			"seed", 1,
+			"Set Cbc parameter: randomCbcSeed. Our default is 1 (different from Cbc default that is -1)."
+		),
+		Arg(
+			"no-output", false,
+			"Set logLevel to zero. Disables the solver output."
+		),
+		Arg(
+			"raw-parameters", "Pair{String, Any}[]",
+			"A string of Julia code to be evaluated to Cbc parameters. For example: 'Pair{String, Any}[\"logLevel\" => 0]' will have the same effect as --Cbc-no-output. Obviously, this is a security breach. The complete list of parameters can be found by running the cbc executable and typing ? at the prompt."
+		)
+	]
+end
+
+function Utilities.Args.throw_if_incompatible_options(::Val{:Cbc}, p_args)
+	# TODO: should we throw if the option does not exist?
+end
+
+function Utilities.Args.accepted_arg_list(::Val{:GLPK}) :: Vector{Arg}
+	return [
+		Arg(
+			"time-limit", 2097152,
+			"Set GLPK parameter: tm_lim. The original parameter is in milliseconds, but to keep it similar to the other solvers this option takes seconds. To set this parameter with milliseconds precision use the --raw-parameter option. The default is a little over 24 days because GLPK uses a Int32 for milliseconds and 24 days is close to the maximum time-limit supported."
+		),
+		Arg(
+			"no-output", false,
+			"Set msg_lev to GLPK.MSG_OFF. Disables the solver output."
+		),
+		Arg(
+			"raw-parameters", "Pair{String, Any}[]",
+			"A string of Julia code to be evaluated to GLPK parameters. For example: 'Pair{String, Any}[\"msg_lev\" => GLPK.MSG_OFF]' will have the same effect as --GLPK-no-output. Obviously, this is a security breach. If you find the complete list of GLPK parameters please send it to me (henriquebecker91@gmail.com)."
+		)
+
+	]
+end
+
+function Utilities.Args.throw_if_incompatible_options(::Val{:GLPK}, p_args)
+	# TODO: should we throw if the option does not exist?
 end
 
 """
