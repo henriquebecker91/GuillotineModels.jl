@@ -524,7 +524,7 @@ function run(
 	p_args = parse_args(args, implemented_models, supported_solvers)
 	!p_args["no-csv-output"] && @show args
 	!p_args["no-csv-output"] && @show p_args
-	date_now = Dates.format(Dates.now(), dateformat"Y-m-dTH:M:S")
+	date_now = Dates.format(Dates.now(), dateformat"yyyy-mm-ddTHH:MM:SS")
 	!p_args["no-csv-output"] && @show date_now
 	!p_args["do-not-mock-for-compilation"] && mock_for_compilation(p_args)
 	# remaining code should not depend on this option
