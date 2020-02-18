@@ -61,9 +61,7 @@ function __init__()
 		) :: Vector{Pair{String, Any}}
 		configuration = [configuration; raw_parameters]
 		model = JuMP.direct_model(CPLEX.Optimizer())
-		for c in configuration
-			JuMP.set_parameter(model, c...)
-		end
+		JuMP.set_optimizer_attributes(model, configuration...)
 		model
 	end
 	end # @require CPLEX
@@ -86,9 +84,7 @@ function __init__()
 		) :: Vector{Pair{String, Any}}
 		configuration = [configuration; raw_parameters]
 		model = JuMP.direct_model(Gurobi.Optimizer())
-		for c in configuration
-			JuMP.set_parameter(model, c...)
-		end
+		JuMP.set_optimizer_attributes(model, configuration...)
 		model
 	end
 	end # @require Gurobi
@@ -116,9 +112,7 @@ function __init__()
 		) :: Vector{Pair{String, Any}}
 		configuration = [configuration; raw_parameters]
 		model = JuMP.Model(JuMP.with_optimizer(Cbc.Optimizer))
-		for c in configuration
-			JuMP.set_parameter(model, c...)
-		end
+		JuMP.set_optimizer_attributes(model, configuration...)
 		model
 	end
 	end # @require Cbc
@@ -137,9 +131,7 @@ function __init__()
 		) :: Vector{Pair{String, Any}}
 		configuration = [configuration; raw_parameters]
 			model = JuMP.direct_model(GLPK.Optimizer())
-		for c in configuration
-			JuMP.set_parameter(model, c...)
-		end
+		JuMP.set_optimizer_attributes(model, configuration...)
 		model
 	end
 	end # @require GLPK

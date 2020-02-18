@@ -313,9 +313,9 @@ function argparse_settings(
 	models_list :: Vector{Symbol}, solvers_list :: Vector{Symbol}
 ) :: ArgParseSettings
 	s = core_argparse_settings()
-	ArgParse.import_settings(s, generic_argparse_settings())
+	ArgParse.import_settings!(s, generic_argparse_settings())
 	for sym in [solvers_list; models_list]
-		ArgParse.import_settings(s, gen_prefixed_argparse_settings(sym))
+		ArgParse.import_settings!(s, gen_prefixed_argparse_settings(sym))
 	end
 	s
 end
@@ -376,7 +376,7 @@ function warn_if_changed_unused_values(p_args, models_list, solvers_list)
 	for arg_name in keys(p_args)
 		if isempty(searchsorted(expected_arg_names, arg_name))
 			unused_arg_idx = findfirst(a -> a.name == arg_name, unused_prefixed_args)
-			if isnothing(unused_arg_idx)
+			if unused_arg_idx === nothing
 				@error(
 					"ArgParse accepted option --$(arg_name) but it is not a" *
 					" recognized option. This should not be possible."
@@ -517,8 +517,8 @@ you just need to remove the `["--help"]` from the call.
 """
 function run(
 	args = ARGS;
-	implemented_models = [:Flow, :PPG2KP],#, :KnapsackPlates],
-	supported_solvers = [:CPLEX, :Gurobi, :Cbc, :GLPK]
+	implemented_models :: Vector{Symbol} = [:Flow, :PPG2KP],#, :KnapsackPlates],
+	supported_solvers :: Vector{Symbol} = [:CPLEX, :Gurobi, :Cbc, :GLPK]
 )
 	@timeit "run" begin
 	p_args = parse_args(args, implemented_models, supported_solvers)
