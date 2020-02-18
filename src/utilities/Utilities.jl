@@ -54,9 +54,6 @@ function SortedLinkedLW(::Type{D}, l :: Vector{S}, w :: Vector{S}) where {D, S}
 end
 
 using JuMP
-using MathOptInterface
-const MOI = MathOptInterface
-using MathOptFormat
 using TimerOutputs
 
 # JuMP/'Mathematical Model' related utilities
@@ -68,20 +65,6 @@ export save_model
 
 # Style guideline: as the module block is left unindented, the @timeit
 # blocks that wrap the whole method body also are not indented.
-
-"""
-    save_model(model, filename = "save_model.mps") :: Nothing
-
-Save `model` using the MPS format in `filename`.
-"""
-function save_model(model, filename = "saved_model.mps") :: Nothing
-	@timeit "save_model" begin
-	mps_model = MathOptFormat.MPS.Model()
-	MOI.copy_to(mps_model, backend(model))
-	MOI.write_to_file(mps_model)
-	end # timeit
-	nothing
-end
 
 """
     num_all_constraints(m) :: Int64

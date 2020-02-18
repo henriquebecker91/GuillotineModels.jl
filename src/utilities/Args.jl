@@ -65,8 +65,6 @@ the `raw-argument` option are detected.
 
 Often is specialized to an empty method, as is not so often that solvers
 or models have conflicting options.
-
-See also: [`GuillotineModules.CommandLine.run`](@ref)
 """
 function throw_if_incompatible_options(
 	::Val{T}, p_args

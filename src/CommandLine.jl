@@ -99,11 +99,10 @@ in `core_argparse_settings()`). The other arguments are solver or model
 specific and are extracted and passed to their specific methods.
 """
 function read_build_solve_and_print(pp) # pp stands for parsed parameters
-	if !pp["no-csv-output"]
-		println("instfname = $(pp["instfname"])")
-	end
+	instfname = pp["instfname"]
+	!pp["no-csv-output"] && @show instfname
 
-	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(pp["instfname"])
+	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(instfname)
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 
 	solver_pp = create_unprefixed_subset(pp["solver"], pp)
@@ -128,7 +127,7 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	=#
 
 	pp["save-model"] && !pp["no-csv-output"] &&
-		@timeit "save_model" save_model(m, "./$(basename(instfname)).mps")
+		@timeit "save_model" JuMP.write_to_file(m, "./$(basename(instfname)).mps")
 
 	if !pp["no-csv-output"]
 		#@show time_to_build_model
