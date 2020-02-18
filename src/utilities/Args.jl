@@ -82,7 +82,7 @@ function throw_if_incompatible_options(
 end
 
 """
-		ArgParse.add_arg_table!(settings :: ArgParseSettings, arg :: Arg)
+ArgParse.add_arg_table!(settings :: ArgParseSettings, arg :: Arg)
 
 A specialization of `ArgParse.add_arg_table!` to transform `Arg` objects into
 options of `ArgParseSettings`. Boolean arguments become `:store_{true|false}`
@@ -112,7 +112,7 @@ end
 """
     create_normalized_arg_subset(p_args, selected :: Vector{Arg})
 
-Create a new Dict with keys equal to `selected` names and values equal to
+Create a new `Dict` with keys equal to `selected` names and values equal to
 `selected` defaults, except that if `p_args` has a key with the same name
 as an argument then the value in `p_args` is used instead the default.
 
