@@ -6,8 +6,15 @@ access to its methods. The `flow2digraph` method needs LightGraphs, and the
 other three (`flow2file`, `flow2tikzpic`, `flow2pdf`) need LightGraphs,
 TikzGraphs, and TikzGraphs.
 
+The methods signatures are:
+
+    flow2digraph(num_nodes, edges) :: LightGraphs.SimpleDiGraph
+    flow2tikzpic(nodes, edges) :: TikzPictures.TikzPicture
+    function flow2file(nodes, edges, out :: TikzPictures.SaveType) :: Nothing
+    function flow2pdf(nodes, edges, fname) :: Nothing
+
 The `Node` and `Edge` types are defined by Flow.Enumeration and the Vectors
-of all nodes and all edges of the model is returned by
+of all nodes and all edges of the model are returned by
 `GuillotineModels.build_model(::Val{:Flow}, ...)`.
 """
 module Format

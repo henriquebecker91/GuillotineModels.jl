@@ -1,8 +1,14 @@
 module Enumeration
 
+using DocStringExtensions
 export Node, Edge, gen_all_edges
 
-"A node of the GuillotineModels.Flow model."
+"""
+A node of the GuillotineModels.Flow model.
+
+$(TYPEDFIELDS)
+
+"""
 struct Node{S, N}
 	"Unique identifier of the node in the model."
 	idx :: N
@@ -14,7 +20,12 @@ struct Node{S, N}
 	ori :: UInt8
 end
 
-"An edge of the GuillotineModels.Flow Model."
+"""
+An edge of the GuillotineModels.Flow Model.
+
+$(TYPEDFIELDS)
+
+"""
 struct Edge{N, E}
   "Unique identifier of the edge in the model."
 	indx :: E

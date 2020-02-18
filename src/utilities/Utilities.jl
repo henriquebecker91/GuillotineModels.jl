@@ -1,12 +1,14 @@
 module Utilities
 
-# SortedLinkedLW is an immutable structure and constructor that does not
-# need any package imports.
+using DocStringExtensions # for TYPEDFIELDS
 export SortedLinkedLW
 """
 Grouping of the length and width piece vectors (in original and sorted order),
 and their reverse indexes, allowing to, for example, iterate the pieces
 by length while having `O(1)` access to their width.
+
+$(TYPEDFIELDS)
+
 """
 struct SortedLinkedLW{D, S}
 	"The pieces length in the original order."
@@ -138,7 +140,12 @@ function which_vars_to_keep(model, lb :: Float64)
 	return map(rc -> obj - rc >= lb, rcs)
 end
 
-"Stores a variable and its old bounds so they may be restored."
+"""
+Stores a variable and its old bounds so they may be restored.
+
+$(TYPEDFIELDS)
+
+"""
 struct SavedBound
 	"A reference to the variable."
 	var :: VariableRef

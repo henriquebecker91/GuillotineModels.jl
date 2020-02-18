@@ -4,11 +4,17 @@ parsing.
 """
 module Args
 
+using DocStringExtensions # for TYPEDFIELDS
 using ArgParse
 export Arg, accepted_arg_list, throw_if_incompatible_options
 export create_normalized_arg_subset
 
-"An argument with `name`, `default` value, and `help` message."
+"""
+An argument with `name`, `default` value, and `help` message.
+
+$(TYPEDFIELDS)
+
+"""
 struct Arg{T}
   "The name with no initial double dashes but with dashes instead of spaces."
 	name :: String

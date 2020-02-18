@@ -94,7 +94,7 @@ uuid = "f6369f11-7733-5829-9624-2563aa707210"
 version = "0.10.9"
 
 [[GuillotineModels]]
-deps = ["ArgParse", "Dates", "JuMP", "MathOptInterface", "Random", "Requires", "TimerOutputs"]
+deps = ["ArgParse", "Dates", "DocStringExtensions", "JuMP", "MathOptInterface", "Random", "Requires", "TimerOutputs"]
 path = ".."
 uuid = "300ad42c-a273-11e9-37f6-175a19b744a4"
 version = "0.1.0"
