@@ -18,6 +18,8 @@ using TimerOutputs
 """
     min_l_fitting_piece(l, w, L, W)
 
+!!! **Internal use.**
+
 Given a plate `L`x`W` and two pieces dimensions list (`l`, `w`),
 return the index of the piece of smallest length that fits the
 plate (the width dimension may preclude this from being just
@@ -40,6 +42,8 @@ end
 
 """
     search_approx_cut(pp, fcl, fcw, max_diff, approx_l, nnn, pli_lwb) :: P
+
+!!! **Internal use.**
 
 """
 function search_approx_cut(
@@ -73,6 +77,8 @@ end
 """
     search_cut_or_symmetry(pp, fcl, fcw, nnn, pli_lwb)
 
+!!! **Internal use.**
+
 """
 function search_cut_or_symmetry(
 	pp :: P, # parent plate
@@ -93,6 +99,8 @@ end
 
 """
     disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
+
+!!! **Internal use.**
 
 """
 function disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
@@ -140,6 +148,7 @@ end
 """
     search_cut(pp, fcl, fcw, nnn, pli_lwb)
 
+!!! **Internal use.**
 
 """
 function search_cut(
@@ -182,6 +191,8 @@ end
 # method with the same name, and another type for parameter `pat`.
 """
     warm_start(model, l, w, L, W, pat, pli_lwb, nnn, np; faithful2furini = false)
+
+!!! **Internal use.**
 """
 function warm_start(
 	model, l, w, L, W,

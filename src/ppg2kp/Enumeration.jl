@@ -1,3 +1,7 @@
+"""
+Collection of the methods used for generating the cuts and plates
+that make up the PP-G2KP model.
+"""
 module Enumeration
 
 # TODO: Consider removing flag ignore_2th_dim. Reasoning: nobody does that,
@@ -15,6 +19,8 @@ export should_extract_piece_from_plate
 
 """
     discretize(d::[D], l::[S], w::[S], L::S, W::S; kwords...) :: [S]
+
+!!! **Internal use.**
 
 Given the pieces demand, length, and width (`d`, `l`, `w`), as well the plate
 dimensions (`L`, `W`), return a vector of all linear combinations (constrained
@@ -124,6 +130,8 @@ end
 """
     should_extract_piece_from_plate(pii, L, W, sllw, symm = 0x03) :: Bool
 
+!!! **Internal use.**
+
 Considering the enhanced PP-G2KP model, it is necessary to known if there
 will be an 'extraction' variable representing the extraction of piece
 with index `pii` from a plate with length `L` and width `L`.
@@ -131,9 +139,9 @@ with index `pii` from a plate with length `L` and width `L`.
 A piece should be extracted from a plate if:
 1. The piece fits inside the plate.
 2. It is not possible to extract the piece in consideration together with any
-  other piece (even other copy of the same piece) from the plate in
-  consideration (for the cut orientations allowed by `symm` which by default
-	are both vertical and horizontal).
+   other piece (even other copy of the same piece) from the plate in
+   consideration (for the cut orientations allowed by `symm` which by default
+	 are both vertical and horizontal).
 
 # Arguments
 
@@ -142,8 +150,8 @@ A piece should be extracted from a plate if:
 3. `W::S`: The width of the plate.
 4. `sllw::SortedLinkedLW{D, S}`: The SortedLinkedLW struct for the pieces.
 5. `symm::UInt8 = 0x03`: which cut orientations are allowed: `0x01` means
-  'allow only horizontal cuts', `0x02` means 'allow only vertical cuts',
-	and `0x03` means 'allow both kinds of cuts'.
+   'allow only horizontal cuts', `0x02` means 'allow only vertical cuts',
+	 and `0x03` means 'allow both kinds of cuts'.
 """
 function should_extract_piece_from_plate(
 	pii :: D, L :: S, W :: S, sllw :: SortedLinkedLW{D, S}, symm :: UInt8 = 0x03
@@ -195,6 +203,8 @@ end
 
 """
     ub_num_pieces_fit(d, l, w, a, L, W, A, cutoff; ignore_2th_dim = false)
+
+!!! **Internal use.**
 
 Given a piece set (defined by `d`emand, `l`ength, `w`idth, and `a`rea),
 and a plate (defined by `L`ength, `W`idth, and `A`rea), returns the `min`
@@ -263,6 +273,8 @@ end
 """
     reduce2fit_usl(sl, sli2pii, w, L, W) :: [S]
 
+!!! **Internal use.**
+
 Given a plate (`L`, `W`), and the pieces sorted by length (`sl`, `sli2pii`,
 `w`), return an increasing vector of unique lengths that pertain to a piece
 that fits the plate. If two or more pieces share length and fit the plate, only
@@ -272,7 +284,7 @@ one copy of that length is included in the returned vector.
 
 1. `sl::Vector{S}`: The piece lengths sorted by increase-or-stay order.
 2. `sli2pii::Vector{D}`: If `sli2pii[i] == j` then `sl[i]` and `w[j]`
-  correspond to the same item.
+   correspond to the same item.
 3. `w::Vector{S}`: The piece widths (in 'original' order).
 4. `L::S`: The length of the plate.
 5. `W::S`: The width of the plate.
@@ -298,6 +310,8 @@ end
 """
     fits_at_least_one(sllw, L, W) :: Bool
 
+!!! **Internal use.**
+
 True if at least one piece in `sllw` fits inside a `L`x`W` plate;
 false otherwise.
 """
@@ -314,6 +328,8 @@ end
 
 """
     filter_symm_pos(disc, dim, disc_copy = copy(disc)) -> disc_copy
+
+!!! **Internal use.**
 
 Implement the symmetry-breaking described in Section 2.1 of
 10.1287/ijoc.2016.0710 (just after equation 10). Given a list of discretized
@@ -361,6 +377,8 @@ end
 """
     gen_cuts(::Type{P}, d, sllw, L, W; [kword_args])
 
+!!! **Internal use.**
+
 The main method responsible for generating all the cuts used to create both the
 original PP-G2KP model as its enhanced version (in this case, it generates the
 piece extractions too).
@@ -372,7 +390,7 @@ piece extractions too).
 1. `::Type{P}`: The type of the piece profits (and area).
 2. `d::Vector{D}`: The pieces demand.
 3. `sllw::SortedLinkedLW{D, S}`: The SortedLinkedLW containing the length and
-  width of the pieces.
+   width of the pieces.
 4. `L::S`: The plate length.
 5. `W::S`: The plate width.
 
@@ -399,22 +417,22 @@ All keyword arguments are of type `Bool`.
 # Returns
 
 1. List of all generated plates. The triple is: plate length, plate width,
-  and plate bound (how many of the plate fit inside the original plate).
-  The index/identifier of a plate is the same as its position in this list.
+   and plate bound (how many of the plate fit inside the original plate).
+   The index/identifier of a plate is the same as its position in this list.
 2. If `(pp, cp1, cp2)` is present in this list, then the model has an
-  horizontal cut that divides parent plate `pp` into child plates `cp1` and
-  `cp2`. The three values are indexes in the list of all generated plates
-  (except `cp2` may be zero, i.e., a trim/waste).
+   horizontal cut that divides parent plate `pp` into child plates `cp1` and
+   `cp2`. The three values are indexes in the list of all generated plates
+   (except `cp2` may be zero, i.e., a trim/waste).
 3. The same as the second returned value, but for the vertical cuts.
 4. A list of plate-piece pairs in which the plate may be sold as the
-  respective piece. If `faithful2furini2016` is `true`, then this list
-  has always the same size than the number of piece types and each
-  plate that may be sold as a piece has the exact dimensions of the respective
-  piece. If `faithful2furini2016` is `false` then this is the list of
-  'extraction variables' and the plates may have dimensions slight
-  different from their respective pieces, and each plate may be sold as
-  one of many distinct pieces, and each piece may be extracted from many
-  different plates.
+   respective piece. If `faithful2furini2016` is `true`, then this list
+   has always the same size than the number of piece types and each
+   plate that may be sold as a piece has the exact dimensions of the respective
+   piece. If `faithful2furini2016` is `false` then this is the list of
+   'extraction variables' and the plates may have dimensions slight
+   different from their respective pieces, and each plate may be sold as
+   one of many distinct pieces, and each piece may be extracted from many
+   different plates.
 """
 function gen_cuts(
 	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;

@@ -1,3 +1,7 @@
+"""
+Collection of the methods used for generating the graph representing the
+flow model.
+"""
 module Enumeration
 
 using DocStringExtensions
@@ -40,6 +44,8 @@ end
 """
     gen_rr_fow_edges!(::Type{N}, d :: [D], l :: [S], L :: S) :: ([N], [(S, S)])
 
+!!! **Internal use.**
+
 # Arguments
 
 An integer type capable of representing the nodes `N`. The pieces demand `d`,
@@ -51,9 +57,9 @@ is, in the one that was given and the one that wasn't).
 
 A tuple of two vectors:
 1) a vector `v` of length `L`; `v[y] == 1` iff there is a linear combination
-  of the pieces (respecting demand) that gives `y`; otherwise `v[y] == 0`.
+   of the pieces (respecting demand) that gives `y`; otherwise `v[y] == 0`.
 2) a vector containing all ordered pairs of linear combinations in which the
-  difference between the two is exactly the size of a piece.
+   difference between the two is exactly the size of a piece.
 """
 function gen_rr_fow_edges!(
 	::Type{N}, # eltype of the marked vector
@@ -110,6 +116,8 @@ end
 """
     reduce_dlw(d::[D], l::[S], w::[S], L::S, W::S) :: ([D], [S], [S], D)
 
+!!! **Internal use.**
+
 Create a copy of `d`, `l`, and `w` with only the pieces that fit the plate
 `L` x `W` (i.e., pieces with both dimensions smaller than the corresponding
 plate dimension). The last value returned is the number of pieces that pass
@@ -140,6 +148,8 @@ end
 
 """
     merge_duplicates(d :: [D], per :: [S]) :: ([D], [S])
+
+!!! **Internal use.**
 
 If `per` has no repeated values just return the parameters. Otherwise,
 for each value in `per` with duplicates, keep just one copy of such value
@@ -177,7 +187,9 @@ function merge_duplicates(
 end
 
 """
-    globalize!(...)
+    globalize!(see description and source for parameters and return)
+
+!!! **Internal use.**
 
 The model may be seen as constituted of many independent graphs, but as there
 is interaction between them (i.e., subplate edges increase the flow of a
@@ -274,6 +286,8 @@ end
 """
     gen_u_fow_edges(glo_nodes, y2node_idx, last_gedge_idx, ppo2gbedge_idx)
 
+!!! **Internal use.**
+
 This method generate the unrestricted subplate edges, i.e., the subplate edges
 representing a cut that creates a subplate in which the size of the dimension
 that is perpendicular to the cut is not the size of a single piece, but of a
@@ -357,6 +371,8 @@ end
 """
     gen_w_fow_edges(glo_nodes, last_gedge_idx) :: ([Edge], E)
 
+!!! **Internal use.**
+
 Given a set of "globalized" nodes, and the index of the last "globalized"
 edge, create the set of corresponding waste edges (already "globalized").
 
@@ -392,6 +408,8 @@ end
 
 """
     gen_closed_flow(...)
+
+!!! **Internal use.**
 
 Given some "global" structures/counters (`last_gnode_idx`, `last_gedge_idx`,
 `lw2pii`, `ppo2gbedge_idx`), the piece set (`d`, `par`, `per`) and the plate
@@ -488,6 +506,8 @@ end
 
 """
     gen_nodes_and_edges(N, E, d, l, w, L, W) :: ([Node], [Edge], N, E)
+
+!!! **Internal use.**
 
 Given the integer types used to number nodes and edges, the piece set, and the
 original plate length, create all nodes and edges except by some dummy ones

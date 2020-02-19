@@ -28,11 +28,15 @@ pieces in the instance. The `l`, `w`, `p`, and `d`, are the length, width,
 profit, and demand, of a piece.
 
 # Notes
-- If `N` is smaller than the number of lines after it, just the first `N` lines
-will be parsed and added to return tuple.
+
+- If `N` is smaller than the number of lines after it, just the first `N`
+  lines will be parsed and added to return tuple.
 - For now all values are parsed as Int64, downsizing to a smaller type may
-be done after.
-- Empty lines and multiples spaces/tabs between columns may happen, but each non-empty line should contain the expected number of columns (i.e., the first non-empty line should have one number, the second non-empty line two numbers, all remaining non-empty lines four numbers).
+  be done after.
+- Empty lines and multiples spaces/tabs between columns may happen, but each
+  non-empty line should contain the expected number of columns (i.e., the
+  first non-empty line should have one number, the second non-empty line two
+  numbers, all remaining non-empty lines four numbers).
 
 See also: [`read_from_file`](@ref)
 """

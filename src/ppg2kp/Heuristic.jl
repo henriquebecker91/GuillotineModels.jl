@@ -1,13 +1,12 @@
 """
 GuillotineModels.PPG2KP.Heuristic implements the heuristic needed for faithful
-reimplementation of the Priced PP-G2KP from ````F. Furini, E. Malaguti, and D.
-Thomopulos, ``Modeling Two-Dimensional Guillotine Cutting Problems via Integer
+reimplementation of the Priced PP-G2KP from \\`F. Furini, E. Malaguti, and D.
+Thomopulos, \\`\\`Modeling Two-Dimensional Guillotine Cutting Problems via Integer
 Programming,'' INFORMS Journal on Computing, vol. 28, no. 4, pp. 736–751, Oct.
-2016, doi: 10.1287/ijoc.2016.0710.````. The heuristic itself, however, is older
-and described in: ````M. Dolatabadi, A. Lodi, and M. Monaci, ``Exact algorithms
+2016, doi: 10.1287/ijoc.2016.0710.' The heuristic itself, however, is older
+and described in: \\`M. Dolatabadi, A. Lodi, and M. Monaci, \\`\\`Exact algorithms
 for the two-dimensional guillotine knapsack,'' Computers \\& Operations
-Research, vol. 39, no. 1, pp. 48–53, Jan. 2012, doi: 10.1016/j.cor.2010.12.018.
-````.
+Research, vol. 39, no. 1, pp. 48–53, Jan. 2012, doi: 10.1016/j.cor.2010.12.018.'
 
 The methods exported by this module are not of general interest, you need to
 either want: (1) a fast but shelf-restricted heuristic for the guillotine 2D
@@ -22,6 +21,8 @@ export first_fit_decr, iterated_greedy
 
 """
     promising_kfirst(::Type{D}, p, a, bkv, A) :: D
+
+!!! **Internal use.**
 
 Zero if there is no `k` for which `sum(p[1:k]) > bkv && sum(a[1:k]) <= A`;
 otherwise, return the smallest `k` value satisfying these conditions.
@@ -53,6 +54,8 @@ end
 
 """
     expand(d :: [D], a :: [T]) :: [T]
+
+!!! **Internal use.**
 
 Given two vectors of the same size, create a copy of `a` that replaces each
 element `a[i]` by `d[i]` copies of it, and then flatten the copy.
@@ -187,9 +190,9 @@ subset of the complete piece set.
 2. `l::AbstractVector{S}`: The pieces length.
 3. `w::AbstractVector{S}`: The pieces width.
 4. `t::AbstractVector{D}`: The piecex type/index/identifier (index in the
-  original piece set).
+   original piece set).
 5. `n::D`: The number of pieces in set (necessary to build the second
-  returned vector).
+   returned vector).
 6. `L::S`: The original plate length.
 7. `W::S`: The original plate width.
 
@@ -197,14 +200,14 @@ subset of the complete piece set.
 
 1. The best know value, i.e., the value of the returned solution.
 2. A vector `v` of the same size as the number of pieces; if `v[i] == x`
-  then the piece `i` has `x` copies in the solution returned.
+   then the piece `i` has `x` copies in the solution returned.
 3. A solution with the best known value, as the heuristic only consider
-  shelf-restricted configurations the solution may be represented as a
-  vector of vectors. Each vector is a length strip (with the width of
-	the first piece inside, and the summed length of all pieces inside).
-	Inside each vector the pieces are ordered by non-increasing width,
-	and the vectors/stripes are sorted by non-increasing width too (
-	i.e., the width of their first element).
+   shelf-restricted configurations the solution may be represented as a
+   vector of vectors. Each vector is a length strip (with the width of
+   the first piece inside, and the summed length of all pieces inside).
+   Inside each vector the pieces are ordered by non-increasing width,
+   and the vectors/stripes are sorted by non-increasing width too (
+   i.e., the width of their first element).
 """
 function first_fit_decr(
 	p :: AbstractVector{P},

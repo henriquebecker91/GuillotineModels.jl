@@ -25,6 +25,8 @@ using ..KnapsackPlates, ..KnapsackPlates.Args
 """
     create_unprefixed_subset(prefix, p_args :: T) :: T
 
+!!! **Internal use.**
+
 Given some `prefix`, query the `accepted_arg_list(Val{Symbol(prefix)})`,
 to know which arguments were prefixed this way, search for them (with
 the prefix) in `p_args` and return a new `typeof(p_args)` object in
@@ -45,6 +47,8 @@ end
 
 """
     div_and_round_instance(L, W, l, w, p_args) -> L', W', l', w'
+
+!!! **Internal use.**
 
 Given two integers and two integer arrays, uses `p_args` keys
 `div-and-round-{nearest,up,down}` to either: (1) return them unmodified
@@ -89,6 +93,8 @@ end
 # Read the instance, build the model, solve the model, and print related stats.
 """
     read_build_solve_and_print(pp)
+
+!!! **Internal use.**
 
 Given the parsed parameters (`pp`), read the instance file, build the model,
 solve the model (unless `pp['do-not-solve']` is true), and print statistics
@@ -186,6 +192,8 @@ end
 """
     gen_prefixed_argparse_settings(solver_or_model_name) :: ArgParseSettings
 
+!!! **Internal use.**
+
 Builds and returns an ArgParseSettings object representing all options
 of the given solver or model already prefixed with its name.
 
@@ -215,9 +223,12 @@ end
 """
     core_argparse_settings() :: ArgParseSettings
 
+!!! **Internal use.**
+
 An ArgParseSettings with the three core positional arguments `model`,
-`solver`, and `instfname`. They cannot be modeled as `Arg` objects by design
-all extra arguments must be options (i.e., be optional and preceded by dashes).
+`solver`, and `instfname`. They cannot be modeled as `Arg` objects because,
+by design, all extra arguments must be options (i.e., be optional and preceded
+by dashes).
 """
 function core_argparse_settings() :: ArgParseSettings
 	s = ArgParse.ArgParseSettings()
@@ -239,6 +250,8 @@ end
 
 """
     generic_args() :: Vector{Arg}
+
+!!! **Internal use.**
 
 All the `Arg`s representing options that are independent from solver or model.
 """
@@ -282,6 +295,8 @@ end
 """
     generic_argparse_settings() :: ArgParseSettings
 
+!!! **Internal use.**
+
 An ArgParseSettings containing all options (not positional arguments) that are
 independent from the chosen solver or model.
 """
@@ -297,6 +312,8 @@ end
 
 """
     argparse_settings(models_list, solvers_list) :: ArgParseSettings
+
+!!! **Internal use.**
 
 Create an ArgParseSettings which includes the core arguments, generic
 arguments, and all arguments from models and solvers available (prefixed by
@@ -321,6 +338,8 @@ end
 
 """
     warn_if_changed_unused_values(p_args, models_list, solvers_list)
+
+!!! **Internal use.**
 
 Gives warning messages if `p_args` has a value different from the default
 for an option of a model or solver that is not the one used. In other words,
@@ -398,6 +417,8 @@ end
 """
     throw_if_incompatible_options(p_args)
 
+!!! **Internal use.**
+
 Check the already parsed arguments and test if options that are incompatible
 with each other were used.
 """
@@ -433,6 +454,8 @@ end
 """
     parse_args(args, models_list, solvers_list) :: Dict{String, Any}
 
+!!! **Internal use.**
+
 Given a vector of the command-line arguments `args` and the lists of
 available models and solvers, parse the arguments. If the `args`
 refer to a model or solver not in `models_list` or `solvers_list`
@@ -466,6 +489,8 @@ end
 
 """
     mock_for_compilation(p_args)
+
+!!! **Internal use.**
 
 Creates a temporary file with the content returned by `mock_instance` and pass
 to `read_build_solve_and_print` a copy of `p_args` pointing to this instance

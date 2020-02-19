@@ -5,7 +5,8 @@
 GuillotineModels is a collection of mathematical models for 2D Guillotine
 Cutting problems, all implemented using Julia+JuMP.
 
-It was developed as part of the PhD thesis of Henrique Becker.
+It was developed as part of the PhD thesis of [Henrique Becker]
+(https://orcid.org/0000-0003-3879-2691).
 
 The main features are:
 1. The implementation of distinct models using the same technology (Julia+JuMP) which is solver-agnostic.

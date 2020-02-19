@@ -63,13 +63,13 @@ to be cut in some orientation.
 For example, if there are two units of flow flowing through a forward edge that
 goes from point length 15 to point length 35 of the set with fixed width 50,
 then there are at least two plates of width 50 that have a subplate of length
-20 (and width 50) cut from two parallel cuts, one in position 15 and another in
-35. The two parent plates may have the same dimensions (i.e., their length is
-also equal to each other), or they may have different total length (they only
-share the same width); for an example, one of them may stop at length 35 and
-the other may have length 1000. Considering this same example, if there are a
-plate of size 35x50 and another of size 1000x50 available, then there is one of
-flow in the backward edge from point length 35 to point zero and from point
+20 (and width 50) cut from two parallel cuts, one in position 15 and another
+in 35. The two parent plates may have the same dimensions (i.e., their length
+is also equal to each other), or they may have different total length (they
+only share the same width); for an example, one of them may stop at length 35
+and the other may have length 1000. Considering this same example, if there are
+a plate of size 35x50 and another of size 1000x50 available, then there is one
+of flow in the backward edge from point length 35 to point zero and from point
 length 1000 to point zero (all inside the set with fixed width 50).
 
 Finally, forward edges may be subdivided into waste edges, piece edges and
@@ -123,7 +123,7 @@ Maximize the profit of the pieces cut.
 * 1:n - A dummy edge corresponding to a piece index, used in the objective
   function. Edges cutting pieces do not actually appear in the objective
   function but, in fact, allow more flow to pass through by some of these
-	dummy piece edges.
+  dummy piece edges.
 * n+1 - A dummy edge that is upper bounded at one and allows one extra flow
   to the original plate default cutting (vertical) backward edge (i.e.,
   n+2). Necessary to avoid n+2 to be restricted by a possible edge that

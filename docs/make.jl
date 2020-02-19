@@ -9,22 +9,22 @@ makedocs(
   , sitename = "GuillotineModels.jl"
   , pages = Any[
 		"GuillotineModels" => "index.md",
-		"Utilities" => [
-			"Utilities.md",
-			"U-Args.md"
+		"GuillotineModels.Utilities" => [
+			"Utilities" => "Utilities.md",
+			"Utilities.Args" => "U-Args.md"
 		],
-		"InstanceReader" => "InstanceReader.md",
-		"CommandLine" => [
-			"CommandLine.md",
-			"CommandLine.SolverArgs" => "CL-SolversArgs.md"
+		"GuillotineModels.InstanceReader" => "InstanceReader.md",
+		"GuillotineModels.CommandLine" => [
+			"CommandLine" => "CommandLine.md",
+			"CommandLine.SolversArgs" => "CL-SolversArgs.md"
 		],
-		"PPG2KP" => [
-			"PPG2KP.md",
+		"GuillotineModels.PPG2KP" => [
+			"PPG2KP" => "PPG2KP.md",
 			"PPG2KP.Heuristic" => "PPG2KP-Heuristic.md",
 			"PPG2KP.Enumeration" => "PPG2KP-Enumeration.md"
 		],
-		"Flow" => [
-			"Flow.md",
+		"GuillotineModels.Flow" => [
+			"Flow" => "Flow.md",
 			"Flow.Enumeration" => "Flow-Enumeration.md",
 			"Flow.Format" => "Flow-Format.md"
 		]
