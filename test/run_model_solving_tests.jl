@@ -36,6 +36,11 @@ const TINY_HANDMADE_INSTANCES = Tuple{String, Int64, String}[
 		1
 		10 10 7 100
 	""")
+	, ("Plate 100x100 and 50 pieces 10x10 with profit 7.", 350, """
+		100 100
+		1
+		10 10 7 50
+	""")
 	, ("Plate 50x200 and 200 pieces 10x10 with profit 7.", 700, """
 		100 100
 		1
@@ -131,7 +136,7 @@ end
 
 test_obj_val_of_all_combinations(
 	[:PPG2KP, :Flow],
-	[:GLPK],
+	[:GLPK, :Cbc],
 	[TINY_HANDMADE_INSTANCES; EASY_LITERATURE_INSTANCES]
 )
 
