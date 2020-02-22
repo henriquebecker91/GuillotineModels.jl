@@ -17,8 +17,9 @@ module GuillotineModels
 # Just include all submodules. Except by the specializations of build_model,
 # all methods are part of some submodule and not of the top-level.
 
-export build_model
-using DocStringExtensions
+export build_model, get_cut_pattern, CutPattern
+using DocStringExtensions # for TYPEDFIELDS
+using JuMP # for JuMP.Model parameter reference
 
 """
     build_model(::Val{T}, model, d, p, l, w, L, W[, options])
@@ -87,13 +88,13 @@ struct CutPattern{D, S}
 	"The common orientation of the cuts between the plates in `subpatterns`."
 	cuts_are_vertical :: Bool
 	"The subpatterns that constitute the pattern."
-	subpatterns :: Vector{SolutionPlate{D, S}}
+	subpatterns :: Vector{CutPattern{D, S}}
 
 	"Inner constructor."
 	function CutPattern(
 		L :: S, W :: S, piece_idx :: D, cuts_are_vertical :: Bool,
-		subpatterns :: Vector{SolutionPlate{D, S}}
-	) where {D, S} :: CutPattern{D, S}
+		subpatterns :: Vector{CutPattern{D, S}}
+	) :: CutPattern{D, S} where {D, S}
 		!iszero(piece_idx) && !isempty(subpatterns) && @error(
 			"A piece cannot be subdivided; " *
 			"failed: !iszero(piece_idx) && isempty(subpatterns)."
@@ -139,7 +140,7 @@ Simplified constructor for pieces and waste.
 """
 function CutPattern(
 	L :: S, W :: S, piece_idx :: D
-) where {D, S} :: CutPattern{D, S}
+) :: CutPattern{D, S} where {D, S}
 	CutPattern(L, W, piece_idx, false, [])
 end
 
@@ -150,8 +151,8 @@ Simplified constructor for intermediary plates.
 """
 function CutPattern(
 	L :: S, W :: S, cuts_are_vertical :: Bool,
-	subpatterns :: Vector{SolutionPlate{D, S}}
-) where {D, S} :: CutPattern{D, S}
+	subpatterns :: Vector{CutPattern{D, S}}
+) :: CutPattern{D, S} where {D, S}
 	CutPattern(L, W, zero(D), cuts_are_vertical, subpatterns)
 end
 

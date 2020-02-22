@@ -1,16 +1,121 @@
 module PPG2KP
+# PLAN FOR IMPLEMENTING THE PRICING PART:
+# After each step, document and test.
+# 0) Remember to fix the parameters in the get_cut_pattern method,
+#    it probably should be responsability of the return type to
+#    store the types used, so they do not need to be in the parameters.
+# 0.5) NOTE: It is never clear if the solution of the greedy heuristic is
+#    used for warming up the model (in fact, this step is never described)
+#    or if the LB is given to the model for cutting the search for lower
+#    or equal values, or even used in any way that is not the final pricing.
+# 1) Create a warm-start that is specific for the faithful2furini2016
+#    and, consequently, will serve as base for the more complex one.
+# 2) Create a considerably complex warm-start (comment the code
+#    extensively) that uses the same heuristic to warm-start the
+#    variant that is not faithful2furini2016. Check if the simpler
+#    warm-start may (and should) be abandoned.
+# 3) wrap the body of the no_arg_check_build_model inside another method
+#    that just builds the Complete Model (with the reductions) but not
+#    the priced one; call this methods inside no_arg_check_build_model and
+#    then check if it will be delivered this way or it will be changed by
+#    the pricing. Create a flag for the priced model and test if it reaches
+#    the 'if' correctly.
+# 4) Implement the iterative pricing method. The variables not in the
+#    restricted model should be fixed to zero. The model must be solved
+#    relaxed (check if a method is available for that, or if we will use
+#    a reworked version of the handmade relaxing methods). What is said in
+#    the paper kinda makes sense, but does not seem it is possible to
+#    compute reduced costs for the entire pool based on the plates of the
+#    restricted cut set. Write code that admits this may be impossible and
+#    print the impossible situation and then abort. At the end of the process
+#    (after the final pricing), really delete the not used variables, and
+#    check on the ByproductPPG2KP to delete their correspondences.
+#    SEE SECTION 4.2: unfortunately they decided to complicate the method
+#    even more adding two parameters alpha and beta.
+#    List items 1 and 3 (not numbered) of the first list of section 4.4
+#    complicate things further. In fact, both the greedy heuristic and the
+#    restricted model are solved but with a time limit (the best solution
+#    found in the middle of this process is used for the true final pricing).
 
-# for now, it does not make use of this module here, just make it available
+# TODO: document
+# TODO: think of better names for the fields? maybe update the names on the
+#       model-building code?
+# TODO: check the abandoned.jl to see if parts of the original instance are
+#       needed to create the solution
+# TODO: maybe add this to Enumeration, use as return of gen_cuts and re-export
+#       in this module
+struct ByproductPPG2KP{D, S, P}
+	hcuts :: Vector{NTuple{3, P}}
+	vcuts :: Vector{NTuple{3, P}}
+	np :: Vector{Tuple{P, D}}
+	pli_lwb :: Vector{Tuple{S, S, P}}
+	faithful2furini2016 :: Bool
+end
+
 include("./Heuristic.jl")
 include("./Args.jl")
 
 include("./Enumeration.jl")
 using .Enumeration
-
 using ..Utilities
 
 using JuMP
 using TimerOutputs
+
+import ..get_cut_pattern, ..CutPattern
+function get_cut_pattern(
+	model_type :: Val{:PPG2KP}, model :: JuMP.Model, ::Type{D}, ::Type{S},
+	build_model_return :: ByproductPPG2KP{D, S}
+) :: CutPattern{D, S} where {D, S}
+	bmr = build_model_return
+	# 1. Check if there can be an extraction from the original plate to a
+	#    single piece. If it may and it happens, then just return this single
+	#    piece solution; otherwise the first cut is in `cuts_made`, find it
+	#    (i.e., traverse non-zero cuts_made variables checking for a hcut or
+	#    vcut that has the original plate as the parent plate).
+	# 2. Given the children of the first cut, find them in either `picuts`
+	#    or `cuts_made`, if they are in `picuts` they are an extraction (
+	#    this may be a plate into a piece, or immediately a piece, in the
+	#    case the plate has the exact size of the piece); if they are in
+	#    `cuts_made` we need to discover the orientation (find in {h,v}cuts)
+	#    create a CutPattern and add to a list of pending branches to open;
+	#    if they are not in either `picuts` or `cuts_made` then they
+	#    are waste and a leaf plate may be added.
+	#=pe_ = model[:picuts] # Piece Extractions
+	# USE: https://docs.julialang.org/en/v1.0/stdlib/SparseArrays/#Sparse-Vector-Storage-1
+	cm = model[:cuts_made]
+	ps_nz_idx = (i in keys(ps) if is_valid(m, ps[i]) && value(ps[i]) ≉ 0.0)
+	cm_nz_idx = (i in keys(cm) if is_valid(m, cm[i]) && value(cm[i]) ≉ 0.0)
+
+	for to_
+	for @view vcat(bmr.vnnn, bmr.hnnn)
+	end
+	println("(plate length, plate width) => (number of times this extraction happened, piece length, piece width)")
+	foreach(ps_nz) do e
+		i, v = e
+		pli, pii = np[i]
+		println((pli_lwb[pli][1], pli_lwb[pli][2]) => (v, l[pii], w[pii]))
+	end
+	println("(parent plate length, parent plate width) => (number of times this cut happened, (first child plate length, first child plate width), (second child plate length, second child plate width))")
+	foreach(cm_nz) do e
+		i, v = e
+		parent, fchild, schild = hvcuts[i]
+		@assert !iszero(parent)
+		@assert !iszero(fchild)
+		if iszero(schild)
+			@assert p_args["faithful2furini2016"]
+			if pli_lwb[parent][1] == pli_lwb[fchild][1]
+							println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1], pli_lwb[parent][2] - pli_lwb[fchild][2])))
+			else
+				@assert pli_lwb[parent][2] == pli_lwb[fchild][2]
+							println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1] - pli_lwb[fchild][1], pli_lwb[parent][2])))
+			end
+		else
+						println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[schild][1], pli_lwb[schild][2])))
+		end
+		end
+	end=#
+end
 
 # TODO: Check why this method is used if a structure like SortedLinkedLW
 # would answer this more efficiently and be aware of the type used for the
@@ -164,6 +269,17 @@ function search_cut(
 		pli_lwb[fc][1] == fcl && pli_lwb[fc][2] == fcw && return i
 	end
 	@assert false # this should not be reachable
+end
+
+# Warm start faithful2furini.
+function warm_start_f2f(
+	model, l, w, L, W,
+	pat :: Vector{Vector{D}},
+	bp :: ByproductPPG2KP{D, S, P}
+	#round2disc wait to see if this is needed
+	# which other model building options will need to be passed to this?
+) where {D, S, P}
+
 end
 
 # TODO: check if the piece will be immediatelly extracted or does it need
@@ -389,21 +505,6 @@ function warm_start(
 	model
 end
 
-#= TODO: create a method that takes p_args
-				only_binary = p_args["only-binary-variables"],
-				use_c25 = p_args["use-c25"],
-				ignore_2th_dim = p_args["ignore-2th-dim"],
-				ignore_d = p_args["ignore-d"],
-				round2disc = p_args["round2disc"],
-				no_cut_position = p_args["no-cut-position"],
-				no_redundant_cut = p_args["no-redundant-cut"],
-				no_furini_symmbreak = p_args["no-furini-symmbreak"],
-				faithful2furini2016 = p_args["faithful2furini2016"],
-				lb = get(p_args["lower-bounds"], instfname_idx, 0),
-				ub = get(p_args["upper-bounds"], instfname_idx, sum(d .* p)),
-	print_debug = !no_csv_out
-=#
-
 # HIGH LEVEL EXPLANATION OF THE MODEL
 #
 # Variables:
@@ -441,7 +542,7 @@ function no_arg_check_build_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
-	@timeit "enumeration_related" begin
+	@timeit "enumeration" begin
 	@assert length(d) == length(l) && length(l) == length(w)
 	num_piece_types = convert(D, length(d))
 
@@ -511,7 +612,7 @@ function no_arg_check_build_model(
 	end
 	end # @timeit "enumeration_related", old: time_to_enumerate_plates
 
-	@timeit "calls_to_JuMP" begin
+	@timeit "JuMP_calls" begin
 	# If all pieces have demand one, a binary variable will suffice to make the
 	# connection between a piece type and the plate it is extracted from.
 	naturally_only_binary = all(di -> di <= 1, d)
