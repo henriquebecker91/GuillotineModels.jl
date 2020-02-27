@@ -11,10 +11,11 @@ module Enumeration
 # preprocessing phase participation on the total time is negligible), and it
 # makes the code far more complex (because I have to have code that respects
 # and ignores a basic assumption).
+using DocStringExtensions
 
 import ...Utilities.SortedLinkedLW
 
-export gen_cuts, gen_cuts_sb
+export gen_cuts, ByproductPPG2KP
 export should_extract_piece_from_plate
 
 """
@@ -151,7 +152,7 @@ A piece should be extracted from a plate if:
 4. `sllw::SortedLinkedLW{D, S}`: The SortedLinkedLW struct for the pieces.
 5. `symm::UInt8 = 0x03`: which cut orientations are allowed: `0x01` means
    'allow only horizontal cuts', `0x02` means 'allow only vertical cuts',
-	 and `0x03` means 'allow both kinds of cuts'.
+   and `0x03` means 'allow both kinds of cuts'.
 """
 function should_extract_piece_from_plate(
 	pii :: D, L :: S, W :: S, sllw :: SortedLinkedLW{D, S}, symm :: UInt8 = 0x03
@@ -374,6 +375,59 @@ function filter_redundant_cuts!(
 	end
 end
 
+#=
+Old documentation of the gen_cuts method. It was superseeded by the
+ByproductPPG2KP documentation, but it is more complete than it and so
+was kept here for now.
+
+`pli_lwb`: List of all generated plates. The triple is: plate length, plate
+	width, and plate bound (how many of the plate fit inside the original plate).
+	The index/identifier of a plate is the same as its position in this list.
+`hcuts`: If `(pp, cp1, cp2)` is present in this list, then the model has an
+   horizontal cut that divides parent plate `pp` into child plates `cp1` and
+   `cp2`. The three values are indexes in the list of all generated plates
+   (except `cp2` may be zero, i.e., a trim/waste).
+`vcuts`: The same as the second returned value, but for the vertical cuts.
+`np`: A list of plate-piece pairs in which the plate may be sold as the
+   respective piece. If `faithful2furini2016` is `true`, then this list
+   has always the same size than the number of piece types and each
+   plate that may be sold as a piece has the exact dimensions of the respective
+   piece. If `faithful2furini2016` is `false` then this is the list of
+   'extraction variables' and the plates may have dimensions slight
+   different from their respective pieces, and each plate may be sold as
+   one of many distinct pieces, and each piece may be extracted from many
+   different plates.
+=#
+"""
+Collection of internal datastructures used to create the PP-G2KP model and
+needed to assemble the solution given by the values of the model variables.
+
+$TYPEDFIELDS
+
+"""
+struct ByproductPPG2KP{D, S, P}
+	# pp (parent plate), fc (first child), sc (second child)
+	"If `(pp, fc, sc)` is in `cuts`, then `pp` may be cut into `fc` and `sc`."
+	cuts :: Vector{NTuple{3, P}}
+	"Every cut before this position is horizontal, the rest are vertical."
+	first_vertical_cut_idx :: P
+	"If `(n, p)` is in `np` then plate `n` may be sold as piece `p`."
+	np :: Vector{Tuple{P, D}} # TODO: rename np to pe (piece extraction)?
+	"Indexed by a plate index, values are the plate length, width, and bound."
+	pli_lwb :: Vector{Tuple{S, S, P}}
+	"The length of the pieces."
+	l :: Vector{S}
+	"The width of the pieces."
+	w :: Vector{S}
+	#d :: Vector{D} # for now, it is not necessary
+	#p :: Vector{P} # for now, it is not necessary
+	"The length of the original plate."
+	L :: S
+	"The width of the original plate."
+	W :: S
+end
+Base.broadcastable(x :: ByproductPPG2KP{D, S, P}) where {D, S, P} = Ref(x)
+
 """
     gen_cuts(::Type{P}, d, sllw, L, W; [kword_args])
 
@@ -413,26 +467,6 @@ All keyword arguments are of type `Bool`.
 * `no_furini_symmbreak`: Default: false. Ignored if `faithful2furini2016`
   is `false`. Disables the symmetry-breaking used in 10.1287/ijoc.2016.0710
   (consequently all discretized positions are used, none is removed).
-
-# Returns
-
-1. List of all generated plates. The triple is: plate length, plate width,
-   and plate bound (how many of the plate fit inside the original plate).
-   The index/identifier of a plate is the same as its position in this list.
-2. If `(pp, cp1, cp2)` is present in this list, then the model has an
-   horizontal cut that divides parent plate `pp` into child plates `cp1` and
-   `cp2`. The three values are indexes in the list of all generated plates
-   (except `cp2` may be zero, i.e., a trim/waste).
-3. The same as the second returned value, but for the vertical cuts.
-4. A list of plate-piece pairs in which the plate may be sold as the
-   respective piece. If `faithful2furini2016` is `true`, then this list
-   has always the same size than the number of piece types and each
-   plate that may be sold as a piece has the exact dimensions of the respective
-   piece. If `faithful2furini2016` is `false` then this is the list of
-   'extraction variables' and the plates may have dimensions slight
-   different from their respective pieces, and each plate may be sold as
-   one of many distinct pieces, and each piece may be extracted from many
-   different plates.
 """
 function gen_cuts(
 	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
@@ -440,12 +474,7 @@ function gen_cuts(
 	faithful2furini2016 = false,
 	no_redundant_cut = false, no_cut_position = false,
 	no_furini_symmbreak = false
-) :: Tuple{
-	Vector{Tuple{S, S, P}},
-  Vector{NTuple{3, P}},
-  Vector{NTuple{3, P}},
-  Vector{Tuple{P, D}}
-} where {D, S, P}
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	faithful2furini2016 && round2disc && @warn(
 		"Enabling both faithful2furini2016 and round2disc is allowed, but you are not being entirely faithful to Furini2016 if you do so."
 	)
@@ -825,7 +854,11 @@ function gen_cuts(
 	end
 	=#
 
-	return pli_lwb, hnnn, vnnn, np
+	first_vertical_cut_idx = length(hnnn) + 1
+	return ByproductPPG2KP(
+		append!(hnnn, vnnn), first_vertical_cut_idx, np, pli_lwb,
+		deepcopy(l), deepcopy(w), deepcopy(L), deepcopy(W)
+	)
 end
 
 # TODO: Consider if this should be enabled back again considering that, for

@@ -37,84 +37,215 @@ module PPG2KP
 #    restricted model are solved but with a time limit (the best solution
 #    found in the middle of this process is used for the true final pricing).
 
-# TODO: document
-# TODO: think of better names for the fields? maybe update the names on the
-#       model-building code?
-# TODO: check the abandoned.jl to see if parts of the original instance are
-#       needed to create the solution
-# TODO: maybe add this to Enumeration, use as return of gen_cuts and re-export
-#       in this module
-struct ByproductPPG2KP{D, S, P}
-	hcuts :: Vector{NTuple{3, P}}
-	vcuts :: Vector{NTuple{3, P}}
-	np :: Vector{Tuple{P, D}}
-	pli_lwb :: Vector{Tuple{S, S, P}}
-	faithful2furini2016 :: Bool
-end
-
 include("./Heuristic.jl")
 include("./Args.jl")
 
 include("./Enumeration.jl")
 using .Enumeration
+export ByproductPPG2KP # re-export ByproductPPG2KP from Enumeration
+
 using ..Utilities
+import ..CutPattern # type returned by get_cut_pattern
 
 using JuMP
 using TimerOutputs
 
-import ..get_cut_pattern, ..CutPattern
+# INTERNAL METHOD USED ONLY IN get_cut_pattern
+# If the "pattern" is the extraction of a single piece return either:
+# (1) a CutPattern representing the piece, if it is the same size as the
+# original plate; otherwise (2) a CutPattern of the original plate containing
+# a CutPattern representing the piece.
+function extraction_pattern(
+	bmr :: ByproductPPG2KP{D, S, P}, e_idx :: Int
+) :: CutPattern{D, S} where {D, S, P}
+	pli, pii = bmr.np[e_idx] # the plate index and the piece index
+	L, W = bmr.pli_lwb[pli] # the plate dimensions
+	piece = CutPattern(bmr.l[pii], bmr.w[pii], pii)
+	L == bmr.l[pii] && W == bmr.w[pii] && return piece
+	return CutPattern(L, W, false, CutPattern{D, S}[piece])
+end
+
+# INTERNAL METHOD USED ONLY IN get_cut_pattern
+# Given a vector of JuMP variables, return a vector of their indexes in the
+# original vector and another vector storing the rounded non-zero variable
+# values. (The kwargs are passed to the `isapprox` method, to define what is
+# considered to be "non-zero" in a floating-point world.)
+# NOTE: takes the model only to be able to check if the variable is valid.
+function gather_nonzero(
+	model :: JuMP.Model, vars :: Vector{JuMP.VariableRef}; kwargs...
+) :: NTuple{2, Vector{Int}}
+	idxs = Vector{Int}()
+	vals = Vector{Int}()
+	for (idx, var) in enumerate(vars)
+		!is_valid(model, var) && continue
+		val = value(var)
+		isapprox(val, 0.0; kwargs...) && continue
+		push!(idxs, idx)
+		push!(vals, round(Int, val, RoundNearest))
+	end
+	idxs, vals
+end
+
+# INTERNAL USE.
+# Check if a single piece is extracted from the original plate.
+function check_if_single_piece_solution(
+	np :: Vector{Tuple{P, D}}, nzpe_idxs :: Vector{Int}
+) :: Int where {D, P}
+	single_extraction_idx = 0
+	for e_idx in nzpe_idxs
+		pli = np[e_idx][1]
+		!isone(pli) && continue
+		single_extraction_idx = e_idx
+	end
+
+	return single_extraction_idx
+end
+
+# INTERNAL USE.
+# Given a list of the non-zero cuts (i.e., the cuts that appear in the
+# solution) and the index of the root cut in such list, return a list
+# of cut indexes in topological ordering (any non-root cut over some plate
+# only appears if a previous cut has made a copy of that plate type available).
+function build_cut_idx_stack(
+	nz_cuts :: Vector{NTuple{3, P}}, root_cut_idx :: Int
+) :: Vector{Int} where {P}
+	cut_idx_stack = Vector{Int}()
+	push!(cut_idx_stack, root_cut_idx)
+	next_cut = 1
+	while next_cut <= length(cut_idx_stack)
+		_, fc, sc = nz_cuts[cut_idx_stack[next_cut]]
+		@assert !iszero(fc)
+		fc_idx = findfirst(cut -> first(cut) == fc, nz_cuts)
+		fc_idx !== nothing && push!(cut_idx_stack, fc_idx)
+		if !iszero(sc)
+			sc_idx = findfirst(cut -> first(cut) == sc, nz_cuts)
+			sc_idx !== nothing && push!(cut_idx_stack, sc_idx)
+		end
+		next_cut += 1
+	end
+
+	return cut_idx_stack
+end
+
+# INTERNAL USE.
+# NOTE: only patterns is modified.
+# Given the non-zero (i.e., used) piece extractions (and the number of
+# times they are used), add them to the patterns dictionary (that
+# translates a plate id to a list of patterns for which the root node
+# is a plate of that type, in this case, we are adding the patterns
+# that are just piece extractions).
+function add_used_extractions!(
+	patterns :: Dict{Int64, Vector{CutPattern{D, S}}},
+	nzpe_idxs :: Vector{Int},
+	nzpe_vals :: Vector{Int},
+	bmr :: ByproductPPG2KP{D, S, P}
+) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
+	for (i, np_idx) in enumerate(nzpe_idxs)
+		pli, pii = bmr.np[np_idx]
+		extractions = extraction_pattern.(bmr, repeat([np_idx], nzpe_vals[i]))
+		if haskey(patterns, pli)
+			append!(patterns[pli], extractions)
+		else
+			patterns[pli] = extractions
+		end
+	end
+	patterns
+end
+
+# INTERNAL USE.
+# NOTE: only patterns is modified.
+# Starting from the cuts closest to the piece extractions (i.e.,
+# non-leaf nodes closest to a leaf node) start building the CutPattern
+# (tree) bottom-up.
+function bottom_up_tree_build!(
+	patterns :: Dict{Int64, Vector{CutPattern{D, S}}},
+	nz_cut_idx_stack :: Vector{Int},
+	nz_cuts :: Vector{NTuple{3, P}},
+	nz_cuts_ori :: BitArray{1},
+	bmr :: ByproductPPG2KP{D, S, P}
+) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
+	for cut_idx in reverse(nz_cut_idx_stack)
+		pp, fc, sc = nz_cuts[cut_idx]
+		child_patts = Vector{CutPattern{D, S}}()
+		if !iszero(fc) && haskey(patterns, fc) && !isempty(patterns[fc])
+			push!(child_patts, pop!(patterns[fc]))
+			isempty(patterns[fc]) && delete!(patterns, fc)
+		end
+		if !iszero(sc) && haskey(patterns, sc) && !isempty(patterns[sc])
+			push!(child_patts, pop!(patterns[sc]))
+			isempty(patterns[sc]) && delete!(patterns, sc)
+		end
+		ppl, ppw = bmr.pli_lwb[pp][1], bmr.pli_lwb[pp][2]
+		!haskey(patterns, pp) && (patterns[pp] = Vector{CutPattern{D, S}}())
+		push!(patterns[pp], CutPattern(
+			ppl, ppw, nz_cuts_ori[cut_idx], child_patts
+		))
+	end
+
+	patterns
+end
+
+import ..get_cut_pattern
 function get_cut_pattern(
 	model_type :: Val{:PPG2KP}, model :: JuMP.Model, ::Type{D}, ::Type{S},
 	build_model_return :: ByproductPPG2KP{D, S}
 ) :: CutPattern{D, S} where {D, S}
-	bmr = build_model_return
 	# 1. Check if there can be an extraction from the original plate to a
 	#    single piece. If it may and it happens, then just return this single
 	#    piece solution; otherwise the first cut is in `cuts_made`, find it
 	#    (i.e., traverse non-zero cuts_made variables checking for a hcut or
 	#    vcut that has the original plate as the parent plate).
-	# 2. Given the children of the first cut, find them in either `picuts`
-	#    or `cuts_made`, if they are in `picuts` they are an extraction (
-	#    this may be a plate into a piece, or immediately a piece, in the
-	#    case the plate has the exact size of the piece); if they are in
-	#    `cuts_made` we need to discover the orientation (find in {h,v}cuts)
-	#    create a CutPattern and add to a list of pending branches to open;
-	#    if they are not in either `picuts` or `cuts_made` then they
-	#    are waste and a leaf plate may be added.
-	#=pe_ = model[:picuts] # Piece Extractions
-	# USE: https://docs.julialang.org/en/v1.0/stdlib/SparseArrays/#Sparse-Vector-Storage-1
-	cm = model[:cuts_made]
-	ps_nz_idx = (i in keys(ps) if is_valid(m, ps[i]) && value(ps[i]) ≉ 0.0)
-	cm_nz_idx = (i in keys(cm) if is_valid(m, cm[i]) && value(cm[i]) ≉ 0.0)
+	# 2. Create a topological ordering of the cuts starting from the root cut.
+	# 3. Initialize a pool of plate type "uses"/patterns with the piece
+	#    extractions in the solution (i.e., leaf nodes).
+	# 4. Traverse the reverse of the topological ordering and build the
+	#    'pattern tree' in a bottom-up fashion. The children of each pattern
+	#    are queryed from the pool of plate type "uses", and removed from it
+	#    to be only present inside their parent pattern. At the end of the
+	#    process there should remain a single pattern in the pool that is the
+	#    root pattern.
+	bmr = build_model_return
+	pe = model[:picuts] # Piece Extractions
+	cm = model[:cuts_made] # Cuts Made
 
-	for to_
-	for @view vcat(bmr.vnnn, bmr.hnnn)
-	end
-	println("(plate length, plate width) => (number of times this extraction happened, piece length, piece width)")
-	foreach(ps_nz) do e
-		i, v = e
-		pli, pii = np[i]
-		println((pli_lwb[pli][1], pli_lwb[pli][2]) => (v, l[pii], w[pii]))
-	end
-	println("(parent plate length, parent plate width) => (number of times this cut happened, (first child plate length, first child plate width), (second child plate length, second child plate width))")
-	foreach(cm_nz) do e
-		i, v = e
-		parent, fchild, schild = hvcuts[i]
-		@assert !iszero(parent)
-		@assert !iszero(fchild)
-		if iszero(schild)
-			@assert p_args["faithful2furini2016"]
-			if pli_lwb[parent][1] == pli_lwb[fchild][1]
-							println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1], pli_lwb[parent][2] - pli_lwb[fchild][2])))
-			else
-				@assert pli_lwb[parent][2] == pli_lwb[fchild][2]
-							println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[parent][1] - pli_lwb[fchild][1], pli_lwb[parent][2])))
-			end
-		else
-						println((pli_lwb[parent][1], pli_lwb[parent][2]) => (v, (pli_lwb[fchild][1], pli_lwb[fchild][2]), (pli_lwb[schild][1], pli_lwb[schild][2])))
-		end
-		end
-	end=#
+	# non-zero {piece extractions, cuts made} {indexes,values}
+	nzpe_idxs, nzpe_vals = gather_nonzero(model, pe)
+	nzcm_idxs, nzcm_vals = gather_nonzero(model, cm)
+
+	sps_idx = check_if_single_piece_solution(bmr.np, nzpe_idxs)
+	!iszero(sps_idx) && return extraction_pattern(bmr, sps_idx)
+
+	# The cuts actually used in the solution.
+	sel_cuts = bmr.cuts[nzcm_idxs]
+	# If the cut in `sel_cuts` is vertical or not.
+	ori_cuts = nzcm_idxs .>= bmr.first_vertical_cut_idx
+	# The index of the root cut (cut over the original plate) in `sel_cuts`.
+	root_idx = findfirst(cut -> isone(cut[1]), sel_cuts)
+	root_idx === nothing && return CutPattern(bmr.L, bmr.W, zero(D))
+
+	cut_idx_stack = build_cut_idx_stack(sel_cuts, root_idx)
+
+	# `patterns` translates a plate index (pli) into a list of all "uses" of that
+	# plate type. Such "uses" are CutPattern objects, either pieces or more
+	# complex patterns. When we discover a plate is used in the solution such
+	# "use" is added to the known uses in `patterns`, and we arbitrarily
+	# associate it to some "uses" of its children (which are then are removed
+	# from `patterns`). Consequently, at the end, the `patterns` should have only
+	# the key of the original plate, and its associated value should be a Vector
+	# of a single CutPattern.
+	patterns = Dict{Int64, Vector{CutPattern{D, S}}}()
+
+	# Insert all piece extractions (i.e., plate to piece patterns) into
+	# `patterns`.
+	add_used_extractions!(patterns, nzpe_idxs, nzpe_vals, bmr)
+
+	bottom_up_tree_build!(patterns, cut_idx_stack, sel_cuts, ori_cuts, bmr)
+
+	@assert isone(length(patterns))
+	@assert haskey(patterns, 1)
+	@assert isone(length(patterns[1]))
+
+	return patterns[1][1]
 end
 
 # TODO: Check why this method is used if a structure like SortedLinkedLW
@@ -541,14 +672,14 @@ end
 function no_arg_check_build_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
-) where {D, S, P}
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	@timeit "enumeration" begin
 	@assert length(d) == length(l) && length(l) == length(w)
 	num_piece_types = convert(D, length(d))
 
 	sllw = SortedLinkedLW(D, l, w)
 	# TODO: change enumeration to also use a Dict?
-	pli_lwb, hcuts, vcuts, np = gen_cuts(P, d, sllw, L, W;
+	byproduct = gen_cuts(P, d, sllw, L, W;
 		ignore_2th_dim = options["ignore-2th-dim"],
 		ignore_d = options["ignore-d"],
 		round2disc = options["round2disc"],
@@ -557,8 +688,8 @@ function no_arg_check_build_model(
 		no_furini_symmbreak = options["no-furini-symmbreak"],
 		faithful2furini2016 = options["faithful2furini2016"]
 	)
+	hvcuts, pli_lwb, np = byproduct.cuts, byproduct.pli_lwb, byproduct.np
 	num_plate_types = length(pli_lwb)
-	hvcuts = vcat(hcuts, vcuts)
 
 	# Order the plate-piece pairs by my ranking of importance: how much
 	# absolute are is wasted. Other rankings include: how much relative area
@@ -685,7 +816,7 @@ function no_arg_check_build_model(
 	end
 	end # @timeit "calls_to_JuMP", old: time_to_solver_build
 
-	model, hvcuts, pli_lwb, np
+	return byproduct
 end
 
 #=
@@ -766,12 +897,11 @@ function build_model(
 	::Val{:PPG2KP}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
 	options :: Dict{String, Any} = Dict{String, Any}()
-) where {D, S, P}
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	norm_options = create_normalized_arg_subset(
 		options, accepted_arg_list(Val(:PPG2KP))
 	)
-	no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
-	return model
+	return no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
 end
 
 end # module

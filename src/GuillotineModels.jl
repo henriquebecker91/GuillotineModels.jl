@@ -99,30 +99,30 @@ struct CutPattern{D, S}
 			"A piece cannot be subdivided; " *
 			"failed: !iszero(piece_idx) && isempty(subpatterns)."
 		)
-		length <= zero(length) && @error(
+		L <= zero(L) && @error(
 			"The length of a pattern must be positive."
 		)
-		width <= zero(width) && @error(
+		W <= zero(W) && @error(
 			"The width of a pattern must be positive."
 		)
 		if cuts_are_vertical
-			sum_width = sum(getfield.(subpatterns, :width))
-			sum_width > L && @error(
+			sum_width = reduce(+, getfield.(subpatterns, :width); init = zero(S))
+			sum_width > W && @error(
 				"The sum of the subpatterns width is $sum_width but the width" *
 				" of the pattern is $W."
 			)
-			max_length = max(getfield.(subpatterns, :length))
-			max_length > W && @error(
+			max_length = reduce(max, getfield.(subpatterns, :length); init = zero(S))
+			max_length > L && @error(
 				"The largest subpattern length is $max_length but the length" *
 				" of the pattern is $L."
 			)
 		else
-			sum_length = sum(getfield.(subpatterns, :length))
+			sum_length = reduce(+, getfield.(subpatterns, :length); init = zero(S))
 			sum_length > L && @error(
 				"The sum of the subpatterns length is $sum_length but the length" *
 				" of the pattern is $L."
 			)
-			max_width = max(getfield.(subpatterns, :width))
+			max_width = reduce(max, getfield.(subpatterns, :width); init = zero(S))
 			max_width > W && @error(
 				"The largest subpattern width is $max_width but the width" *
 				" of the pattern is $W."
@@ -141,7 +141,7 @@ Simplified constructor for pieces and waste.
 function CutPattern(
 	L :: S, W :: S, piece_idx :: D
 ) :: CutPattern{D, S} where {D, S}
-	CutPattern(L, W, piece_idx, false, [])
+	CutPattern(L, W, piece_idx, false, CutPattern{D, S}[])
 end
 
 """
