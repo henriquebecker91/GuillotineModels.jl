@@ -118,8 +118,9 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 
 	@timeit "build_model" begin
 	model_pp = create_unprefixed_subset(pp["model"], pp)
-	build_model_return = build_model(
-		Val(Symbol(pp["model"])), m, d, p, l, w, L, W, model_pp
+	model_id = Val(Symbol(pp["model"]))
+	bmr = build_model(
+		model_id, m, d, p, l, w, L, W, model_pp
 	)
 	end # @timeit
 	#@show build_model_return
@@ -172,6 +173,8 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 		#@show time_to_solve_model
 		if primal_status(m) == MOI.FEASIBLE_POINT
 			obj_value = objective_value(m)
+			solution = get_cut_pattern(model_id, m, eltype(d), eltype(l), bmr)
+			@show solution
 		else
 			obj_value = 0
 		end
