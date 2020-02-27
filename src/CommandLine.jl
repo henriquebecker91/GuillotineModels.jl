@@ -21,6 +21,7 @@ using ..Utilities.Args
 using ..PPG2KP, ..PPG2KP.Args
 using ..Flow, ..Flow.Args
 #using ..KnapsackPlates, ..KnapsackPlates.Args
+import ..get_cut_pattern
 
 """
     create_unprefixed_subset(prefix, p_args :: T) :: T
