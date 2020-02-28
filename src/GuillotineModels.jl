@@ -17,7 +17,7 @@ module GuillotineModels
 # Just include all submodules. Except by the specializations of build_model,
 # all methods are part of some submodule and not of the top-level.
 
-export build_model, get_cut_pattern, CutPattern
+export build_model, get_cut_pattern, CutPattern, to_pretty_str, simplify!
 using DocStringExtensions # for TYPEDFIELDS
 using JuMP # for JuMP.Model parameter reference
 
@@ -154,6 +154,122 @@ function CutPattern(
 	subpatterns :: Vector{CutPattern{D, S}}
 ) :: CutPattern{D, S} where {D, S}
 	CutPattern(L, W, zero(D), cuts_are_vertical, subpatterns)
+end
+
+# INTERNAL USE. See `remove_waste!`.
+function inner_rec_remove_waste!(p :: CutPattern{D, S}) :: Bool where {D, S}
+	filter!(inner_rec_remove_waste!, p.subpatterns)
+	return !iszero(p.piece_idx) || !isempty(p.subpatterns)
+end
+
+# INTERNAL USE.
+# Removal every non-root pattern that has no piece among its descendants.
+function remove_waste!(p :: CutPattern{D, S}) :: CutPattern{D, S} where {D, S}
+	inner_rec_remove_waste!(p)
+	return p
+end
+
+# INTERNAL USE.
+# Removal every non-root pattern that has no piece among its descendants.
+function promote_single_childs!(
+	p :: CutPattern{D, S}
+) :: CutPattern{D, S} where {D, S}
+	for (index, value) in pairs(p.subpatterns)
+		p.subpatterns[index] = promote_single_childs!(value)
+	end
+	isone(length(p.subpatterns)) && return first(p.subpatterns)
+	return p
+end
+
+# INTERNAL USE.
+# For every subpattern that have itself subpatterns and shares the value of
+# `cuts_are_vertical` with its parent pattern, replace the subpattern with
+# their immediate children.
+function flatten!(p :: CutPattern{D, S}) :: CutPattern{D, S} where {D, S}
+	isempty(p.subpatterns) && return p
+	to_replace = @. (
+		(p.cuts_are_vertical === getfield(p.subpatterns, :cuts_are_vertical)) &
+		!isempty(getfield(p.subpatterns, :subpatterns))
+	)
+	need_new_vector = any(to_replace)
+	need_new_vector && (new_vector = Vector{CutPattern{D, S}}())
+	for (i, subpatt) in pairs(p.subpatterns)
+		flatten!(subpatt)
+		if need_new_vector
+			if to_replace[i]
+				append!(new_vector, subpatt.subpatterns)
+			else
+				push!(new_vector, subpatt)
+			end
+		end
+	end
+	if need_new_vector
+		empty!(p.subpatterns)
+		append!(p.subpatterns, new_vector)
+	end
+	return p
+end
+
+"""
+    simplify!(p :: CutPattern{D, S}) :: CutPattern{D, S} where {D, S}
+
+This method is free to make any changes while keeping all the packed pieces and
+the the validity of the solution, its purpose is to make the structure easier
+to understand by human beings. If you are trying to debug a model you will
+probably want to see both the simplified and not simplified output. The
+simplified will make it easier to understand the solution itself, and the
+non-simplified will show peculiarities that given insight on how the model
+works/'see things' internally.
+
+NOTE: the returned pattern is not always the passed pattern, in some rare
+cases (a root plate with a single piece inside) the pattern returned may
+be another object.
+
+NOTE: this method does not create any new `CutPattern` objects but instead
+prunes and rearranges the pattern tree (i.e., throws away some objects and
+changes the position of others in the tree).
+"""
+function simplify!(p :: CutPattern{D, S}) :: CutPattern{D, S} where {D, S}
+	p = remove_waste!(p)
+	p = promote_single_childs!(p)
+	p = flatten!(p)
+	return p
+end
+
+"""
+    to_pretty_str(p :: CutPattern{D, S}; kwargs...) :: String
+
+Creates a simplified and indented string representing the CutPattern.
+
+# Keyword Arguments
+
+* `lvl :: Int64`: The current level of indentation.
+* `indent_str`: The string or character to be repeated as indentation.
+
+"""
+function to_pretty_str(
+	p :: CutPattern{D, S};
+	lvl = 0,
+	indent_str = "  " # i.e., two spaces
+) :: String where {D, S}
+	indent = indent_str^lvl
+	!iszero(p.piece_idx) && return "$indent$(p.piece_idx)p$(p.length)x$(p.width)"
+	ob = p.cuts_are_vertical ? '[' : '{'
+	cb = p.cuts_are_vertical ? ']' : '}'
+	base = "$(indent)P$(p.length)x$(p.width)"
+	isempty(p.subpatterns) && return base
+	if any(iszero, getfield.(p.subpatterns, :piece_idx))
+		joined_sub = mapreduce(*, p.subpatterns) do subpatt
+			to_pretty_str(subpatt; lvl = lvl + 1, indent_str = indent_str) * '\n'
+		end
+		return "$base$ob\n$joined_sub$indent$cb"
+	else
+		piece_strs = map(p.subpatterns) do piece
+			to_pretty_str(piece; lvl = 0)
+		end
+		joined_pieces = join(piece_strs, " ")
+		return "$base$ob$joined_pieces$cb"
+	end
 end
 
 """

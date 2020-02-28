@@ -96,7 +96,7 @@ import MathOptInterface
 const MOI = MathOptInterface
 import GLPK # to load glue code in GuillotineModels
 import Cbc
-using GuillotineModels: build_model, get_cut_pattern
+using GuillotineModels: build_model, get_cut_pattern, to_pretty_str, simplify!
 using GuillotineModels.InstanceReader: read_from_string
 using GuillotineModels.Utilities.Args: accepted_arg_list,
 	create_normalized_arg_subset
@@ -119,12 +119,13 @@ function test_obj_val(
 	JuMP.optimize!(m)
 	@test JuMP.primal_status(m) == MOI.FEASIBLE_POINT
 	@test JuMP.objective_value(m) ≈ obj_val rtol=1e-6 atol=1e-6
-	#=
-	if model === :PPG2KP
-		@show instance
-		@show get_cut_pattern(Val(model), m, eltype(d), eltype(l), bmr)
-	end
-	=#
+	#=if model === :PPG2KP
+		println(instance)
+		solution = get_cut_pattern(Val(model), m, eltype(d), eltype(l), bmr)
+		@show solution
+		println("to_pretty_str(solution) = $(to_pretty_str(solution))")
+		println("to_pretty_str(simplify!(solution)) = $(to_pretty_str(simplify!(solution)))")
+	end=#
 end
 
 function test_obj_val_of_all_combinations(
@@ -136,6 +137,7 @@ function test_obj_val_of_all_combinations(
 		@testset "Solver: $solver" for solver in solvers
 			for (description, obj_val, instance) in instances
 				@testset "Instance: $description" begin
+					#println(description)
 					test_obj_val(model, solver, instance, obj_val)
 				end
 			end

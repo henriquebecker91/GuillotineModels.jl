@@ -21,7 +21,7 @@ using ..Utilities.Args
 using ..PPG2KP, ..PPG2KP.Args
 using ..Flow, ..Flow.Args
 #using ..KnapsackPlates, ..KnapsackPlates.Args
-import ..get_cut_pattern
+import ..get_cut_pattern, ..to_pretty_str, ..simplify!
 
 """
     create_unprefixed_subset(prefix, p_args :: T) :: T
@@ -176,6 +176,15 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 			obj_value = objective_value(m)
 			solution = get_cut_pattern(model_id, m, eltype(d), eltype(l), bmr)
 			@show solution
+			println(
+				"PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
+				"\nPRETTY_STR_SOLUTION_END\n"
+			)
+			println(
+				"SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
+				to_pretty_str(simplify!(deepcopy(solution))) *
+				"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
+			)
 		else
 			obj_value = 0
 		end
