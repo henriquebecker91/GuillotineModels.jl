@@ -76,7 +76,7 @@ $(TYPEDFIELDS)
   empty. In other words, a piece cannot be subdivided.
 * Waste may be represented explicitly, by having plates with `piece_idx == 0`
   but no elements in `subpatterns`, or implicitly, by having elements in
-  `subpatterns` that do occupy all the area defined by `length` and `width`.
+  `subpatterns` that do not fill all the area defined by `length` and `width`.
 """
 struct CutPattern{D, S}
 	"The length of the pattern."
@@ -134,7 +134,7 @@ struct CutPattern{D, S}
 end
 
 """
-		CutPattern(length, width, piece_idx)
+    CutPattern(length, width, piece_idx)
 
 Simplified constructor for pieces and waste.
 """
@@ -145,7 +145,7 @@ function CutPattern(
 end
 
 """
-		CutPattern(length, width, cuts_are_vertical, subpatterns)
+    CutPattern(length, width, cuts_are_vertical, subpatterns)
 
 Simplified constructor for intermediary plates.
 """
@@ -170,7 +170,7 @@ function remove_waste!(p :: CutPattern{D, S}) :: CutPattern{D, S} where {D, S}
 end
 
 # INTERNAL USE.
-# Removal every non-root pattern that has no piece among its descendants.
+# Remove every non-root pattern that has no piece among its descendants.
 function promote_single_childs!(
 	p :: CutPattern{D, S}
 ) :: CutPattern{D, S} where {D, S}
@@ -187,25 +187,28 @@ end
 # their immediate children.
 function flatten!(p :: CutPattern{D, S}) :: CutPattern{D, S} where {D, S}
 	isempty(p.subpatterns) && return p
-	to_replace = @. (
+	# Check beforehand if there is any children to be flattened save it.
+	to_flatten = @. (
 		(p.cuts_are_vertical === getfield(p.subpatterns, :cuts_are_vertical)) &
-		!isempty(getfield(p.subpatterns, :subpatterns))
+		!iszero(getfield(p.subpatterns, :piece_idx))
 	)
-	need_new_vector = any(to_replace)
-	need_new_vector && (new_vector = Vector{CutPattern{D, S}}())
+	need_flattening = any(to_flatten)
+	need_flattening && (aux_vector = Vector{CutPattern{D, S}}())
 	for (i, subpatt) in pairs(p.subpatterns)
 		flatten!(subpatt)
-		if need_new_vector
-			if to_replace[i]
-				append!(new_vector, subpatt.subpatterns)
+		if need_flattening
+			if to_flatten[i]
+				append!(aux_vector, subpatt.subpatterns)
 			else
-				push!(new_vector, subpatt)
+				push!(aux_vector, subpatt)
 			end
 		end
 	end
-	if need_new_vector
+	if need_flattening
+		# The CutPattern object is immutable so we cannot just attribute the new
+		# vector to `subpatterns` field. The trick below becomes necessary.
 		empty!(p.subpatterns)
-		append!(p.subpatterns, new_vector)
+		append!(p.subpatterns, aux_vector)
 	end
 	return p
 end
@@ -221,7 +224,7 @@ simplified will make it easier to understand the solution itself, and the
 non-simplified will show peculiarities that given insight on how the model
 works/'see things' internally.
 
-NOTE: the returned pattern is not always the passed pattern, in some rare
+NOTE: the returned pattern is not always the given parameter, in some rare
 cases (a root plate with a single piece inside) the pattern returned may
 be another object.
 
@@ -230,6 +233,12 @@ prunes and rearranges the pattern tree (i.e., throws away some objects and
 changes the position of others in the tree).
 """
 function simplify!(p :: CutPattern{D, S}) :: CutPattern{D, S} where {D, S}
+	# The order these subroutines are called is relevant. For maximum
+	# simplification we need to remove waste before promoting single childs
+	# (or some childs that will have no siblings after waste removal will not
+	# be promoted), and to promote single childs before flattening (or an
+	# alternating pattern H-V-H-'2 pieces' will end up like H-H-'2 pieces'
+	# and not like H-'2 pieces' as it should).
 	p = remove_waste!(p)
 	p = promote_single_childs!(p)
 	p = flatten!(p)
@@ -240,6 +249,18 @@ end
     to_pretty_str(p :: CutPattern{D, S}; kwargs...) :: String
 
 Creates a simplified and indented string representing the CutPattern.
+
+# Format
+
+The format represents pieces as "`piece_idx`p`length`x`width`" (e.g., "1p10x20"
+is a copy of piece 1 which have length 10 and width 20); non-piece patterns are
+represented by "P`length`x`width`" (note the `P` is uppercase); if the
+non-piece pattern has subpatterns (i.e., is not waste) then it starts a set of
+vertical (horizontal) cuts with `[` (`{`) and close it with `]` (`}`). There is
+always whitespace between the elements of such sets but, for conciseness and
+ease of reading, if all the elements of a subpattern are pieces they are
+separated by single spaces (no matter how long the list), otherwise they are
+separated by newlines.
 
 # Keyword Arguments
 
