@@ -90,7 +90,6 @@ const EASY_LITERATURE_INSTANCES = Tuple{String, Int64, String}[
 	""")
 ]
 
-using Test
 import JuMP
 import MathOptInterface
 const MOI = MathOptInterface
@@ -119,13 +118,15 @@ function test_obj_val(
 	JuMP.optimize!(m)
 	@test JuMP.primal_status(m) == MOI.FEASIBLE_POINT
 	@test JuMP.objective_value(m) ≈ obj_val rtol=1e-6 atol=1e-6
-	#=if model === :PPG2KP
+	#=
+	if model === :PPG2KP
 		println(instance)
 		solution = get_cut_pattern(Val(model), m, eltype(d), eltype(l), bmr)
 		@show solution
 		println("to_pretty_str(solution) = $(to_pretty_str(solution))")
 		println("to_pretty_str(simplify!(solution)) = $(to_pretty_str(simplify!(solution)))")
-	end=#
+	end
+	=#
 end
 
 function test_obj_val_of_all_combinations(

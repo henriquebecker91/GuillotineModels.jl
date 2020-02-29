@@ -139,7 +139,7 @@ end
 Simplified constructor for pieces and waste.
 """
 function CutPattern(
-	L :: S, W :: S, piece_idx :: D
+	L :: S, W :: S, piece_idx :: D = 0
 ) :: CutPattern{D, S} where {D, S}
 	CutPattern(L, W, piece_idx, false, CutPattern{D, S}[])
 end
@@ -190,7 +190,7 @@ function flatten!(p :: CutPattern{D, S}) :: CutPattern{D, S} where {D, S}
 	# Check beforehand if there is any children to be flattened save it.
 	to_flatten = @. (
 		(p.cuts_are_vertical === getfield(p.subpatterns, :cuts_are_vertical)) &
-		!iszero(getfield(p.subpatterns, :piece_idx))
+		iszero(getfield(p.subpatterns, :piece_idx))
 	)
 	need_flattening = any(to_flatten)
 	need_flattening && (aux_vector = Vector{CutPattern{D, S}}())
@@ -258,7 +258,7 @@ represented by "P`length`x`width`" (note the `P` is uppercase); if the
 non-piece pattern has subpatterns (i.e., is not waste) then it starts a set of
 vertical (horizontal) cuts with `[` (`{`) and close it with `]` (`}`). There is
 always whitespace between the elements of such sets but, for conciseness and
-ease of reading, if all the elements of a subpattern are pieces they are
+ease of reading, if all the elements of a subpattern have no children they are
 separated by single spaces (no matter how long the list), otherwise they are
 separated by newlines.
 
@@ -279,7 +279,7 @@ function to_pretty_str(
 	cb = p.cuts_are_vertical ? ']' : '}'
 	base = "$(indent)P$(p.length)x$(p.width)"
 	isempty(p.subpatterns) && return base
-	if any(iszero, getfield.(p.subpatterns, :piece_idx))
+	if any(!isempty, getfield.(p.subpatterns, :subpatterns))
 		joined_sub = mapreduce(*, p.subpatterns) do subpatt
 			to_pretty_str(subpatt; lvl = lvl + 1, indent_str = indent_str) * '\n'
 		end
@@ -289,7 +289,7 @@ function to_pretty_str(
 			to_pretty_str(piece; lvl = 0)
 		end
 		joined_pieces = join(piece_strs, " ")
-		return "$base$ob$joined_pieces$cb"
+		return "$base$ob $joined_pieces $cb"
 	end
 end
 
