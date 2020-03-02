@@ -11,6 +11,7 @@ module PPG2KP
 # 0.3) inside the pricing branch of no_arg_check_build_model, fix to zero all
 #   non-restricted variables (how to do this?), relax all the other variables.
 #   Solve this relaxed model. Save the UB.
+#
 # 0.4) call the heuristic and get the bkv.
 # 0.6) do the final pricing step over the restricted model (i.e.,
 #   the variables that could only be used to obtain a solution worse than
@@ -711,7 +712,16 @@ end
 # The number of times a pair pli-pii appear is at most the min between:
 # d[pii] and the number of subplates pli that fit in the original plate.
 #   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
-function no_arg_check_build_model(
+"""
+    build_complete_model(model, d, p, l, w, L, W; options)
+
+TODO: describe method.
+Note: this method guarantee that the first M constraints of type
+`(GenericAffExpr{Float64,VariableRef}, LessThan{Float64})` in the model,
+where M is the number of plates, will correspond to the plates of the
+model (i.e., as by the field ByproductPPG2KP.pli_lwb).
+"""
+function build_complete_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
@@ -789,14 +799,14 @@ function no_arg_check_build_model(
 	# If all pieces have demand one, a binary variable will suffice to make the
 	# connection between a piece type and the plate it is extracted from.
 	naturally_only_binary = all(di -> di <= 1, d)
+	@show naturally_only_binary
 	if naturally_only_binary
 		@variable(model, picuts[1:length(np)], Bin)
 	else
-		@variable(model, picuts[1:length(np)] >= 0, Int)
-		#@variable(model,
-		#  0 <= picuts[i = 1:length(np)] <=
-		#    min(pli_lwb[np[i][1]][3], d[np[i][2]]),
-		#Int)
+		#@variable(model, picuts[1:length(np)] >= 0, Int)
+		@variable(model,
+			0 <= picuts[i = 1:length(np)] <= min(pli_lwb[np[i][1]][3], d[np[i][2]]),
+		Int)
 	end
 
 	@variable(model, cuts_made[1:length(hvcuts)] >= 0, Int)
@@ -857,6 +867,91 @@ function no_arg_check_build_model(
 		)
 	end
 	end # @timeit "calls_to_JuMP", old: time_to_solver_build
+
+	return byproduct
+end
+
+function all_restricted_cuts_idxs(
+	bp :: ByproductPPG2KP{D, S, P}
+) :: Vector{Int} where {D, S, P}
+	rc_idxs = Vector{Int}()
+	usl = unique!(sort(bp.l))
+	usw = unique!(sort(bp.w))
+	bp.first_vertical_cut_idx
+	for (idx, (_, fc, _)) in pairs(bp.cuts)
+		if idx < bp.first_vertical_cut_idx
+			!isempty(searchsorted(usl, bp.pli_lwb[fc][1])) && push!(idx, rc_idxs)
+		else
+			!isempty(searchsorted(wsl, bp.pli_lwb[fc][2])) && push!(idx, rc_idxs)
+		end
+	end
+
+	return rc_idxs
+end
+
+# Internal use.
+# Given two iterators, `u` and `s` (both following a common ordering), return
+# an iterator over all the elements in `u` but not in `s`.
+function setdiff_sorted(u, s)
+	isempty(s) && return deepcopy(u)
+	t = empty(u)
+	next = iterate(s)
+	for eu in u
+		if next === nothing
+			push!(t, eu)
+			continue
+		end
+		(es, ss) = next
+		if eu == es
+			next = iterate(s, ss)
+		else
+			push!(t, eu)
+		end
+	end
+	t
+end
+
+function restricted_final_pricing(
+	model, byproduct :: ByproductPPG2KP{D, S, P},
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	all_vars = all_variables(model)
+	@assert length(all_vars) == length(bp.cuts)
+	rc_idxs = all_restricted_cuts_idxs(bp)
+	uc_idxs = setdiff_sorted(keys(all_vars), rc_idxs)
+	# TODO: continue here
+	return byproduct
+end
+
+function iterative_pricing(
+	model, bp :: ByproductPPG2KP{D, S, P},
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	all_vars = all_variables(model)
+	@assert length(all_vars) == length(bp.cuts)
+	compatible_cons = all_constraints(
+		model, GenericAffExpr{Float64,VariableRef}, LessThan{Float64}
+	)
+	@assert length(compatible_cons) >= length(bp.pli_lwb)
+	rc_idxs = all_restricted_cuts_idxs(bp)
+	for (idx, var) in all_vars
+	end
+	return byproduct
+end
+
+function final_pricing(
+	model, byproduct :: ByproductPPG2KP{D, S, P},
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	return byproduct
+end
+
+function no_arg_check_build_model(
+	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
+	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+  byproduct = build_complete_model(model, d, p, l, w, L, W, options)
+	options["no-pricing"] && return byproduct
 
 	return byproduct
 end

@@ -142,14 +142,18 @@ function which_vars_to_keep(model, lb :: Float64)
 end
 
 """
-Stores a variable and its old bounds so they may be restored.
+Stores the type and bounds of a variable so they may be restored.
 
 $(TYPEDFIELDS)
 
 """
-struct SavedBound
-	"A reference to the variable."
-	var :: VariableRef
+struct StashedVarConf
+#	"A reference to the variable."
+#	var :: VariableRef
+	"Stores wether the variable was binary."
+	was_bin :: Bool
+	"Stores wether the variable was integer (not binary, nor continuous)."
+	was_int :: Bool
 	"Stores wether the variable was fixed."
 	was_fixed :: Bool
 	"If the variable was fixed, to which value they were fixed."
@@ -165,28 +169,33 @@ struct SavedBound
 end
 
 """
-    restore_bound!(b :: SavedBound) :: Nothing
+    restore!(var :: VariableRef, c :: VarConfig) :: Nothing
 
-If `b.var` bounds are different than the ones specified by the rest
-of the `b` fields, then change `b.var` bounds to adhere to them.
+If `var` type and/or bounds are different than the ones specified in `c`,
+then change `var` type and/or bounds to adhere to `c`.
 """
-function restore_bound!(b :: SavedBound) :: Nothing
-	if b.was_fixed && (!is_fixed(b.var) || fix_value(b.var) != b.fix_value)
-		fix(b.var, b.fix_value; force = true)
+function restore!(var :: VariableRef, c :: VarConfig) :: Nothing
+	!c.was_bin && is_binary(var) && unset_binary(var)
+	!c.was_int && is_integer(var) && unset_integer(var)
+	c.was_bin && !is_binary(var) && set_binary(var)
+	c.was_int && !is_integer(var) && set_integer(var)
+	end
+	if c.was_fixed && (!is_fixed(var) || fix_value(var) != c.fix_value)
+		fix(var, c.fix_value; force = true)
 	else
-		is_fixed(b.var) && unfix(b.var)
-		if b.had_lb && (!has_lower_bound(b.var) || lower_bound(b.var) != b.lb)
-			set_lower_bound(b.var, b.lb)
+		is_fixed(var) && unfix(var)
+		if c.had_lb && (!has_lower_bound(var) || lower_bound(var) != c.lb)
+			set_lower_bound(var, c.lb)
 		end
-		if b.had_ub && (!has_upper_bound(b.var) || upper_bound(b.var) != b.ub)
-			set_upper_bound(b.var, b.ub)
+		if c.had_ub && (!has_upper_bound(var) || upper_bound(var) != c.ub)
+			set_upper_bound(var, c.ub)
 		end
 	end
 	nothing
 end
 
 """
-    save_bound_if_exists!(reg :: [SavedBound], var :: VariableRef) -> reg
+    save_var_conf(var :: VariableRef) :: VarConfig
 
 If `var` is fixed or has a lower/upper bound, then a corresponding
 SavedBound is pushed into `reg`. The method always return `reg`.

@@ -446,13 +446,6 @@ function throw_if_incompatible_options(p_args)
 	)
 	# The check below needs to be here because uses a generic flag and a specific
 	# flag at same time.
-	p_args["PPG2KP-final-pricing"] && p_args["relax2lp"] && @error(
-		"The flags --final-pricing and --relax2lp should not be used together;" *
-		" it is not clear what they should do, and the best interpretation" *
-		" (solving the relaxed model and doing the final pricing, without" *
-		" solving the unrelaxed reduced model after) is not specially useful" *
-		" and need extra code to work that is not worth it."
-	)
 	Utilities.Args.throw_if_incompatible_options(
 		Val(Symbol(p_args["model"])),
 		create_unprefixed_subset(p_args["model"], p_args)

@@ -35,13 +35,13 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"Disables Furini2016 symmetry breaking: as trim cuts are needed in faithful2furini2016 mode, the symmetry-breaking is less restrictive than 'do not cut after midplate', it just removes each cut y > midplate in which plate_size - y is an existing cut; enabling this flag makes the code just use all discretized positions as cuts."
 		),
 		Arg(
-			"final-pricing", false,
-			"Uses the best lb available (either from --lower-bounds or --warm-start) to remove variables after solving the continuous relaxation."
+			"no-pricing", false,
+			"Disables the pricing procedure (both the iterative and the final). Combined with --faithful2furini2016 this will give the Complete PP-G2KP Model with Cut-Position and Redundant-Cut reductions (pass --no-redundant-cut and --no-cut-position to have the pure Complete PP-G2KP Model)."
 		),
-		Arg(
+		#=Arg(
 			"warm-start", false,
 			"(For now conflict with --faithful2furini2016) Uses the heuristic described in Furini2016 to generate a initial primal feasible solution, warm-start the model with unrestricted cuts fixed to zero, and then unfix the unrestricted cuts to solve the complete model."
-		),
+		),=#
 		Arg(
 			"ignore-d", false,
 			"Ignore the demand information during discretization, used to measure impact."
@@ -58,17 +58,6 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 end
 
 function Utilities.Args.throw_if_incompatible_options(::Val{:PPG2KP}, p_args)
-	is_revised_furini = !p_args["faithful2furini2016"]
-	p_args["final-pricing"] && !is_revised_furini && @error(
-		"the final pricing technique is implemented just for Enhanced Furini" *
-		" model as of now"
-	)
-	p_args["final-pricing"] && isempty(p_args["lower-bounds"].vector) &&
-		!p_args["warm-start"] && @error(
-		"the flag --final-pricing only makes sense if a lower bound is" *
-		" provided (either directly by --lower-bound or indirectly by" *
-		" --warm-start)"
-	)
 end
 
 end # module
