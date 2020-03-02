@@ -1,4 +1,46 @@
 module PPG2KP
+# REVISED PLAN FOR IMPLEMENTING THE PRICING PART:
+# 0) Implement the pricing of the revised model.
+# 0.1) wrap the body of the no_arg_check_build_model inside another method
+#   that just builds the Complete Model (with the reductions); call this
+#   methods inside no_arg_check_build_model and then check if it will be
+#   delivered this way or it will be changed by the pricing. Create a flag for
+#   the initial phase of pricing and test if it reaches the 'if' correctly.
+# 0.2) add documentation to the complete_model_build guaranteeing that the
+#   first plate_amount constraints correspond to the plates of the model.
+# 0.3) inside the pricing branch of no_arg_check_build_model, fix to zero all
+#   non-restricted variables (how to do this?), relax all the other variables.
+#   Solve this relaxed model. Save the UB.
+# 0.4) call the heuristic and get the bkv.
+# 0.6) do the final pricing step over the restricted model (i.e.,
+#   the variables that could only be used to obtain a solution worse than
+#   the heuristic are fixed to zero).
+# 0.7) unrelax the variables that are not fixed to zero.
+# 0.8) Solve the MIP of the priced restricted model, save it as the new bkv
+#   (unless the solving process finished by time and the heuristic bkv is
+#   better).
+# 1) Implement the initial pricing.
+# 1.1) inside the pricing branch of no_arg_check_build_model, relax again
+#   all the restricted cuts (the non-restriced variables should be fixed
+#   to zero by now). Solve this relaxed model. Save the UB.
+# 1.2) traverse all the variables and query the dual values of the plates
+#   involved, use it to decide if the variable will or not be unfixed and
+#   relaxed. If some variable was unfixed, repeat both previous step and this
+#   step. NOTE: the check to know if the variable will be unfixed or not is in
+#   p.9 first half of second column and in the first paragraph of p.13.
+# 2) Implement the final pricing.
+# 2.1) Use the UB and LB to do the final pricing (this maybe can reuse code
+#   already developed), this will unfix some variables.
+# 2.2) Finally, check which variables are fixed to zero and remove them both
+#   from the model as from the ByproductPPG2KP. We need to check if we will
+#   remove constraints that become irrelevant, if this is done we will need
+#   to update all the cuts to refer to the new plate indexes.
+# 3) Implement the warm-start using the heuristic.
+# 3.1) Plan this section. Note that the warm-start of the final priced model
+#   should happen inside the read_build_solve_print method and therefore it
+#   needs to be a generic method to be implemented for each different model.
+#   There may be previous warm starts to improve the model building process,
+#   those will happen inside the build_model method.
 # PLAN FOR IMPLEMENTING THE PRICING PART:
 # After each step, document and test.
 # 0) Remember to fix the parameters in the get_cut_pattern method,
