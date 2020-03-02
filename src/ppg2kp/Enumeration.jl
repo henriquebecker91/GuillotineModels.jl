@@ -142,7 +142,7 @@ A piece should be extracted from a plate if:
 2. It is not possible to extract the piece in consideration together with any
    other piece (even other copy of the same piece) from the plate in
    consideration (for the cut orientations allowed by `symm` which by default
-	 are both vertical and horizontal).
+   are both vertical and horizontal).
 
 # Arguments
 
