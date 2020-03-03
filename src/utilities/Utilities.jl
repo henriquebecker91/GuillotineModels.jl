@@ -147,7 +147,7 @@ Stores the type and bounds of a variable so they may be restored.
 $(TYPEDFIELDS)
 
 """
-struct StashedVarConf
+struct SavedVarConf
 #	"A reference to the variable."
 #	var :: VariableRef
 	"Stores wether the variable was binary."
@@ -195,75 +195,55 @@ function restore!(var :: VariableRef, c :: VarConfig) :: Nothing
 end
 
 """
-    save_var_conf(var :: VariableRef) :: VarConfig
+    SavedVarConf(var :: VariableRef) :: SavedVarConf
 
-If `var` is fixed or has a lower/upper bound, then a corresponding
-SavedBound is pushed into `reg`. The method always return `reg`.
+Creates a `SavedVarConf` struct from the configuration of the given variable.
+Note that the VariableRef itself is not stored.
 """
-function save_bound_if_exists!(
-	reg :: Vector{SavedBound}, var :: VariableRef
-) :: Vector{SavedBound}
+function SavedVarConf(var :: VariableRef) :: Vector{SavedVarConf}
+	was_bin = is_binary(var)
+	was_int = is_integer(var)
 	was_fixed = is_fixed(var)
 	had_lb = has_lower_bound(var)
 	had_ub = has_upper_bound(var)
-	if was_fixed || had_lb || had_ub
-		push!(reg, SavedBound(
-			var, was_fixed, (was_fixed ? fix_value(var) : 0.0),
-			had_lb, (had_lb ? lower_bound(var) : 0.0),
-			had_ub, (had_ub ? upper_bound(var) : 0.0)
-		))
-	end
-	reg
+	return SavedVarConf(
+		was_bin, was_int,
+		was_fixed, (was_fixed ? fix_value(var) : 0.0,)
+		had_lb, (had_lb ? lower_bound(var) : 0.0),
+		had_ub, (had_ub ? upper_bound(var) : 0.0)
+	)
 end
 
 """
-    fix_vars!(vars, fix_value = 0.0) :: Vector{SavedBound}
+    save_and_fix!(vars, fix_value = 0.0) :: SavedVarConf
 
-Fix all `vars` to `fix_value` but before save their bound to the returned
-vector of `SavedBound`s. The length of the vector returned may be smaller
-than the length of `vars` because the bounds are saved only if the variable
-actually was fixed or had a bound.
+Fix the variable value and return its SavedVarConf before the fix.
 """
-function fix_vars!(vars, fix_value = 0.0)
-	saved_bounds = Vector{SavedBound}()
-	for var in vars
-		save_bound_if_exists!(saved_bounds, var)
-	end
-	fix.(vars, fix_value; force = true)
-	return saved_bounds
+function save_and_fix!(var, fix_value = 0.0)
+	svc = SavedVarConf(var)
+	fix(var, fix_value; force = true)
+	return svc
 end
 
 """
-    relax_vars!(vars, model; check_validity = true) -> tuple of six vectors
+    relax_var!(var) :: SavedVarConf
 
-The `vars` from `model` are made continuous, but if the variable is binary,
-and had a lower (upper) bound below zero (above one) it is replaced by zero
-(one).
+The `var` is made continuous. If the variable was binary, and had a lower
+(upper) bound below zero (above one) it is replaced by zero (one).
 
-If `check_validity` is `true` then `!is_valid` variables are skipped.
-Four binary vectors (`was_int`, `was_bin`, `had_lb`, `had_ub`) and two
-Float64 (`lb_val`, `ub_val`) vectors are returned.
-
-See also: [`unrelax_vars!`](@ref), [`relax_all_vars!`](@ref)
+See also: [`relax_all_vars!`](@ref)
 """
-function relax_vars!(vars, model; check_validity = true)
-	was_int, was_bin, had_lb, had_ub = is_integer.(vars), is_binary.(vars),
-		has_lower_bound.(vars), has_upper_bound.(vars)
-	lb_val = map(var -> has_lower_bound(var) ? lower_bound(var) : 0.0, vars)
-	ub_val = map(var -> has_upper_bound(var) ? upper_bound(var) : 0.0, vars)
-
-	for (i, var) in enumerate(vars)
-		check_validity && !is_valid(model, var) && continue
-		if was_int[i]
-			unset_integer(var)
-		elseif was_bin[i]
-			unset_binary(var)
-			if !had_lb[i] || lb_val[i] < 0.0
-				set_lower_bound(var, 0.0)
-			end
-			if !had_ub[i] || ub_val[i] > 1.0
-				set_upper_bound(var, 1.0)
-			end
+function relax_vars!(var)
+	svc = SavedVarConf(var)
+	if was_int[i]
+		unset_integer(var)
+	elseif was_bin[i]
+		unset_binary(var)
+		if !had_lb[i] || lb_val[i] < 0.0
+			set_lower_bound(var, 0.0)
+		end
+		if !had_ub[i] || ub_val[i] > 1.0
+			set_upper_bound(var, 1.0)
 		end
 	end
 
