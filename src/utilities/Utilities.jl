@@ -1,7 +1,7 @@
 module Utilities
 
 using DocStringExtensions # for TYPEDFIELDS
-export SortedLinkedLW
+
 """
 Grouping of the length and width piece vectors (in original and sorted order),
 and their reverse indexes, allowing to, for example, iterate the pieces
@@ -28,6 +28,7 @@ struct SortedLinkedLW{D, S}
 	"Translator from piece indexes (`l` and `w`) to index in `sw`."
 	pii2swi :: Vector{D}
 end
+export SortedLinkedLW
 
 """
     SortedLinkedLW(::Type{D}, l :: [S], w :: [S])
@@ -59,13 +60,6 @@ end
 using JuMP
 using TimerOutputs
 
-# JuMP/'Mathematical Model' related utilities
-export num_all_constraints, reduced_cost, delete_vars_by_pricing!
-export relax_vars!, relax_all_vars!, unrelax_vars!, unrelax_all_vars!
-export SavedBound, save_bound_if_exists!, restore_bound!
-export which_vars_to_keep, fix_vars!
-export save_model
-
 # Style guideline: as the module block is left unindented, the @timeit
 # blocks that wrap the whole method body also are not indented.
 
@@ -83,6 +77,7 @@ function num_all_constraints(m) :: Int64
 	end
 	return sum
 end
+export num_all_constraints
 
 # see https://github.com/JuliaOpt/MathOptInterface.jl/issues/776
 function reduced_cost(var) :: Float64
@@ -94,52 +89,7 @@ function reduced_cost(var) :: Float64
 		@warn "CAUTION: reduce_cost was called over a variable with no bounds"
 	rc
 end
-
-# TODO: Check if this method will be used, now that variable deletion is
-# efficient (because our PR to JuMP).
-# NOTE: by design, this method do not change the vars vector itself, but
-# instead just calls delete over part of its contents (what mark such content
-# as invalid)
-#=
-function delete_vars_by_pricing!(model, lb :: Float64)
-	# All reduced costs need to be queryied and stored before we start modifying
-	# the model.
-	all_vars_time = @elapsed (vars = all_variables(model))
-	@show all_vars_time
-	obj = objective_value(model)
-	rcs_time = @elapsed (rcs = reduced_cost.(vars))
-	@show rcs_time
-	n = length(vars)
-	mask = Vector{Bool}()
-	del_loop_time = @elapsed for i in 1:n
-		var, rc = vars[i], rcs[i]
-		@assert rc <= obj
-		keep = obj - rc >= lb
-		#del_time = 0.0
-		!keep && #=(del_time = @elapsed=# delete(model, var)#)
-		#@show del_time
-		push!(mask, keep)
-	end
-	@show del_loop_time
-	return mask
-end
-=#
-
-# Execute Furini's 2016 Final Pricing. The returned value is a boolean list,
-# with each index corresponding to a variable in all_variables(model),
-# and with a true value if the variable should be kept, and false if it should
-# be removed. The model parameter is expected to be a solved continuous
-# relaxation of the problem (so the objective_value and the reduced_cost may
-# be extracted).
-# TODO: check if this is necessary, and if it is, it should not go there,
-# but inside PPG2KP module instead.
-function which_vars_to_keep(model, lb :: Float64)
-	obj = objective_value(model)
-	rcs = reduced_cost.(all_variables(model))
-	# We keep the ones equal to lb (not strictly necessary) to guarantee the
-	# warm start will work (the variables needed for it should be there).
-	return map(rc -> obj - rc >= lb, rcs)
-end
+export reduce_cost
 
 """
 Stores the type and bounds of a variable so they may be restored.
@@ -167,19 +117,20 @@ struct SavedVarConf
 	"If the variable had an upper bound, the value of their upper bound."
 	ub :: Float64
 end
+export SavedVarConf
 
 """
-    restore!(var :: VariableRef, c :: VarConfig) :: Nothing
+    restore!(var :: VariableRef, c :: SavedVarConf) :: Nothing
 
 If `var` type and/or bounds are different than the ones specified in `c`,
 then change `var` type and/or bounds to adhere to `c`.
 """
-function restore!(var :: VariableRef, c :: VarConfig) :: Nothing
+function restore!(var :: VariableRef, c :: SavedVarConf) :: Nothing
 	!c.was_bin && is_binary(var) && unset_binary(var)
 	!c.was_int && is_integer(var) && unset_integer(var)
 	c.was_bin && !is_binary(var) && set_binary(var)
 	c.was_int && !is_integer(var) && set_integer(var)
-	end
+
 	if c.was_fixed && (!is_fixed(var) || fix_value(var) != c.fix_value)
 		fix(var, c.fix_value; force = true)
 	else
@@ -193,6 +144,7 @@ function restore!(var :: VariableRef, c :: VarConfig) :: Nothing
 	end
 	nothing
 end
+export restore!
 
 """
     SavedVarConf(var :: VariableRef) :: SavedVarConf
@@ -200,7 +152,7 @@ end
 Creates a `SavedVarConf` struct from the configuration of the given variable.
 Note that the VariableRef itself is not stored.
 """
-function SavedVarConf(var :: VariableRef) :: Vector{SavedVarConf}
+function SavedVarConf(var :: VariableRef) :: SavedVarConf
 	was_bin = is_binary(var)
 	was_int = is_integer(var)
 	was_fixed = is_fixed(var)
@@ -208,111 +160,47 @@ function SavedVarConf(var :: VariableRef) :: Vector{SavedVarConf}
 	had_ub = has_upper_bound(var)
 	return SavedVarConf(
 		was_bin, was_int,
-		was_fixed, (was_fixed ? fix_value(var) : 0.0,)
+		was_fixed, (was_fixed ? fix_value(var) : 0.0),
 		had_lb, (had_lb ? lower_bound(var) : 0.0),
 		had_ub, (had_ub ? upper_bound(var) : 0.0)
 	)
 end
 
 """
-    save_and_fix!(vars, fix_value = 0.0) :: SavedVarConf
+    save_and_fix!(var, fix_value = 0.0) :: SavedVarConf
 
 Fix the variable value and return its SavedVarConf before the fix.
 """
-function save_and_fix!(var, fix_value = 0.0)
+function save_and_fix!(var :: VariableRef, fix_value = 0.0)
 	svc = SavedVarConf(var)
 	fix(var, fix_value; force = true)
 	return svc
 end
+export save_and_fix!
 
 """
-    relax_var!(var) :: SavedVarConf
+    save_and_relax!(var) :: SavedVarConf
 
 The `var` is made continuous. If the variable was binary, and had a lower
 (upper) bound below zero (above one) it is replaced by zero (one).
-
-See also: [`relax_all_vars!`](@ref)
 """
-function relax_vars!(var)
+function save_and_relax!(var :: VariableRef)
 	svc = SavedVarConf(var)
-	if was_int[i]
+	if svc.was_int
 		unset_integer(var)
-	elseif was_bin[i]
+	elseif svc.was_bin
 		unset_binary(var)
-		if !had_lb[i] || lb_val[i] < 0.0
+		if !svc.had_lb || svc.lb < 0.0
 			set_lower_bound(var, 0.0)
 		end
-		if !had_ub[i] || ub_val[i] > 1.0
+		if !svc.had_ub || svc.ub > 1.0
 			set_upper_bound(var, 1.0)
 		end
 	end
 
-	(was_int, was_bin, had_lb, had_ub, lb_val, ub_val)
+	return svc
 end
-
-"""
-    relax_vars!(model)
-
-Literally `relax_vars!(all_variables(model), model; check_validity = false)`.
-`all_variables` already returns only valid variables.
-"""
-function relax_all_vars!(model)
-	relax_vars!(all_variables(model), model; check_validity = false)
-end
-
-"""
-    unrelax_vars!(vars, model, original_settings; check_validity = true)
-
-Given the tuple of six vectors returned by `relax_vars!` as
-`original_settings`, use it to restore the `vars` from `model` to
-their original settings.
-
-See also: [`relax_vars!`](@ref), [`unrelax_all_vars!`](@ref)
-"""
-function unrelax_vars!(vars, model, original_settings; check_validity = true)
-	was_int, was_bin, had_lb, had_ub, lb_val, ub_val = original_settings
-
-	for (i, var) in enumerate(vars)
-		check_validity && !is_valid(model, var) && continue
-		if was_int[i]
-			set_integer(var)
-		elseif was_bin[i]
-			if !had_lb[i]
-				unset_lower_bound(var)
-			elseif lb_val[i] != 0.0
-				set_lower_bound(var, lb_val[i])
-			end
-			if !had_ub[i]
-				unset_upper_bound(var)
-			elseif ub_val[i] != 1.0
-				set_upper_bound(var, ub_val[i])
-			end
-			set_binary(var)
-		end
-	end
-
-	vars
-end
-
-"""
-    unrelax_all_vars!(model, original_settings)
-
-If you used `relax_all_vars!` you may use `unrelax_all_vars!` instead of
-`unrelax_vars!`.
-
-See also: [`relax_all_vars!`](@ref), [`unrelax_vars!`](@ref)
-"""
-function unrelax_all_vars!(model, original_settings)
-	all_vars = all_variables(model)
-	# if variables were deleted since relax_all_vars! the assert will trigger
-	@assert length(all_vars) == length(original_settings)
-	# the alternatives are: (1) save the list of vars before deletion and pass
-	# to unrelax_vars! (checking validity); (2) edit original_settings to remove
-	# the references to the settings of deleted vars. we do the first
-
-	# check_validity is false because all_variables only return valid variables
-	unrelax_vars!(all_vars, original_settings; check_validity = false)
-end
+export save_and_relax!
 
 # Not used by the rest of Utilities, just made available to other modules.
 include("Args.jl")

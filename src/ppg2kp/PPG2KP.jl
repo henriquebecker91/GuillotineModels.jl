@@ -90,6 +90,51 @@ export ByproductPPG2KP # re-export ByproductPPG2KP from Enumeration
 using ..Utilities
 import ..CutPattern # type returned by get_cut_pattern
 
+# TODO: Check if this method will be used, now that variable deletion is
+# efficient (because our PR to JuMP).
+# NOTE: by design, this method do not change the vars vector itself, but
+# instead just calls delete over part of its contents (what mark such content
+# as invalid)
+#=
+function delete_vars_by_pricing!(model, lb :: Float64)
+	# All reduced costs need to be queryied and stored before we start modifying
+	# the model.
+	all_vars_time = @elapsed (vars = all_variables(model))
+	@show all_vars_time
+	obj = objective_value(model)
+	rcs_time = @elapsed (rcs = reduced_cost.(vars))
+	@show rcs_time
+	n = length(vars)
+	mask = Vector{Bool}()
+	del_loop_time = @elapsed for i in 1:n
+		var, rc = vars[i], rcs[i]
+		@assert rc <= obj
+		keep = obj - rc >= lb
+		#del_time = 0.0
+		!keep && #=(del_time = @elapsed=# delete(model, var)#)
+		#@show del_time
+		push!(mask, keep)
+	end
+	@show del_loop_time
+	return mask
+end
+=#
+
+# TODO: check if this will be used.
+# Execute Furini's 2016 Final Pricing. The returned value is a boolean list,
+# with each index corresponding to a variable in all_variables(model),
+# and with a true value if the variable should be kept, and false if it should
+# be removed. The model parameter is expected to be a solved continuous
+# relaxation of the problem (so the objective_value and the reduced_cost may
+# be extracted).
+function which_vars_to_keep(model, lb :: Float64)
+	obj = objective_value(model)
+	rcs = reduced_cost.(all_variables(model))
+	# We keep the ones equal to lb (not strictly necessary) to guarantee the
+	# warm start will work (the variables needed for it should be there).
+	return map(rc -> obj - rc >= lb, rcs)
+end
+
 using JuMP
 using TimerOutputs
 
@@ -799,7 +844,6 @@ function build_complete_model(
 	# If all pieces have demand one, a binary variable will suffice to make the
 	# connection between a piece type and the plate it is extracted from.
 	naturally_only_binary = all(di -> di <= 1, d)
-	@show naturally_only_binary
 	if naturally_only_binary
 		@variable(model, picuts[1:length(np)], Bin)
 	else
