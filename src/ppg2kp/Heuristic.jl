@@ -80,6 +80,26 @@ function expand(
 end
 
 """
+    shelves2cutpattern(shelves :: [[D]], l, w, L, W) :: CutPattern{D,S}
+
+Transform the third return of `iterated_greedy` or `first_fit_decr` into a
+CutPattern object.
+"""
+function shelves2cutpattern(
+	shelves :: Vector{Vector{D}}, l :: Vector{S}, w :: Vector{S}, L :: S, W :: S
+) :: CutPattern{D, S} where {D, S}
+	outer_cp = Vector{CutPattern{D, S}}()
+	for l_strip in shelves
+		inner_cp = Vector{CutPattern{D, S}}()
+		for pii in l_strip
+			push!(inner_cp, CutPattern(l[pii], w[pii], pii))
+		end
+		push!(outer_cp, CutPattern(L, w[first(l_strip)]), true, inner_cp)
+	end
+	return GuillotineModels(L, W, false, outer_cp)
+end
+
+"""
     iterated_greedy(d, p, l, w, L, W, rng, max_iter_since_last_improv = 10^6)
 
 The iterated greedy procedure is a heuristic that creates a random piece subset

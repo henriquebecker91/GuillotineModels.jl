@@ -56,7 +56,7 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"Ignore the dimension not being discretized during discretization, used to measure impact."
 		),
 		Arg(
-			"pricing-heuristic-seed", 0,
+			"pricing-heuristic-seed", 1,
 			"Defines the seed used to start the RNG object passed to the `GuillotineModels.PPG2KP.iterated_greedy` method, which result is used in the final pricing of the restricted model which is, finally, used for the final pricing of the complete model. If you pass the no-pricing flag, this is not used."
 		)
 	]

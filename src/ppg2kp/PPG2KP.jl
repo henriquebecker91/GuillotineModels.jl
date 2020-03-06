@@ -89,6 +89,7 @@ export ByproductPPG2KP # re-export ByproductPPG2KP from Enumeration
 
 using ..Utilities
 import ..CutPattern # type returned by get_cut_pattern
+using RandomNumbers.Xorshifts
 
 # TODO: Check if this method will be used, now that variable deletion is
 # efficient (because our PR to JuMP).
@@ -877,9 +878,9 @@ function all_restricted_cuts_idxs(
 	bp.first_vertical_cut_idx
 	for (idx, (_, fc, _)) in pairs(bp.cuts)
 		if idx < bp.first_vertical_cut_idx
-			!isempty(searchsorted(usl, bp.pli_lwb[fc][1])) && push!(idx, rc_idxs)
+			!isempty(searchsorted(usl, bp.pli_lwb[fc][1])) && push!(rc_idxs, idx)
 		else
-			!isempty(searchsorted(wsl, bp.pli_lwb[fc][2])) && push!(idx, rc_idxs)
+			!isempty(searchsorted(usw, bp.pli_lwb[fc][2])) && push!(rc_idxs, idx)
 		end
 	end
 
@@ -909,10 +910,10 @@ function setdiff_sorted(u, s)
 end
 
 function restricted_final_pricing(
-	model, byproduct :: ByproductPPG2KP{D, S, P}, rng
-) :: Nothing where {D, S, P}
+	model, bp :: ByproductPPG2KP{D, S, P}, rng
+) :: Tuple{P, CutPattern{D, S}} where {D, S, P}
 	all_vars = all_variables(model)
-	@assert length(all_vars) == length(bp.cuts)
+	@assert length(all_vars) >= length(bp.cuts)
 	rc_idxs = all_restricted_cuts_idxs(bp)
 	# Every variable that is not a restricted cut is a unrestricted cut.
 	uc_idxs = setdiff_sorted(keys(all_vars), rc_idxs)
@@ -925,18 +926,18 @@ function restricted_final_pricing(
 	@timeit "restricted_relaxed" optimize!(model)
 	@assert primal_status(model) == MOI.FEASIBLE_POINT
 	# Get the solution of the heuristic.
-	LB, sel, pat = iterated_greedy(d, p, l, w, L, W, rng)
+	LB, _, shelves = Heuristic.iterated_greedy(
+		bp.d, bp.p, bp.l, bp.w, bp.L, bp.W, rng
+	)
 	UB = objective_value(model)
+	UB = trunc(P, UB + eps(UB)) # theoretically sane UB
 	# Note: the iterated_greedy solve the shelf version of the problem,
 	# that is restricted, so it cannot return a better known value than the
 	# restricted upper bound.
-	@assert LB <= UB # TODO: check tolerance
-	# TODO: check if the `>=` will be kept, but more importantly, check
-	# if a tolerance is needed in the comparison. Query it from the solver/
-	# model if possible.
-	# The `>=` is used below, instead of `>`, because we want the model
-	# to find the LB, this makes it easier to warm start the mode.
-	rc_fix_bitstr = @. UB - reduced_cost(rc_vars) >= LB # final pricing
+	@assert LB <= UB
+	# TODO: check if a tolerance is needed in the comparison. Query it from the
+	# solver/model if possible (or use eps?).
+	rc_fix_bitstr = @. UB - reduced_cost(rc_vars) > LB # final pricing
 	# Below the SavedVarConf is not stored because they will be kept fixed
 	# for now, and when restored, they will be restored to their original
 	# state (rc_svcs) not this intermediary one.
@@ -949,22 +950,36 @@ function restricted_final_pricing(
 	discrete_vars = rc_vars[rc_fix_bitstr]
 	restore!.(discrete_vars, rc_svcs[rc_discrete_bitstr])
 	@timeit "restricted_discrete" optimize!(model) # restricted MIP solved
-	# TODO: do this here or in the next method?
-	save_and_relax!.(rc_vars[rc_discrete_bitstr], rc_svcs[rc_discrete_bitstr])
-	discrete_values = value.(discrete_vars)
-	set_start_value.(discrete_vars, discrete_values)
+	if primal_status(model) == MOI.FEASIBLE_POINT
+		discrete_values = value.(discrete_vars)
+		save_and_relax!.(rc_vars[rc_discrete_bitstr], rc_svcs[rc_discrete_bitstr])
+		set_start_value.(discrete_vars, discrete_values)
+		model_obj = objective_value(model)
+		model_obj = floor(model_obj + eps(model_obj))
+		if model_obj > LB
+			sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
+			bkv = convert(P, model_obj)
+		else
+			sol = shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
+			bkv = LB
+		end
+	else
+		sol = shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
+		bkv = LB
+	end
 	# TODO: we need to extract the solution, either from the heuristic of the
 	# solver, and return it here; we also probably need to return the saved
 	# configurations of all variables so they can be restored if needed.
 	# Maybe it is better to save everything first and then use a relax/fix
 	# (without save).
-	nothing
+	return bkv, sol
 end
 
 function iterative_pricing(
 	model, bp :: ByproductPPG2KP{D, S, P},
 	options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	#=
 	all_vars = all_variables(model)
 	@assert length(all_vars) == length(bp.cuts)
 	compatible_cons = all_constraints(
@@ -974,7 +989,7 @@ function iterative_pricing(
 	rc_idxs = all_restricted_cuts_idxs(bp)
 	for (idx, var) in all_vars
 	end
-	return byproduct
+	return byproduct=#
 end
 
 function final_pricing(
@@ -990,6 +1005,11 @@ function no_arg_check_build_model(
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
   byproduct = build_complete_model(model, d, p, l, w, L, W, options)
 	options["no-pricing"] && return byproduct
+
+	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
+	#@show restricted_final_pricing(model, byproduct, rng)
+	@warn("For now, the restricted_final_pricing is being tested, so the code will exit inside the model generation.")
+	exit(0)
 
 	return byproduct
 end
