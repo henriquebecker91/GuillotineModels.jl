@@ -4,6 +4,7 @@ import JuMP: @variable, @constraint, @objective
 import GLPK
 import MathOptInterface
 const MOI = MathOptInterface
+import Suppressor: @suppress_out
 
 function test_relax_continuous()
 	# Not much to do, just solve an LP and check if the solution keeps being
@@ -154,7 +155,7 @@ function test_fix()
 	@test JuMP.objective_value(m) ≈ 51.5 rtol=1e-6 atol=1e-6
 	# Fix a integer variable to a value that is not integer.
 	svc_c2 = save_and_fix!(c, 35.5)
-	@supress_err JuMP.optimize!(m) # GLPK outputs some warnings if not suppressed
+	@suppress_out JuMP.optimize!(m) # GLPK outputs some warnings if not suppressed
 	@test JuMP.primal_status(m) == MOI.NO_SOLUTION
 	# Restore the `c` variable from its first save_and_fix! not the last.
 	restore!(c, svc_c)

@@ -8,7 +8,7 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 	return [
 		Arg(
 			"lower-bound", 0.0,
-			"The use of this value is dependent on the other options selected, --final-pricing may use the values if --warm-start do not give better values."
+			"The use of these values is dependent on the other options selected, check code."
 		),
 		Arg(
 			"upper-bound", Inf,
@@ -18,6 +18,7 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"round2disc", false,
 			"Round the second child size to a discretized position."
 		),
+		# TODO: edit the below after the pricing is implemented.
 		Arg(
 			"faithful2furini2016", false,
 			"Tries to be the most faithful possible to the description on the Furini2016 paper (more specifically the complete model, with the reductions, FOR NOW without a heuristic solution first and without pricing); the flags --no-cut-position, --no-redundant-cut and --no-furini-symmbreak disable parts of this reimplementation."
@@ -36,7 +37,7 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 		),
 		Arg(
 			"no-pricing", false,
-			"Disables the pricing procedure (both the iterative and the final). Combined with --faithful2furini2016 this will give the Complete PP-G2KP Model with Cut-Position and Redundant-Cut reductions (pass --no-redundant-cut and --no-cut-position to have the pure Complete PP-G2KP Model)."
+			"Disables the pricing procedure (both the iterative and the final). Combined with faithful2furini2016 this will give the Complete PP-G2KP Model with Cut-Position and Redundant-Cut reductions (pass no-redundant-cut and no-cut-position to have the pure Complete PP-G2KP Model)."
 		),
 		#=Arg(
 			"warm-start", false,
@@ -53,6 +54,10 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 		Arg(
 			"ignore-2th-dim", false,
 			"Ignore the dimension not being discretized during discretization, used to measure impact."
+		),
+		Arg(
+			"pricing-heuristic-seed", 0,
+			"Defines the seed used to start the RNG object passed to the `GuillotineModels.PPG2KP.iterated_greedy` method, which result is used in the final pricing of the restricted model which is, finally, used for the final pricing of the complete model. If you pass the no-pricing flag, this is not used."
 		)
 	]
 end

@@ -120,23 +120,24 @@ function delete_vars_by_pricing!(model, lb :: Float64)
 end
 =#
 
-# TODO: check if this will be used.
 # Execute Furini's 2016 Final Pricing. The returned value is a boolean list,
 # with each index corresponding to a variable in all_variables(model),
 # and with a true value if the variable should be kept, and false if it should
 # be removed. The model parameter is expected to be a solved continuous
 # relaxation of the problem (so the objective_value and the reduced_cost may
-# be extracted).
-function which_vars_to_keep(model, lb :: Float64)
-	obj = objective_value(model)
-	rcs = reduced_cost.(all_variables(model))
+# be extracted); if this is not the case, pass the correct `ub` by means
+# of the optional parameter.
+function which_vars_to_keep(
+	vars, lb :: Float64, ub :: Float64 = objective_value(model)
+)
 	# We keep the ones equal to lb (not strictly necessary) to guarantee the
 	# warm start will work (the variables needed for it should be there).
-	return map(rc -> obj - rc >= lb, rcs)
 end
 
 using JuMP
 using TimerOutputs
+import MathOptInterface
+const MOI = MathOptInterface
 
 # INTERNAL METHOD USED ONLY IN get_cut_pattern
 # If the "pattern" is the extraction of a single piece return either:
@@ -419,54 +420,6 @@ function search_cut_or_symmetry(
 		pli_lwb[fc][1] == fcl && pli_lwb[fc][2] == fcw && return i
 	end
 	@assert false # this should not be reachable
-end
-
-"""
-    disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
-
-!!! **Internal use.**
-
-"""
-function disable_unrestricted_cuts!(m, sl, sw, nnn, pli_lwb)
-	@assert length(sl) == length(sw)
-	n = length(sl)
-	@assert issorted(sl)
-	@assert issorted(sw)
-	reg = Vector{SavedBound}()
-	# For each triple in nnn, there is an associated variable in the
-	# cuts_made vector of m. The orientation and the position of the cut
-	# may be obtained by: getting the parent plate and first child indexes
-	# from nnn, using them to index pli_lwb, check which dimension has
-	# been changed and its new size. If a vertical (horizontal) cut creates
-	# a first child with size s, and s is NOT present in sw (sl), then that
-	# varible will be disabled.
-	for (i ,(pp, fc, _)) in enumerate(nnn)
-		ppl, ppw, _ = pli_lwb[pp]
-		fcl, fcw, _ = pli_lwb[fc]
-		@assert fcl < ppl || fcw < ppw
-		should_fix = false
-		if fcl < ppl
-			fcl_idx = searchsortedfirst(sl, fcl)
-			if fcl_idx > n || sl[fcl_idx] != fcl
-				should_fix = true
-			end
-		else
-			@assert fcw < ppw
-			fcw_idx = searchsortedfirst(sw, fcw)
-			if fcw_idx > n || sw[fcw_idx] != fcw
-				should_fix = true
-			end
-		end
-		if should_fix
-			var = m[:cuts_made][i]
-			# fix(...; force = true) erase the old bounds to then fix the variable.
-			# To be able to restore variables that had bounds, it is necessary to
-			# save the old bounds and the varible reference to restore them.
-			save_bound_if_exists!(reg, var)
-			fix(var, 0.0; force = true)
-		end
-	end
-	reg
 end
 
 """
@@ -956,15 +909,56 @@ function setdiff_sorted(u, s)
 end
 
 function restricted_final_pricing(
-	model, byproduct :: ByproductPPG2KP{D, S, P},
-	options :: Dict{String, Any} = Dict{String, Any}()
-) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	model, byproduct :: ByproductPPG2KP{D, S, P}, rng
+) :: Nothing where {D, S, P}
 	all_vars = all_variables(model)
 	@assert length(all_vars) == length(bp.cuts)
 	rc_idxs = all_restricted_cuts_idxs(bp)
+	# Every variable that is not a restricted cut is a unrestricted cut.
 	uc_idxs = setdiff_sorted(keys(all_vars), rc_idxs)
-	# TODO: continue here
-	return byproduct
+	# Relax all restricted cuts and fix all unrestricted cuts (pool vars).
+	rc_vars = all_vars[rc_idxs]
+	rc_svcs = save_and_relax!.(rc_vars)
+	uc_vars = all_vars[uc_idxs]
+	uc_svcs = save_and_fix!.(uc_vars)
+	# Solve the relaxed restricted model.
+	@timeit "restricted_relaxed" optimize!(model)
+	@assert primal_status(model) == MOI.FEASIBLE_POINT
+	# Get the solution of the heuristic.
+	LB, sel, pat = iterated_greedy(d, p, l, w, L, W, rng)
+	UB = objective_value(model)
+	# Note: the iterated_greedy solve the shelf version of the problem,
+	# that is restricted, so it cannot return a better known value than the
+	# restricted upper bound.
+	@assert LB <= UB # TODO: check tolerance
+	# TODO: check if the `>=` will be kept, but more importantly, check
+	# if a tolerance is needed in the comparison. Query it from the solver/
+	# model if possible.
+	# The `>=` is used below, instead of `>`, because we want the model
+	# to find the LB, this makes it easier to warm start the mode.
+	rc_fix_bitstr = @. UB - reduced_cost(rc_vars) >= LB # final pricing
+	# Below the SavedVarConf is not stored because they will be kept fixed
+	# for now, and when restored, they will be restored to their original
+	# state (rc_svcs) not this intermediary one.
+	save_and_fix!.(rc_vars[rc_fix_bitstr])
+	#rc_fix_idxs = rc_idxs[rc_fix_bitstr]
+	# The discrete variables are the restricted cuts that were not removed
+	# by the final pricing of the restricted model and will be in the MIP
+	# of the restricted model.
+	rc_discrete_bitstr = .!rc_fix_bitstr
+	discrete_vars = rc_vars[rc_fix_bitstr]
+	restore!.(discrete_vars, rc_svcs[rc_discrete_bitstr])
+	@timeit "restricted_discrete" optimize!(model) # restricted MIP solved
+	# TODO: do this here or in the next method?
+	save_and_relax!.(rc_vars[rc_discrete_bitstr], rc_svcs[rc_discrete_bitstr])
+	discrete_values = value.(discrete_vars)
+	set_start_value.(discrete_vars, discrete_values)
+	# TODO: we need to extract the solution, either from the heuristic of the
+	# solver, and return it here; we also probably need to return the saved
+	# configurations of all variables so they can be restored if needed.
+	# Maybe it is better to save everything first and then use a relax/fix
+	# (without save).
+	nothing
 end
 
 function iterative_pricing(

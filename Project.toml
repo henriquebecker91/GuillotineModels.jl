@@ -22,4 +22,4 @@ MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 Suppressor = "fd094767-a336-5f1f-9728-57cf17d0bbfb"
 
 [targets]
-test = ["Test", "GLPK", "Cbc", "JuMP", "MathOptInterface"]
+test = ["Test", "GLPK", "Cbc", "JuMP", "MathOptInterface", "Suppressor"]
