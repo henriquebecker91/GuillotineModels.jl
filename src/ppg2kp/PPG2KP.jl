@@ -875,7 +875,6 @@ function all_restricted_cuts_idxs(
 	rc_idxs = Vector{Int}()
 	usl = unique!(sort(bp.l))
 	usw = unique!(sort(bp.w))
-	bp.first_vertical_cut_idx
 	for (idx, (_, fc, _)) in pairs(bp.cuts)
 		if idx < bp.first_vertical_cut_idx
 			!isempty(searchsorted(usl, bp.pli_lwb[fc][1])) && push!(rc_idxs, idx)
@@ -910,31 +909,53 @@ function setdiff_sorted(u, s)
 end
 
 function restricted_final_pricing(
-	model, bp :: ByproductPPG2KP{D, S, P}, rng
+	model, d :: Vector{D}, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P}, rng
 ) :: Tuple{P, CutPattern{D, S}} where {D, S, P}
-	all_vars = all_variables(model)
-	@assert length(all_vars) >= length(bp.cuts)
+	pe = model[:picuts] # Piece Extractions
+	cm = model[:cuts_made] # Cuts Made
+	@assert length(pe) == length(bp.np)
+	@assert length(cm) == length(bp.cuts)
 	rc_idxs = all_restricted_cuts_idxs(bp)
 	# Every variable that is not a restricted cut is a unrestricted cut.
-	uc_idxs = setdiff_sorted(keys(all_vars), rc_idxs)
+	uc_idxs = setdiff_sorted(keys(cm), rc_idxs)
 	# Relax all restricted cuts and fix all unrestricted cuts (pool vars).
-	rc_vars = all_vars[rc_idxs]
+	rc_vars = cm[rc_idxs]
+	@show length(cm)
+	@show length(rc_idxs)
+	@show length(uc_idxs)
+	@show length(rc_idxs) + length(uc_idxs)
+	pe_svcs = save_and_relax!.(pe)
 	rc_svcs = save_and_relax!.(rc_vars)
-	uc_vars = all_vars[uc_idxs]
+	uc_vars = cm[uc_idxs]
 	uc_svcs = save_and_fix!.(uc_vars)
 	# Solve the relaxed restricted model.
-	@timeit "restricted_relaxed" optimize!(model)
-	@assert primal_status(model) == MOI.FEASIBLE_POINT
+	@timeit "relaxed_restricted" optimize!(model)
+	@show JuMP.dual_status(model)
 	# Get the solution of the heuristic.
-	LB, _, shelves = Heuristic.iterated_greedy(
-		bp.d, bp.p, bp.l, bp.w, bp.L, bp.W, rng
+	bkv, _, shelves = Heuristic.iterated_greedy(
+		d, p, bp.l, bp.w, bp.L, bp.W, rng
 	)
-	UB = objective_value(model)
-	UB = trunc(P, UB + eps(UB)) # theoretically sane UB
-	# Note: the iterated_greedy solve the shelf version of the problem,
-	# that is restricted, so it cannot return a better known value than the
-	# restricted upper bound.
-	@assert LB <= UB
+	sol = Heuristic.shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
+	LB = convert(Float64, bkv)
+	if termination_status(model) == MOI.OPTIMAL
+		UB = objective_bound(model)
+		#@show value.(rc_vars)
+		UB = floor(P, UB_ + eps(UB_)) # theoretically sane UB
+		@show UB
+		@show LB
+		# Note: the iterated_greedy solve the shelf version of the problem,
+		# that is restricted, so it cannot return a better known value than the
+		# restricted upper bound.
+		@assert LB <= UB
+	else
+		@error(
+			"For some reason, solving the relaxed restricted model did not" *
+			" terminate with optimal status (the status was" *
+			" $(termination_status(model))). The code is not prepared to deal" *
+			" with this possibility and will abort."
+		)
+		exit(1)
+	end
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
 	rc_fix_bitstr = @. UB - reduced_cost(rc_vars) > LB # final pricing
@@ -949,7 +970,7 @@ function restricted_final_pricing(
 	rc_discrete_bitstr = .!rc_fix_bitstr
 	discrete_vars = rc_vars[rc_fix_bitstr]
 	restore!.(discrete_vars, rc_svcs[rc_discrete_bitstr])
-	@timeit "restricted_discrete" optimize!(model) # restricted MIP solved
+	@timeit "discrete_restricted" optimize!(model) # restricted MIP solved
 	if primal_status(model) == MOI.FEASIBLE_POINT
 		discrete_values = value.(discrete_vars)
 		save_and_relax!.(rc_vars[rc_discrete_bitstr], rc_svcs[rc_discrete_bitstr])
@@ -957,15 +978,9 @@ function restricted_final_pricing(
 		model_obj = objective_value(model)
 		model_obj = floor(model_obj + eps(model_obj))
 		if model_obj > LB
-			sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
 			bkv = convert(P, model_obj)
-		else
-			sol = shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
-			bkv = LB
+			sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
 		end
-	else
-		sol = shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
-		bkv = LB
 	end
 	# TODO: we need to extract the solution, either from the heuristic of the
 	# solver, and return it here; we also probably need to return the saved
@@ -1007,10 +1022,15 @@ function no_arg_check_build_model(
 	options["no-pricing"] && return byproduct
 
 	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
-	#@show restricted_final_pricing(model, byproduct, rng)
-	@warn("For now, the restricted_final_pricing is being tested, so the code will exit inside the model generation.")
-	exit(0)
+	@show restricted_final_pricing(model, d, p, byproduct, rng)
+	@warn(
+		"For now, the restricted_final_pricing is being tested, so it is not" *
+		" enabled. There will be extra output in debug, and " *
+		" `build_complete_model` is called internally two times."
+	)
 
+	empty!(model)
+  byproduct = build_complete_model(model, d, p, l, w, L, W, options)
 	return byproduct
 end
 

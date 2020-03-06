@@ -15,7 +15,8 @@ knapsack problem; (2) to check if they were implemented correctly;
 """
 module Heuristic
 
-using Random
+using Random#: shuffle!
+import ...CutPattern
 
 export first_fit_decr, iterated_greedy
 
@@ -94,9 +95,9 @@ function shelves2cutpattern(
 		for pii in l_strip
 			push!(inner_cp, CutPattern(l[pii], w[pii], pii))
 		end
-		push!(outer_cp, CutPattern(L, w[first(l_strip)]), true, inner_cp)
+		push!(outer_cp, CutPattern(L, w[first(l_strip)], false, inner_cp))
 	end
-	return GuillotineModels(L, W, false, outer_cp)
+	return CutPattern(L, W, true, outer_cp)
 end
 
 """

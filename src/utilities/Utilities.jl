@@ -89,7 +89,7 @@ function reduced_cost(var) :: Float64
 		@warn "CAUTION: reduce_cost was called over a variable with no bounds"
 	rc
 end
-export reduce_cost
+export reduced_cost
 
 """
 Stores the type and bounds of a variable so they may be restored.
