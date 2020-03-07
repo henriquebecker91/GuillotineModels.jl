@@ -130,7 +130,7 @@ function __init__()
 			Meta.parse(p_args["raw-parameters"])
 		) :: Vector{Pair{String, Any}}
 		configuration = [configuration; raw_parameters]
-			model = JuMP.direct_model(GLPK.Optimizer())
+		model = JuMP.direct_model(GLPK.Optimizer())
 		JuMP.set_optimizer_attributes(model, configuration...)
 		model
 	end

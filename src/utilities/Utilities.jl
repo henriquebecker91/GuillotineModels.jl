@@ -179,10 +179,35 @@ end
 export save_and_fix!
 
 """
-    save_and_relax!(var) :: SavedVarConf
+    relax!(var) -> var
 
 The `var` is made continuous. If the variable was binary, and had a lower
 (upper) bound below zero (above one) it is replaced by zero (one).
+"""
+function relax!(var :: VariableRef)
+	if is_integer(var)
+		unset_integer(var)
+	elseif is_binary(var)
+		unset_binary(var)
+		if !has_lower_bound(var) || lower_bound(var) < 0.0
+			set_lower_bound(var, 0.0)
+		end
+		if !has_upper_bound(var) || upper_bound(var) < 0.0
+			set_upper_bound(var, 1.0)
+		end
+	end
+
+	return var
+end
+export relax!
+
+"""
+    save_and_relax!(var) :: SavedVarConf
+
+Does the same as `relax!` but save the variable configuration first and
+return it.
+
+See also: [`relax!`](@ref)
 """
 function save_and_relax!(var :: VariableRef)
 	svc = SavedVarConf(var)

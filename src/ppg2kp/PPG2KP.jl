@@ -11,7 +11,6 @@ module PPG2KP
 # 0.3) inside the pricing branch of no_arg_check_build_model, fix to zero all
 #   non-restricted variables (how to do this?), relax all the other variables.
 #   Solve this relaxed model. Save the UB.
-#
 # 0.4) call the heuristic and get the bkv.
 # 0.6) do the final pricing step over the restricted model (i.e.,
 #   the variables that could only be used to obtain a solution worse than
@@ -20,6 +19,7 @@ module PPG2KP
 # 0.8) Solve the MIP of the priced restricted model, save it as the new bkv
 #   (unless the solving process finished by time and the heuristic bkv is
 #   better).
+# DONE UNTIL THERE
 # 1) Implement the initial pricing.
 # 1.1) inside the pricing branch of no_arg_check_build_model, relax again
 #   all the restricted cuts (the non-restriced variables should be fixed
@@ -909,38 +909,37 @@ function setdiff_sorted(u, s)
 end
 
 function restricted_final_pricing(
-	model, d :: Vector{D}, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P}, rng
-) :: Tuple{P, CutPattern{D, S}} where {D, S, P}
-	pe = model[:picuts] # Piece Extractions
+	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P}, rng
+) :: Tuple{P, CutPattern{D, S}, Vector{SavedVarConf}} where {D, S, P}
+	# First we save all the variables bounds and types and relax all of them.
+	all_svcs = save_and_relax!.(all_variables(model))
 	cm = model[:cuts_made] # Cuts Made
-	@assert length(pe) == length(bp.np)
-	@assert length(cm) == length(bp.cuts)
-	rc_idxs = all_restricted_cuts_idxs(bp)
+	#@assert length(cm) == length(bp.cuts)
+	rc_vars = cm[rc_idxs]
+	# Even if they are contained in all_svcs, save the var config of the
+	# restricted cuts again, because we will need to restore only them after
+	# and finding them in all_svcs is a drag.
+	rc_svcs = SavedVarConf.(rc_vars)
 	# Every variable that is not a restricted cut is a unrestricted cut.
 	uc_idxs = setdiff_sorted(keys(cm), rc_idxs)
-	# Relax all restricted cuts and fix all unrestricted cuts (pool vars).
-	rc_vars = cm[rc_idxs]
-	@show length(cm)
-	@show length(rc_idxs)
-	@show length(uc_idxs)
-	@show length(rc_idxs) + length(uc_idxs)
-	pe_svcs = save_and_relax!.(pe)
-	rc_svcs = save_and_relax!.(rc_vars)
+	# Fix all unrestricted cuts (pool vars).
 	uc_vars = cm[uc_idxs]
-	uc_svcs = save_and_fix!.(uc_vars)
+	fix.(uc_vars, 0.0; force = true)
 	# Solve the relaxed restricted model.
 	@timeit "relaxed_restricted" optimize!(model)
 	@show JuMP.dual_status(model)
+	@show JuMP.primal_status(model)
 	# Get the solution of the heuristic.
 	bkv, _, shelves = Heuristic.iterated_greedy(
 		d, p, bp.l, bp.w, bp.L, bp.W, rng
 	)
 	sol = Heuristic.shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
 	LB = convert(Float64, bkv)
+	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
 		UB = objective_bound(model)
 		#@show value.(rc_vars)
-		UB = floor(P, UB_ + eps(UB_)) # theoretically sane UB
+		!isinf(UB) && (UB = floor(UB + eps(UB))) # theoretically sane UB
 		@show UB
 		@show LB
 		# Note: the iterated_greedy solve the shelf version of the problem,
@@ -958,22 +957,27 @@ function restricted_final_pricing(
 	end
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
+	# Do the final pricing, get which variables should remain.
 	rc_fix_bitstr = @. UB - reduced_cost(rc_vars) > LB # final pricing
 	# Below the SavedVarConf is not stored because they will be kept fixed
 	# for now, and when restored, they will be restored to their original
 	# state (rc_svcs) not this intermediary one.
-	save_and_fix!.(rc_vars[rc_fix_bitstr])
-	#rc_fix_idxs = rc_idxs[rc_fix_bitstr]
+	fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
 	# The discrete variables are the restricted cuts that were not removed
 	# by the final pricing of the restricted model and will be in the MIP
 	# of the restricted model.
 	rc_discrete_bitstr = .!rc_fix_bitstr
-	discrete_vars = rc_vars[rc_fix_bitstr]
+	discrete_vars = rc_vars[rc_discrete_bitstr]
 	restore!.(discrete_vars, rc_svcs[rc_discrete_bitstr])
 	@timeit "discrete_restricted" optimize!(model) # restricted MIP solved
+	# If some primal solution was obtained, compare its value with the
+	# heuristic and keep the best one (the model can give a worse value
+	# if it has a time limit or other stopping criteria that is not
+	# optimality).
 	if primal_status(model) == MOI.FEASIBLE_POINT
+		# TODO: the relax should be inside this `if`? It cannot be conditional.
 		discrete_values = value.(discrete_vars)
-		save_and_relax!.(rc_vars[rc_discrete_bitstr], rc_svcs[rc_discrete_bitstr])
+		relax!.(rc_vars[rc_discrete_bitstr], rc_svcs[rc_discrete_bitstr])
 		set_start_value.(discrete_vars, discrete_values)
 		model_obj = objective_value(model)
 		model_obj = floor(model_obj + eps(model_obj))
@@ -982,12 +986,8 @@ function restricted_final_pricing(
 			sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
 		end
 	end
-	# TODO: we need to extract the solution, either from the heuristic of the
-	# solver, and return it here; we also probably need to return the saved
-	# configurations of all variables so they can be restored if needed.
-	# Maybe it is better to save everything first and then use a relax/fix
-	# (without save).
-	return bkv, sol
+
+	return bkv, sol, all_svcs
 end
 
 function iterative_pricing(
@@ -1022,15 +1022,20 @@ function no_arg_check_build_model(
 	options["no-pricing"] && return byproduct
 
 	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
-	@show restricted_final_pricing(model, d, p, byproduct, rng)
+	rc_idxs = all_restricted_cuts_idxs(byproduct)
+	bkv, sol, all_scvs = restricted_final_pricing(
+		model, rc_idxs, d, p, byproduct, rng
+	)
+	# TODO: the heuristic seems to find the same solution (or better?) than
+	# the model in every case. Check both the model and heuristic solutions
+	# to check if is everything alright.
+	@show bkv
 	@warn(
-		"For now, the restricted_final_pricing is being tested, so it is not" *
-		" enabled. There will be extra output in debug, and " *
-		" `build_complete_model` is called internally two times."
+		"For now, the restricted_final_pricing is being tested, so asking for" *
+		" a model without passing `no-pricing` will give you garbage. There " *
+		" will be extra output in debug, and the old tests will be skipped."
 	)
 
-	empty!(model)
-  byproduct = build_complete_model(model, d, p, l, w, L, W, options)
 	return byproduct
 end
 
