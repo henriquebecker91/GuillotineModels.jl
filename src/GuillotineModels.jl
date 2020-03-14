@@ -18,6 +18,7 @@ module GuillotineModels
 # all methods are part of some submodule and not of the top-level.
 
 export build_model, get_cut_pattern, CutPattern, to_pretty_str, simplify!
+export cut_pattern_profit
 using DocStringExtensions # for TYPEDFIELDS
 using JuMP # for JuMP.Model parameter reference
 
@@ -154,6 +155,19 @@ function CutPattern(
 	subpatterns :: Vector{CutPattern{D, S}}
 ) :: CutPattern{D, S} where {D, S}
 	CutPattern(L, W, zero(D), cuts_are_vertical, subpatterns)
+end
+
+# TODO: document
+function cut_pattern_profit(cp :: CutPattern{D, S}, p) where {D, S}
+	if iszero(cp.piece_idx)
+		z = zero(eltype(p))
+		for sp in cp.subpatterns
+			z += cut_pattern_profit(sp, p)
+		end
+		return z
+	else
+		return p[cp.piece_idx]
+	end
 end
 
 # INTERNAL USE. See `remove_waste!`.

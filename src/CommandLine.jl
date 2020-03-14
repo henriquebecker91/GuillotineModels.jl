@@ -134,8 +134,8 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	)
 	=#
 
-	pp["save-model"] && !pp["no-csv-output"] &&
-		@timeit "save_model" JuMP.write_to_file(m, "./$(basename(instfname)).mps")
+	!isempty(pp["save-model"]) && !pp["no-csv-output"] &&
+		@timeit "save_model" JuMP.write_to_file(m, pp["save-model"])
 
 	if !pp["no-csv-output"]
 		#@show time_to_build_model
@@ -275,8 +275,8 @@ function generic_args() :: Vector{Arg}
 			"The model is build but not solved. A solver has yet to be specified. Note that just building a model may depend on using a solver over subproblems. Such uses of the solver are not disabled by this flag."
 		),
 		Arg( # TODO: check if it can be implemented generically
-			"save-model", false,
-			"Save the model of each problem instance to the working directory ('./instance_name.mps'). Uses MPS format."
+			"save-model", "",
+			"Save the model of the passed instance to the given filename (use the extension to define the format, allowed formats are described by the enumeration MathOptInterface.FileFormats.FileFormat)."
 		),
 		Arg(
 			"do-not-mock-for-compilation", false,

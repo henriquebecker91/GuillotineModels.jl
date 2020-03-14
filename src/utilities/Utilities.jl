@@ -80,6 +80,7 @@ end
 export num_all_constraints
 
 # see https://github.com/JuliaOpt/MathOptInterface.jl/issues/776
+#=
 function reduced_cost(var) :: Float64
 	rc = 0.0
 	has_upper_bound(var) && (rc += shadow_price(UpperBoundRef(var)))
@@ -90,6 +91,7 @@ function reduced_cost(var) :: Float64
 	rc
 end
 export reduced_cost
+=#
 
 """
 Stores the type and bounds of a variable so they may be restored.
@@ -184,7 +186,7 @@ export save_and_fix!
 The `var` is made continuous. If the variable was binary, and had a lower
 (upper) bound below zero (above one) it is replaced by zero (one).
 """
-function relax!(var :: VariableRef)
+function relax!(var :: VariableRef) :: VariableRef
 	if is_integer(var)
 		unset_integer(var)
 	elseif is_binary(var)

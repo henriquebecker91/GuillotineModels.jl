@@ -184,6 +184,7 @@ function iterated_greedy(
 		shuffle!(rng, oe)
 	end
 
+	#=
 	nz_i = collect(i for i in 1:n if !iszero(sel[i]))
 	@show nz_i
 	nz_sel = collect(sel[i] for i in 1:n if !iszero(sel[i]))
@@ -192,6 +193,7 @@ function iterated_greedy(
 	@show nz_l
 	nz_w = collect(w[i] for i in 1:n if !iszero(sel[i]))
 	@show nz_w
+	=#
 	return bkv, sel, pat
 end
 

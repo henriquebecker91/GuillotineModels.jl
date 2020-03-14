@@ -90,6 +90,10 @@ export ByproductPPG2KP # re-export ByproductPPG2KP from Enumeration
 using ..Utilities
 import ..CutPattern # type returned by get_cut_pattern
 using RandomNumbers.Xorshifts
+import ..to_pretty_str # for debug
+import ..cut_pattern_profit # for debug
+
+#global_p = nothing # TODO: for debug, remove after
 
 # TODO: Check if this method will be used, now that variable deletion is
 # efficient (because our PR to JuMP).
@@ -192,23 +196,41 @@ function check_if_single_piece_solution(
 end
 
 # INTERNAL USE.
-# Given a list of the non-zero cuts (i.e., the cuts that appear in the
-# solution) and the index of the root cut in such list, return a list
-# of cut indexes in topological ordering (any non-root cut over some plate
-# only appears if a previous cut has made a copy of that plate type available).
+# Find the index in `cuts` of the first cut that has `pp` as its parent plate
+# and has a positive `num_uses_in_sol` too; return the index after
+# decrementing the `num_uses_in_sol[index]` by one. Returns `nothing` if
+# there is no plate that satisfy such conditions.
+function consume_cut(
+  cuts :: Vector{NTuple{3, P}}, num_uses_in_sol :: Vector{D}, pp :: P
+) :: Union{Nothing, P} where {D, P}
+	for i in keys(cuts)
+		if num_uses_in_sol[i] > zero(D) && first(cuts[i]) == pp
+			num_uses_in_sol[i] -= one(D)
+			return convert(P, i)
+		end
+	end
+	return nothing
+end
+
+# INTERNAL USE.
+# Given a list of the cuts used in a solution, the number of times their appear
+# in the solution, and the index of the root cut in such list, return a list of
+# cut indexes in topological ordering (any non-root cut over some plate only
+# appears if a previous cut has made a copy of that plate type available).
 function build_cut_idx_stack(
-	nz_cuts :: Vector{NTuple{3, P}}, root_cut_idx :: Int
-) :: Vector{Int} where {P}
+	nz_cuts :: Vector{NTuple{3, P}}, qt_cuts :: Vector{D}, root_cut_idx :: Int
+) :: Vector{Int} where {D, P}
 	cut_idx_stack = Vector{Int}()
 	push!(cut_idx_stack, root_cut_idx)
+	cuts_available = deepcopy(qt_cuts)
 	next_cut = 1
 	while next_cut <= length(cut_idx_stack)
 		_, fc, sc = nz_cuts[cut_idx_stack[next_cut]]
 		@assert !iszero(fc)
-		fc_idx = findfirst(cut -> first(cut) == fc, nz_cuts)
+		fc_idx = consume_cut(nz_cuts, cuts_available, fc)
 		fc_idx !== nothing && push!(cut_idx_stack, fc_idx)
 		if !iszero(sc)
-			sc_idx = findfirst(cut -> first(cut) == sc, nz_cuts)
+			sc_idx = consume_cut(nz_cuts, cuts_available, sc)
 			sc_idx !== nothing && push!(cut_idx_stack, sc_idx)
 		end
 		next_cut += 1
@@ -232,6 +254,10 @@ function add_used_extractions!(
 ) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
 	for (i, np_idx) in enumerate(nzpe_idxs)
 		pli, pii = bmr.np[np_idx]
+		#@show np_idx
+		#@show pli, pii
+		#@show nzpe_vals[i]
+		#@show bmr.l[pii], bmr.w[pii]
 		extractions = extraction_pattern.(bmr, repeat([np_idx], nzpe_vals[i]))
 		if haskey(patterns, pli)
 			append!(patterns[pli], extractions)
@@ -255,7 +281,9 @@ function bottom_up_tree_build!(
 	bmr :: ByproductPPG2KP{D, S, P}
 ) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
 	for cut_idx in reverse(nz_cut_idx_stack)
+		#@show cut_idx
 		pp, fc, sc = nz_cuts[cut_idx]
+		#@show pp, fc, sc
 		child_patts = Vector{CutPattern{D, S}}()
 		if !iszero(fc) && haskey(patterns, fc) && !isempty(patterns[fc])
 			push!(child_patts, pop!(patterns[fc]))
@@ -266,6 +294,7 @@ function bottom_up_tree_build!(
 			isempty(patterns[sc]) && delete!(patterns, sc)
 		end
 		ppl, ppw = bmr.pli_lwb[pp][1], bmr.pli_lwb[pp][2]
+		#@show ppl, ppw
 		!haskey(patterns, pp) && (patterns[pp] = Vector{CutPattern{D, S}}())
 		push!(patterns[pp], CutPattern(
 			ppl, ppw, nz_cuts_ori[cut_idx], child_patts
@@ -297,23 +326,35 @@ function get_cut_pattern(
 	bmr = build_model_return
 	pe = model[:picuts] # Piece Extractions
 	cm = model[:cuts_made] # Cuts Made
+	# We need to define an absolute tolerance, as solvers often return values
+	# very similar to zero (when they should return zero) and this depends on
+	# the instance problem coefficients.
+	# MOI.get(backend(model), MOI.RelativeGap()) was initially used, but
+	# it is too much of a headache, GLPK sometimes does not believe it is
+	# available because we solved a linear model before.
+	atol = eps(objective_value(model)) # hope this is reasonable
 
 	# non-zero {piece extractions, cuts made} {indexes,values}
-	nzpe_idxs, nzpe_vals = gather_nonzero(model, pe)
-	nzcm_idxs, nzcm_vals = gather_nonzero(model, cm)
+	nzpe_idxs, nzpe_vals = gather_nonzero(model, pe; atol = atol)
+	nzcm_idxs, nzcm_vals = gather_nonzero(model, cm; atol = atol)
+	#@show nzpe_idxs
+	#@show nzpe_vals
+	#@show nzcm_idxs
+	#@show nzcm_vals
 
 	sps_idx = check_if_single_piece_solution(bmr.np, nzpe_idxs)
 	!iszero(sps_idx) && return extraction_pattern(bmr, sps_idx)
 
 	# The cuts actually used in the solution.
 	sel_cuts = bmr.cuts[nzcm_idxs]
+	#@show sel_cuts
 	# If the cut in `sel_cuts` is vertical or not.
 	ori_cuts = nzcm_idxs .>= bmr.first_vertical_cut_idx
 	# The index of the root cut (cut over the original plate) in `sel_cuts`.
 	root_idx = findfirst(cut -> isone(cut[1]), sel_cuts)
 	root_idx === nothing && return CutPattern(bmr.L, bmr.W, zero(D))
 
-	cut_idx_stack = build_cut_idx_stack(sel_cuts, root_idx)
+	cut_idx_stack = build_cut_idx_stack(sel_cuts, nzcm_vals, root_idx)
 
 	# `patterns` translates a plate index (pli) into a list of all "uses" of that
 	# plate type. Such "uses" are CutPattern objects, either pieces or more
@@ -330,6 +371,25 @@ function get_cut_pattern(
 	add_used_extractions!(patterns, nzpe_idxs, nzpe_vals, bmr)
 
 	bottom_up_tree_build!(patterns, cut_idx_stack, sel_cuts, ori_cuts, bmr)
+
+	#=
+	global global_p
+	if !isone(length(patterns)) || !haskey(patterns, 1) || !isone(length(patterns[1]))
+		z = 0
+		z_root = 0
+		for (key, subpatts) in patterns
+			@show key
+			for subpatt in subpatts
+				println(to_pretty_str(subpatt))
+				x = cut_pattern_profit(subpatt, global_p)
+				key == 1 && (z_root = x)
+				z += x
+			end
+		end
+		@show z
+		@show z_root
+	end
+	=#
 
 	@assert isone(length(patterns))
 	@assert haskey(patterns, 1)
@@ -910,10 +970,17 @@ end
 
 function restricted_final_pricing(
 	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P}, rng
-) :: Tuple{P, CutPattern{D, S}, Vector{SavedVarConf}} where {D, S, P}
+) #=:: Tuple{P, CutPattern{D, S}, Vector{SavedVarConf}} =# where {D, S, P}
 	# First we save all the variables bounds and types and relax all of them.
-	all_svcs = save_and_relax!.(all_variables(model))
+	n = num_variables(model)
+	pe = model[:picuts] # Piece Extractions
 	cm = model[:cuts_made] # Cuts Made
+	# This assert is here because, if this becomes false some day, the code
+	# will need to be reworked. Now it only relax/fix variables in those sets
+	# so it will need to be sensibly extended to new sets of variables.
+	@assert n == length(cm) + length(pe)
+	pe_svcs = save_and_relax!.(pe)
+	cm_svcs = save_and_relax!.(cm)
 	#@assert length(cm) == length(bp.cuts)
 	rc_vars = cm[rc_idxs]
 	# Even if they are contained in all_svcs, save the var config of the
@@ -927,21 +994,22 @@ function restricted_final_pricing(
 	fix.(uc_vars, 0.0; force = true)
 	# Solve the relaxed restricted model.
 	@timeit "relaxed_restricted" optimize!(model)
-	@show JuMP.dual_status(model)
-	@show JuMP.primal_status(model)
+	#@show JuMP.dual_status(model)
+	#@show JuMP.primal_status(model)
 	# Get the solution of the heuristic.
 	bkv, _, shelves = Heuristic.iterated_greedy(
 		d, p, bp.l, bp.w, bp.L, bp.W, rng
 	)
 	sol = Heuristic.shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
 	LB = convert(Float64, bkv)
+	#@show LB
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
-		UB = objective_bound(model)
+		#@show objective_bound(model)
+		#@show objective_value(model)
+		UB = objective_value(model)
 		#@show value.(rc_vars)
 		!isinf(UB) && (UB = floor(UB + eps(UB))) # theoretically sane UB
-		@show UB
-		@show LB
 		# Note: the iterated_greedy solve the shelf version of the problem,
 		# that is restricted, so it cannot return a better known value than the
 		# restricted upper bound.
@@ -957,8 +1025,8 @@ function restricted_final_pricing(
 	end
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
-	# Do the final pricing, get which variables should remain.
-	rc_fix_bitstr = @. UB - reduced_cost(rc_vars) > LB # final pricing
+	# Do the final pricing, get which variables should be removed.
+	rc_fix_bitstr = @. floor(UB - shadow_price(LowerBoundRef(rc_vars))) <= LB
 	# Below the SavedVarConf is not stored because they will be kept fixed
 	# for now, and when restored, they will be restored to their original
 	# state (rc_svcs) not this intermediary one.
@@ -969,25 +1037,27 @@ function restricted_final_pricing(
 	rc_discrete_bitstr = .!rc_fix_bitstr
 	discrete_vars = rc_vars[rc_discrete_bitstr]
 	restore!.(discrete_vars, rc_svcs[rc_discrete_bitstr])
+	# All piece extractions also need to be restored.
+	restore!.(pe, pe_svcs)
 	@timeit "discrete_restricted" optimize!(model) # restricted MIP solved
 	# If some primal solution was obtained, compare its value with the
 	# heuristic and keep the best one (the model can give a worse value
-	# if it has a time limit or other stopping criteria that is not
-	# optimality).
+	# as any variables that cannot contribute to a better solution are
+	# disabled, and the heuristic may be already optimal).
 	if primal_status(model) == MOI.FEASIBLE_POINT
-		# TODO: the relax should be inside this `if`? It cannot be conditional.
-		discrete_values = value.(discrete_vars)
-		relax!.(rc_vars[rc_discrete_bitstr], rc_svcs[rc_discrete_bitstr])
-		set_start_value.(discrete_vars, discrete_values)
 		model_obj = objective_value(model)
 		model_obj = floor(model_obj + eps(model_obj))
+		#@show model_obj
 		if model_obj > LB
 			bkv = convert(P, model_obj)
 			sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
 		end
 	end
+	#@show bkv
+	relax!.(rc_vars[rc_discrete_bitstr])
+	relax!.(pe)
 
-	return bkv, sol, all_svcs
+	return bkv, sol, pe_svcs, cm_svcs
 end
 
 function iterative_pricing(
@@ -1014,29 +1084,48 @@ function final_pricing(
 	return byproduct
 end
 
+function Base.empty!(model::Model)::Model
+    # The method changes the Model object to, basically, the state it was when
+    # created (if the optimizer was already pre-configured). The two exceptions
+    # are: optimize_hook and operator_counter. One is left alone because it is
+    # related to optimizer attributes and the other is just a counter for a
+    # single-time warning message (so keeping it helps to discover
+    # inneficiencies).
+    MOI.empty!(model.moi_backend)
+    empty!(model.shapes)
+    model.nlp_data = nothing
+    empty!(model.obj_dict)
+    empty!(model.ext)
+    return model
+end
+
 function no_arg_check_build_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	global global_p = p
   byproduct = build_complete_model(model, d, p, l, w, L, W, options)
 	options["no-pricing"] && return byproduct
 
 	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
 	rc_idxs = all_restricted_cuts_idxs(byproduct)
-	bkv, sol, all_scvs = restricted_final_pricing(
+	returns = restricted_final_pricing(
 		model, rc_idxs, d, p, byproduct, rng
 	)
+	bkv, sol = returns[1], returns[2]
 	# TODO: the heuristic seems to find the same solution (or better?) than
 	# the model in every case. Check both the model and heuristic solutions
 	# to check if is everything alright.
-	@show bkv
-	@warn(
+	#@show bkv
+	#=@warn(
 		"For now, the restricted_final_pricing is being tested, so asking for" *
 		" a model without passing `no-pricing` will give you garbage. There " *
 		" will be extra output in debug, and the old tests will be skipped."
-	)
+	)=#
+	empty!(model)
 
-	return byproduct
+	return build_complete_model(model, d, p, l, w, L, W, options)
+	#return byproduct
 end
 
 #=

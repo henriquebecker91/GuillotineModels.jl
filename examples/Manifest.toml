@@ -94,7 +94,7 @@ uuid = "60bf3e95-4087-53dc-ae20-288a0d20c6a6"
 version = "0.12.1"
 
 [[GuillotineModels]]
-deps = ["ArgParse", "Dates", "DocStringExtensions", "JuMP", "MathOptInterface", "Random", "Requires", "TimerOutputs"]
+deps = ["ArgParse", "Dates", "DocStringExtensions", "JuMP", "MathOptInterface", "Random", "RandomNumbers", "Requires", "TimerOutputs"]
 path = ".."
 uuid = "300ad42c-a273-11e9-37f6-175a19b744a4"
 version = "0.1.0"
@@ -203,6 +203,12 @@ uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 [[Random]]
 deps = ["Serialization"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[[RandomNumbers]]
+deps = ["Random", "Requires"]
+git-tree-sha1 = "441e6fc35597524ada7f85e13df1f4e10137d16f"
+uuid = "e6cf234a-135c-5ec9-84dd-332b85af5143"
+version = "1.4.0"
 
 [[Requires]]
 deps = ["UUIDs"]
