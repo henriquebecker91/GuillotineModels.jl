@@ -7,6 +7,14 @@ export accepted_arg_list, throw_if_incompatible_options
 function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 	return [
 		Arg(
+			"pricing-alpha", 0.20,
+			"Used to compute the number of variables added in each iteration of the iterated pricing. Must be above zero and at most one. Explained in 10.1287/ijoc.2016.0710, p. 13 (747) (last paragraph before section 4.3). Irrelevant if no-pricing is passed. Default value is the one used in the experiments of the original paper."
+		),
+		Arg(
+			"pricing-beta", 0.25,
+			"Used to compute the number of variables addded in each iteration of the iterated pricing. Must be non-negative, and makes most sense to be at most one. Explained in 10.1287/ijoc.2016.0710, p. 13 (747) (last paragraph before section 4.3). Irrelevant if no-pricing is passed. Default value is the one used in the experiments of the original paper."
+		),
+		Arg(
 			"lower-bound", 0.0,
 			"The use of these values is dependent on the other options selected, check code."
 		),
