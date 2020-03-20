@@ -444,8 +444,7 @@ function throw_if_incompatible_options(p_args)
 		"only one of --div-and-round-{nearest,up,down} may be passed at the" *
 		" same time (what the fuck you expected?)"
 	)
-	# The check below needs to be here because uses a generic flag and a specific
-	# flag at same time.
+	# The flag conflicts of the specific model and solver.
 	Utilities.Args.throw_if_incompatible_options(
 		Val(Symbol(p_args["model"])),
 		create_unprefixed_subset(p_args["model"], p_args)

@@ -93,7 +93,7 @@ using RandomNumbers.Xorshifts
 import ..to_pretty_str # for debug
 import ..cut_pattern_profit # for debug
 
-#global_p = nothing # TODO: for debug, remove after
+global_p = nothing # TODO: for debug, remove after
 
 # TODO: Check if this method will be used, now that variable deletion is
 # efficient (because our PR to JuMP).
@@ -372,7 +372,6 @@ function get_cut_pattern(
 
 	bottom_up_tree_build!(patterns, cut_idx_stack, sel_cuts, ori_cuts, bmr)
 
-	#=
 	global global_p
 	if !isone(length(patterns)) || !haskey(patterns, 1) || !isone(length(patterns[1]))
 		z = 0
@@ -389,7 +388,6 @@ function get_cut_pattern(
 		@show z
 		@show z_root
 	end
-	=#
 
 	@assert isone(length(patterns))
 	@assert haskey(patterns, 1)
@@ -968,13 +966,35 @@ function setdiff_sorted(u, s)
 	t
 end
 
+# Arguments:
+# * `cut`: a triple of `pp`, `fc`, and `sc`.
+#   + `pp`: parent plate id/index.
+#   + `fc`: first child id/index.
+#   + `sc`: second child id/index (zero means there is no second child).
+# * `constraints`: the constraints related to the plates; if indexed by
+#   the plate id, it gives the corresponding constraint.
+function reduced_profit(
+	cut :: Tuple{P, P, P}, constraints :: Vector{T}
+) :: Float64 where {P, T}
+	pp, fc, sc = cut
+	sc_dual = iszero(sc) ? 0.0 : dual(constraints[sc])
+	# The reduced profit computation shown in the paper is done here.
+	return dual(constraints[pp]) - dual(constraints[fc]) - sc_dual
+end
+
 function restricted_final_pricing(
-	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P}, rng
+	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
+	bp :: ByproductPPG2KP{D, S, P}, rng, debug :: Bool = false
 ) #=:: Tuple{P, CutPattern{D, S}, Vector{SavedVarConf}} =# where {D, S, P}
 	# First we save all the variables bounds and types and relax all of them.
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
 	cm = model[:cuts_made] # Cuts Made
+	debug && begin
+		@show n
+		@show length(pe)
+		@show length(cm)
+	end
 	# This assert is here because, if this becomes false some day, the code
 	# will need to be reworked. Now it only relax/fix variables in those sets
 	# so it will need to be sensibly extended to new sets of variables.
@@ -1023,10 +1043,22 @@ function restricted_final_pricing(
 		)
 		exit(1)
 	end
+	rc_cuts = bp.cuts[rc_idxs]
+	plate_cons = all_constraints(
+		model, GenericAffExpr{Float64, VariableRef}, MOI.LessThan{Float64}
+	)
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
 	# Do the final pricing, get which variables should be removed.
-	rc_fix_bitstr = @. floor(UB - shadow_price(LowerBoundRef(rc_vars))) <= LB
+	rc_fix_bitstr = @. floor(UB - reduced_profit(rc_cuts, (plate_cons,))) <= LB
+	debug && begin
+		restricted_vars_removed = sum(rc_fix_bitstr)
+		restricted_vars_remaining = length(rc_cuts) - restricted_vars_removed
+		@show restricted_vars_removed
+		@show restricted_vars_remaining
+		unrestricted_vars_fixed = length(uc_idxs)
+		@show unrestricted_vars_fixed
+	end
 	# Below the SavedVarConf is not stored because they will be kept fixed
 	# for now, and when restored, they will be restored to their original
 	# state (rc_svcs) not this intermediary one.
@@ -1062,20 +1094,6 @@ function restricted_final_pricing(
 end
 
 # Arguments:
-# * `cut`: a triple of `pp`, `fc`, and `sc`.
-#   + `pp`: parent plate id/index.
-#   + `fc`: first child id/index.
-#   + `sc`: second child id/index (zero means there is no second child).
-# * `constraints`: the constraints related to the plates; if indexed by
-#   the plate id, it gives the corresponding constraint.
-function reduced_profit(cut, constraints)
-	pp, fc, sc = cut
-	sc_dual = iszero(sc) ? 0.0 : dual(constraints[sc])
-	# The reduced profit computation shown in the paper is done here.
-	return dual(constraints[pp]) - dual(constraints[fc]) - sc_dual
-end
-
-# Arguments:
 # * `pool_idxs_to_add`: object that may or not be empty, but will have its
 #   old content thrown away, be resized, and in the end will have all pool
 #   indexes corresponding to cuts/vars that should be added to the model.
@@ -1088,7 +1106,8 @@ end
 # pool_idxs_to_add (i.e., which vars need to be unfixed).
 # Return: the number of positive reduced profit variables found.
 function recompute_idxs_to_add!(
-	pool_idxs_to_add, pool, plate_cons, threshold, n_max :: P
+	pool_idxs_to_add, pool, plate_cons, threshold, n_max :: P,
+	debug :: Bool = false
 ) :: P where {P}
 	found_above_threshold = false
 	num_positive_rp_vars = zero(P)
@@ -1113,6 +1132,7 @@ function recompute_idxs_to_add!(
 		end
 	end
 
+	debug && @show found_above_threshold
 	# Only n_max variables are added/unfixed in a single iteration.
 	n_max <= length(pool_idxs_to_add) && resize!(pool_idxs_to_add, n_max)
 
@@ -1131,7 +1151,7 @@ end
 # n-max)?
 function iterative_pricing(
 	model, cuts :: Vector{NTuple{3, P}}, #bp :: ByproductPPG2KP{D, S, P},
-	max_profit :: P, alpha :: Float64, beta :: Float64
+	max_profit :: P, alpha :: Float64, beta :: Float64, debug :: Bool = false
 ) :: Nothing where {P}
 	# Summary of the method:
 	# The variables themselves are not iterated, bp.cuts is iterated. The indexes
@@ -1147,8 +1167,8 @@ function iterative_pricing(
 	# We use copy, and not deepcopy, because we do not want the original
 	# containers to change, the contents either need to change or cannot change.
 	unused_cuts = copy(cuts)
-	unfixed_at_start = !is_fixed.(model[:cm])
-	unused_vars = copy(model[:cm])
+	unfixed_at_start = (!is_fixed).(model[:cuts_made])
+	unused_vars = copy(model[:cuts_made])
 	# We just need the unused vars/cuts in the pricing process, once a variable
 	# is "added" (in truth, unfixed) it is always kept, so it does not need to be
 	# reevaluated.
@@ -1166,15 +1186,20 @@ function iterative_pricing(
 	# The first 'number of plates' constraints here are the constraints that
 	# relate to respective 1:'number of plates' plates.
 	plate_cons = all_constraints(
-		model, GenericAffExpr{Float64, VariableRef}, LessThan{Float64}
+		model, GenericAffExpr{Float64, VariableRef}, MOI.LessThan{Float64}
 	)
+	optimize!(model) # the last solve before this was MIP and has no duals
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
 	num_positive_rp_vars = recompute_idxs_to_add!(
-		to_unfix, unused_cuts, plate_cons, threshold, typemax(P)
+		to_unfix, unused_cuts, plate_cons, threshold, typemax(P), debug
 	)
 	# The maximum number of variables unfixed at each iteration.
 	n_max = round(P, num_positive_rp_vars * alpha, RoundUp)
+	debug && @show num_positive_rp_vars
+	debug && @show n_max
+	# TODO: CONTINUE HERE EXPLAIN RESIZE BELOW
+	resize!(to_unfix, n_max)
 	# The iterative pricing continue until there are no variables
 	# with positive reduced profit value to unfix.
 	while !iszero(num_positive_rp_vars)
@@ -1182,9 +1207,12 @@ function iterative_pricing(
 		deleteat!(unused_vars, to_unfix)
 		deleteat!(unused_cuts, to_unfix)
 		@assert length(unused_cuts) == length(unused_vars)
-		num_positive_rp_vars = var_idxs_to_unfix!(
-			to_unfix, unused_cuts, plate_cons, threshold, typemax(P)
+		optimize!(model)
+		num_positive_rp_vars = recompute_idxs_to_add!(
+			to_unfix, unused_cuts, plate_cons, threshold, n_max, debug
 		)
+		debug && @show num_positive_rp_vars
+		debug && @show length(to_unfix)
 	end
 	return
 end
@@ -1216,23 +1244,24 @@ function no_arg_check_build_model(
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	global global_p = p
-  byproduct = build_complete_model(model, d, p, l, w, L, W, options)
+	byproduct = build_complete_model(model, d, p, l, w, L, W, options)
 	options["no-pricing"] && return byproduct
 
 	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
 	rc_idxs = all_restricted_cuts_idxs(byproduct)
-	bkv, sol, pe_svcs, cm_svcs = restricted_final_pricing(
-		model, rc_idxs, d, p, byproduct, rng
+	UB, sol, pe_svcs, cm_svcs = restricted_final_pricing(
+		model, rc_idxs, d, p, byproduct, rng, options["debug"]
 	)
 	# If those fail, we need may need to rethink the iterative pricing,
 	# because the use of max_profit seems to assume no negative profit items.
-	@assert all(e -> e >= zero(d), d)
-	@assert all(e -> e >= zero(p), p)
+	@assert all(e -> e >= zero(e), d)
+	@assert all(e -> e >= zero(e), p)
 	# TODO: check if is needed to pass the whole bp structure
-	iterative_pricing(
-		model, bp.cuts, sum(d .* p),
-		options["pricing-alpha"], options["pricing-beta"]
+	@timeit "iterative_pricing" iterative_pricing(
+		model, byproduct.cuts, sum(d .* p),
+		options["pricing-alpha"], options["pricing-beta"], options["debug"]
 	)
+	LB = objective_value(model)
 
 	# TODO: the empty! and the uncommented return are just while the pricing
 	# is not implemented.

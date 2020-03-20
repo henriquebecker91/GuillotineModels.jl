@@ -66,11 +66,28 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 		Arg(
 			"pricing-heuristic-seed", 1,
 			"Defines the seed used to start the RNG object passed to the `GuillotineModels.PPG2KP.iterated_greedy` method, which result is used in the final pricing of the restricted model which is, finally, used for the final pricing of the complete model. If you pass the no-pricing flag, this is not used."
+		),
+		Arg(
+			"debug", false,
+			"Only really relevant if you are studying the code. Will increase" *
+			" the amount of data outputted."
 		)
 	]
 end
 
 function Utilities.Args.throw_if_incompatible_options(::Val{:PPG2KP}, p_args)
+		alpha = p_args["pricing-alpha"]
+		beta = p_args["pricing-beta"]
+		alpha > 0.0 || alpha <= 1.0 || throw(ArgumentError(
+			"Option pricing-alpha should follow: 0 < alpha <= 1.0, but is $(alpha)."
+		))
+		beta >= 0.0 || throw(ArgumentError(
+			"Option pricing-beta must not be negative, but it is $(beta)."
+		))
+		beta <= 1.0 || @warn(
+			"There is little sense in having a value above one in option" *
+			" pricing-beta (it was $(beta)), are you sure you intended this?"
+		)
 end
 
 end # module
