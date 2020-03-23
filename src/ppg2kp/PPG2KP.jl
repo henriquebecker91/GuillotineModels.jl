@@ -199,10 +199,11 @@ end
 # in the solution, and the index of the root cut in such list, return a list of
 # cut indexes in topological ordering (any non-root cut over some plate only
 # appears if a previous cut has made a copy of that plate type available).
+# SEE: https://discourse.julialang.org/t/unreachable-reached-at-0x7fa478093547-in-julia-1-0-5/36404
 function build_cut_idx_stack(
-	nz_cuts :: Vector{NTuple{3, P}}, qt_cuts :: Vector{D}, root_cut_idx :: P
-) :: Vector{P} where {D, P}
-	cut_idx_stack = Vector{P}()
+	nz_cuts :: Vector{NTuple{3, P}}, qt_cuts :: Vector{D}, root_cut_idx :: Int #=P=#
+) :: Vector{Int#=P=#} where {D, P}
+	cut_idx_stack = Vector{Int#=P=#}()
 	push!(cut_idx_stack, root_cut_idx)
 	cuts_available = deepcopy(qt_cuts)
 	next_cut = one(P)
