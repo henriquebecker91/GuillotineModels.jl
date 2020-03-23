@@ -125,20 +125,6 @@ function delete_vars_by_pricing!(model, lb :: Float64)
 end
 =#
 
-# Execute Furini's 2016 Final Pricing. The returned value is a boolean list,
-# with each index corresponding to a variable in all_variables(model),
-# and with a true value if the variable should be kept, and false if it should
-# be removed. The model parameter is expected to be a solved continuous
-# relaxation of the problem (so the objective_value and the reduced_cost may
-# be extracted); if this is not the case, pass the correct `ub` by means
-# of the optional parameter.
-function which_vars_to_keep(
-	vars, lb :: Float64, ub :: Float64 = objective_value(model)
-)
-	# We keep the ones equal to lb (not strictly necessary) to guarantee the
-	# warm start will work (the variables needed for it should be there).
-end
-
 using JuMP
 using TimerOutputs
 import MathOptInterface
@@ -150,7 +136,7 @@ const MOI = MathOptInterface
 # original plate; otherwise (2) a CutPattern of the original plate containing
 # a CutPattern representing the piece.
 function extraction_pattern(
-	bmr :: ByproductPPG2KP{D, S, P}, e_idx :: Int
+	bmr :: ByproductPPG2KP{D, S, P}, e_idx
 ) :: CutPattern{D, S} where {D, S, P}
 	pli, pii = bmr.np[e_idx] # the plate index and the piece index
 	L, W = bmr.pli_lwb[pli] # the plate dimensions
@@ -160,22 +146,18 @@ function extraction_pattern(
 end
 
 # INTERNAL METHOD USED ONLY IN get_cut_pattern
-# Given a vector of JuMP variables, return a vector of their indexes in the
-# original vector and another vector storing the rounded non-zero variable
-# values. (The kwargs are passed to the `isapprox` method, to define what is
-# considered to be "non-zero" in a floating-point world.)
-# NOTE: takes the model only to be able to check if the variable is valid.
-function gather_nonzero(
-	model :: JuMP.Model, vars :: Vector{JuMP.VariableRef}; kwargs...
-) :: NTuple{2, Vector{Int}}
-	idxs = Vector{Int}()
-	vals = Vector{Int}()
-	for (idx, var) in enumerate(vars)
-		!is_valid(model, var) && continue
-		val = value(var)
-		isapprox(val, 0.0; kwargs...) && continue
+# Given a list of variables, returns two lists. The two lists have the same
+# length (that is itself smaller than the given list). The first list is
+# of indexes of the first list that have non-zero values (after aplying
+# RoundNearest to them) and the second is the rounded (to nearest) values.
+function gather_nonzero(vars, ::Type{D}) where {D}
+	idxs = Vector{eltype(keys(vars))}()
+	vals = Vector{D}()
+	for (idx, var) in pairs(vars)
+		val = round(D, value(var), RoundNearest)
+		iszero(val) && continue
 		push!(idxs, idx)
-		push!(vals, round(Int, val, RoundNearest))
+		push!(vals, val)
 	end
 	idxs, vals
 end
@@ -218,12 +200,12 @@ end
 # cut indexes in topological ordering (any non-root cut over some plate only
 # appears if a previous cut has made a copy of that plate type available).
 function build_cut_idx_stack(
-	nz_cuts :: Vector{NTuple{3, P}}, qt_cuts :: Vector{D}, root_cut_idx :: Int
-) :: Vector{Int} where {D, P}
-	cut_idx_stack = Vector{Int}()
+	nz_cuts :: Vector{NTuple{3, P}}, qt_cuts :: Vector{D}, root_cut_idx :: P
+) :: Vector{P} where {D, P}
+	cut_idx_stack = Vector{P}()
 	push!(cut_idx_stack, root_cut_idx)
 	cuts_available = deepcopy(qt_cuts)
-	next_cut = 1
+	next_cut = one(P)
 	while next_cut <= length(cut_idx_stack)
 		_, fc, sc = nz_cuts[cut_idx_stack[next_cut]]
 		@assert !iszero(fc)
@@ -233,7 +215,7 @@ function build_cut_idx_stack(
 			sc_idx = consume_cut(nz_cuts, cuts_available, sc)
 			sc_idx !== nothing && push!(cut_idx_stack, sc_idx)
 		end
-		next_cut += 1
+		next_cut += one(P)
 	end
 
 	return cut_idx_stack
@@ -248,16 +230,14 @@ end
 # that are just piece extractions).
 function add_used_extractions!(
 	patterns :: Dict{Int64, Vector{CutPattern{D, S}}},
-	nzpe_idxs :: Vector{Int},
-	nzpe_vals :: Vector{Int},
-	bmr :: ByproductPPG2KP{D, S, P}
+	nzpe_idxs, nzpe_vals, bmr :: ByproductPPG2KP{D, S, P}
 ) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
-	for (i, np_idx) in enumerate(nzpe_idxs)
+	for (i, np_idx) in pairs(nzpe_idxs)
 		pli, pii = bmr.np[np_idx]
-		#@show np_idx
-		#@show pli, pii
-		#@show nzpe_vals[i]
-		#@show bmr.l[pii], bmr.w[pii]
+		@show np_idx
+		@show pli, pii
+		@show nzpe_vals[i]
+		@show bmr.l[pii], bmr.w[pii]
 		extractions = extraction_pattern.(bmr, repeat([np_idx], nzpe_vals[i]))
 		if haskey(patterns, pli)
 			append!(patterns[pli], extractions)
@@ -275,15 +255,15 @@ end
 # (tree) bottom-up.
 function bottom_up_tree_build!(
 	patterns :: Dict{Int64, Vector{CutPattern{D, S}}},
-	nz_cut_idx_stack :: Vector{Int},
+	nz_cut_idx_stack,
 	nz_cuts :: Vector{NTuple{3, P}},
 	nz_cuts_ori :: BitArray{1},
 	bmr :: ByproductPPG2KP{D, S, P}
 ) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
 	for cut_idx in reverse(nz_cut_idx_stack)
-		#@show cut_idx
+		@show cut_idx
 		pp, fc, sc = nz_cuts[cut_idx]
-		#@show pp, fc, sc
+		@show pp, fc, sc
 		child_patts = Vector{CutPattern{D, S}}()
 		if !iszero(fc) && haskey(patterns, fc) && !isempty(patterns[fc])
 			push!(child_patts, pop!(patterns[fc]))
@@ -294,7 +274,7 @@ function bottom_up_tree_build!(
 			isempty(patterns[sc]) && delete!(patterns, sc)
 		end
 		ppl, ppw = bmr.pli_lwb[pp][1], bmr.pli_lwb[pp][2]
-		#@show ppl, ppw
+		@show ppl, ppw
 		!haskey(patterns, pp) && (patterns[pp] = Vector{CutPattern{D, S}}())
 		push!(patterns[pp], CutPattern(
 			ppl, ppw, nz_cuts_ori[cut_idx], child_patts
@@ -309,6 +289,8 @@ function get_cut_pattern(
 	model_type :: Val{:PPG2KP}, model :: JuMP.Model, ::Type{D}, ::Type{S},
 	build_model_return :: ByproductPPG2KP{D, S}
 ) :: CutPattern{D, S} where {D, S}
+	# local constant to alternate debug mode (method will not take a debug flag)
+	debug = false
 	# 1. Check if there can be an extraction from the original plate to a
 	#    single piece. If it may and it happens, then just return this single
 	#    piece solution; otherwise the first cut is in `cuts_made`, find it
@@ -326,28 +308,23 @@ function get_cut_pattern(
 	bmr = build_model_return
 	pe = model[:picuts] # Piece Extractions
 	cm = model[:cuts_made] # Cuts Made
-	# We need to define an absolute tolerance, as solvers often return values
-	# very similar to zero (when they should return zero) and this depends on
-	# the instance problem coefficients.
-	# MOI.get(backend(model), MOI.RelativeGap()) was initially used, but
-	# it is too much of a headache, GLPK sometimes does not believe it is
-	# available because we solved a linear model before.
-	atol = eps(objective_value(model)) # hope this is reasonable
 
 	# non-zero {piece extractions, cuts made} {indexes,values}
-	nzpe_idxs, nzpe_vals = gather_nonzero(model, pe; atol = atol)
-	nzcm_idxs, nzcm_vals = gather_nonzero(model, cm; atol = atol)
-	#@show nzpe_idxs
-	#@show nzpe_vals
-	#@show nzcm_idxs
-	#@show nzcm_vals
+	nzpe_idxs, nzpe_vals = gather_nonzero(pe, D)
+	nzcm_idxs, nzcm_vals = gather_nonzero(cm, D)
+	if debug
+		@show nzpe_idxs
+		@show nzpe_vals
+		@show nzcm_idxs
+		@show nzcm_vals
+	end
 
 	sps_idx = check_if_single_piece_solution(bmr.np, nzpe_idxs)
 	!iszero(sps_idx) && return extraction_pattern(bmr, sps_idx)
 
 	# The cuts actually used in the solution.
 	sel_cuts = bmr.cuts[nzcm_idxs]
-	#@show sel_cuts
+	debug && @show sel_cuts
 	# If the cut in `sel_cuts` is vertical or not.
 	ori_cuts = nzcm_idxs .>= bmr.first_vertical_cut_idx
 	# The index of the root cut (cut over the original plate) in `sel_cuts`.
@@ -977,9 +954,16 @@ function reduced_profit(
 	cut :: Tuple{P, P, P}, constraints :: Vector{T}
 ) :: Float64 where {P, T}
 	pp, fc, sc = cut
+	pp_dual = dual(constraints[pp])
+	fc_dual = dual(constraints[fc])
 	sc_dual = iszero(sc) ? 0.0 : dual(constraints[sc])
+	#@show pp_dual
+	#@show fc_dual
+	#@show sc_dual
 	# The reduced profit computation shown in the paper is done here.
-	return dual(constraints[pp]) - dual(constraints[fc]) - sc_dual
+	rp = fc_dual + sc_dual - pp_dual
+	#@show rp
+	return rp
 end
 
 function restricted_final_pricing(
@@ -1012,17 +996,14 @@ function restricted_final_pricing(
 	# Fix all unrestricted cuts (pool vars).
 	uc_vars = cm[uc_idxs]
 	fix.(uc_vars, 0.0; force = true)
-	# Solve the relaxed restricted model.
-	@timeit "relaxed_restricted" optimize!(model)
-	#@show JuMP.dual_status(model)
-	#@show JuMP.primal_status(model)
 	# Get the solution of the heuristic.
 	bkv, _, shelves = Heuristic.iterated_greedy(
 		d, p, bp.l, bp.w, bp.L, bp.W, rng
 	)
 	sol = Heuristic.shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
 	LB = convert(Float64, bkv)
-	#@show LB
+	# Solve the relaxed restricted model.
+	@timeit "relaxed_restricted" optimize!(model)
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
 		#@show objective_bound(model)
@@ -1043,13 +1024,24 @@ function restricted_final_pricing(
 		)
 		exit(1)
 	end
+	# TODO: if the assert below fails, then the solver used reaches an optimal
+	# point of a LP but do not has duals for it, what should not be possible,
+	# some problem has happened (for an example, the solver does not recognize
+	# the model as a LP but think it is a MIP for example, CPLEX does this).
+	@assert has_duals(model)
 	rc_cuts = bp.cuts[rc_idxs]
 	plate_cons = all_constraints(
 		model, GenericAffExpr{Float64, VariableRef}, MOI.LessThan{Float64}
 	)
+	debug && begin
+		restricted_LB = LB
+		restricted_UB = UB
+		@show restricted_LB
+		@show restricted_UB
+	end
+	# Do the final pricing, get which variables should be removed.
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
-	# Do the final pricing, get which variables should be removed.
 	rc_fix_bitstr = @. floor(UB - reduced_profit(rc_cuts, (plate_cons,))) <= LB
 	debug && begin
 		restricted_vars_removed = sum(rc_fix_bitstr)

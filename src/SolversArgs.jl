@@ -192,7 +192,6 @@ function Utilities.Args.accepted_arg_list(::Val{:Gurobi}) :: Vector{Arg}
 			"raw-parameters", "Pair{String, Any}[]",
 			"A string of Julia code to be evaluated to Gurobi parameters. For example: 'Pair{String, Any}[\"OutputFlag\" => 0]' will have the same effect as --Gurobi-no-output. Obviously, this is a security breach."
 		)
-
 	]
 end
 
