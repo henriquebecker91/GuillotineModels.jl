@@ -201,11 +201,16 @@ end
 # appears if a previous cut has made a copy of that plate type available).
 # SEE: https://discourse.julialang.org/t/unreachable-reached-at-0x7fa478093547-in-julia-1-0-5/36404
 function build_cut_idx_stack(
-	nz_cuts :: Vector{NTuple{3, P}}, qt_cuts :: Vector{D}, root_cut_idx :: Int #=P=#
+	nz_cuts :: Vector{NTuple{3, P}},
+	qt_cuts :: Vector{D},
+	root_cut_idx :: Int #=P=#,
+	debug :: Bool = false
 ) :: Vector{Int#=P=#} where {D, P}
 	cut_idx_stack = Vector{Int#=P=#}()
 	push!(cut_idx_stack, root_cut_idx)
 	cuts_available = deepcopy(qt_cuts)
+	@assert isone(cuts_available[root_cut_idx])
+	cuts_available[root_cut_idx] -= one(D)
 	next_cut = one(P)
 	while next_cut <= length(cut_idx_stack)
 		_, fc, sc = nz_cuts[cut_idx_stack[next_cut]]
@@ -218,6 +223,9 @@ function build_cut_idx_stack(
 		end
 		next_cut += one(P)
 	end
+	# If cuts_available is different from a vector of zeros then some cuts
+	# were not consumed (I am not sure if this should be possible).
+	debug && @show cuts_available
 
 	return cut_idx_stack
 end
@@ -231,14 +239,17 @@ end
 # that are just piece extractions).
 function add_used_extractions!(
 	patterns :: Dict{Int64, Vector{CutPattern{D, S}}},
-	nzpe_idxs, nzpe_vals, bmr :: ByproductPPG2KP{D, S, P}
+	nzpe_idxs, nzpe_vals, bmr :: ByproductPPG2KP{D, S, P},
+	debug :: Bool = false
 ) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
 	for (i, np_idx) in pairs(nzpe_idxs)
 		pli, pii = bmr.np[np_idx]
-		@show np_idx
-		@show pli, pii
-		@show nzpe_vals[i]
-		@show bmr.l[pii], bmr.w[pii]
+		if debug
+			@show np_idx
+			@show pli, pii
+			@show nzpe_vals[i]
+			@show bmr.l[pii], bmr.w[pii]
+		end
 		extractions = extraction_pattern.(bmr, repeat([np_idx], nzpe_vals[i]))
 		if haskey(patterns, pli)
 			append!(patterns[pli], extractions)
@@ -259,12 +270,13 @@ function bottom_up_tree_build!(
 	nz_cut_idx_stack,
 	nz_cuts :: Vector{NTuple{3, P}},
 	nz_cuts_ori :: BitArray{1},
-	bmr :: ByproductPPG2KP{D, S, P}
+	bmr :: ByproductPPG2KP{D, S, P},
+	debug :: Bool = false
 ) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
 	for cut_idx in reverse(nz_cut_idx_stack)
-		@show cut_idx
+		debug && @show cut_idx
 		pp, fc, sc = nz_cuts[cut_idx]
-		@show pp, fc, sc
+		debug && @show pp, fc, sc
 		child_patts = Vector{CutPattern{D, S}}()
 		if !iszero(fc) && haskey(patterns, fc) && !isempty(patterns[fc])
 			push!(child_patts, pop!(patterns[fc]))
@@ -275,7 +287,7 @@ function bottom_up_tree_build!(
 			isempty(patterns[sc]) && delete!(patterns, sc)
 		end
 		ppl, ppw = bmr.pli_lwb[pp][1], bmr.pli_lwb[pp][2]
-		@show ppl, ppw
+		debug && @show ppl, ppw
 		!haskey(patterns, pp) && (patterns[pp] = Vector{CutPattern{D, S}}())
 		push!(patterns[pp], CutPattern(
 			ppl, ppw, nz_cuts_ori[cut_idx], child_patts
@@ -291,7 +303,7 @@ function get_cut_pattern(
 	build_model_return :: ByproductPPG2KP{D, S}
 ) :: CutPattern{D, S} where {D, S}
 	# local constant to alternate debug mode (method will not take a debug flag)
-	debug = false
+	debug = true
 	# 1. Check if there can be an extraction from the original plate to a
 	#    single piece. If it may and it happens, then just return this single
 	#    piece solution; otherwise the first cut is in `cuts_made`, find it
@@ -332,7 +344,7 @@ function get_cut_pattern(
 	root_idx = findfirst(cut -> isone(cut[1]), sel_cuts)
 	root_idx === nothing && return CutPattern(bmr.L, bmr.W, zero(D))
 
-	cut_idx_stack = build_cut_idx_stack(sel_cuts, nzcm_vals, root_idx)
+	cut_idx_stack = build_cut_idx_stack(sel_cuts, nzcm_vals, root_idx, debug)
 
 	# `patterns` translates a plate index (pli) into a list of all "uses" of that
 	# plate type. Such "uses" are CutPattern objects, either pieces or more
@@ -346,9 +358,9 @@ function get_cut_pattern(
 
 	# Insert all piece extractions (i.e., plate to piece patterns) into
 	# `patterns`.
-	add_used_extractions!(patterns, nzpe_idxs, nzpe_vals, bmr)
+	add_used_extractions!(patterns, nzpe_idxs, nzpe_vals, bmr, debug)
 
-	bottom_up_tree_build!(patterns, cut_idx_stack, sel_cuts, ori_cuts, bmr)
+	bottom_up_tree_build!(patterns, cut_idx_stack, sel_cuts, ori_cuts, bmr, debug)
 
 	global global_p
 	if !isone(length(patterns)) || !haskey(patterns, 1) || !isone(length(patterns[1]))
