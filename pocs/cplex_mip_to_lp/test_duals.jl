@@ -1,3 +1,9 @@
+#!/bin/bash
+# -*- mode: julia -*-
+#=
+exec julia --project=@. --color=yes --startup-file=no -e "include(popfirst!(ARGS))" "${BASH_SOURCE[0]}" "$@"
+=#
+
 import CPLEX, Gurobi, GLPK
 using JuMP
 

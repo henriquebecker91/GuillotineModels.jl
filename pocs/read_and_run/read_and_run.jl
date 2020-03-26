@@ -1,4 +1,8 @@
-#!/usr/bin/env julia --project=@.
+#!/bin/bash
+# -*- mode: julia -*-
+#=
+exec julia --project=@. --color=yes --startup-file=no -e "include(popfirst!(ARGS))" "${BASH_SOURCE[0]}" "$@"
+=#
 
 using JuMP, Cbc
 

@@ -1,11 +1,13 @@
-#!/usr/bin/env julia --project=@.
+#!/bin/bash
+# -*- mode: julia -*-
+#=
+exec julia --project=@. --color=yes --startup-file=no -e "include(popfirst!(ARGS))" "${BASH_SOURCE[0]}" "$@"
+=#
 
-using JuMP, Cbc
-#using JuMP, GLPK
+using JuMP, Cbc, GLPK
 
-function run()
-	m = Model(Cbc.Optimizer)
-	#m = Model(GLPK.Optimizer)
+function run(optimizer)
+	m = Model(optimizer)
 
 	empty_terms = AffExpr()
 	@constraint(m, empty_terms <= 2)
@@ -16,6 +18,12 @@ function run()
 	end
 end
 
-@time run()
-@time run()
+println("\n===================== GLPK First Time ====================\n")
+@time run(GLPK.Optimizer)
+println("\n==================== GLPK Second Time ====================\n")
+@time run(GLPK.Optimizer)
+println("\n====================== Cbc First Time ====================\n")
+@time run(Cbc.Optimizer)
+println("\n===================== Cbc Second Time ====================\n")
+@time run(Cbc.Optimizer)
 
