@@ -312,7 +312,7 @@ function get_cut_pattern(
 	build_model_return :: ByproductPPG2KP{D, S}
 ) :: CutPattern{D, S} where {D, S}
 	# local constant to alternate debug mode (method will not take a debug flag)
-	debug = false
+	debug = true
 	# 1. Check if there can be an extraction from the original plate to a
 	#    single piece. If it may and it happens, then just return this single
 	#    piece solution; otherwise the first cut is in `cuts_made`, find it
@@ -390,9 +390,9 @@ function get_cut_pattern(
 		@show z_root
 	end
 
-	@assert isone(length(patterns))
-	@assert haskey(patterns, 1)
-	@assert isone(length(patterns[1]))
+	#@assert isone(length(patterns))
+	#@assert haskey(patterns, 1)
+	#@assert isone(length(patterns[1]))
 
 	return patterns[1][1]
 end
@@ -933,6 +933,7 @@ end
 function all_restricted_cuts_idxs(
 	bp :: ByproductPPG2KP{D, S, P}
 ) :: Vector{Int} where {D, S, P}
+	@timeit "restricted_idxs" begin
 	rc_idxs = Vector{Int}()
 	usl = unique!(sort(bp.l))
 	usw = unique!(sort(bp.w))
@@ -943,8 +944,8 @@ function all_restricted_cuts_idxs(
 			!isempty(searchsorted(usw, bp.pli_lwb[fc][2])) && push!(rc_idxs, idx)
 		end
 	end
-
 	return rc_idxs
+	end
 end
 
 # Internal use.
@@ -996,6 +997,7 @@ function restricted_final_pricing(
 	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, rng, debug :: Bool = false
 ) #=:: Tuple{P, CutPattern{D, S}, Vector{SavedVarConf}} =# where {D, S, P}
+	@timeit "restricted_final" begin
 	# First we save all the variables bounds and types and relax all of them.
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
@@ -1009,19 +1011,21 @@ function restricted_final_pricing(
 	# will need to be reworked. Now it only relax/fix variables in those sets
 	# so it will need to be sensibly extended to new sets of variables.
 	@assert n == length(cm) + length(pe)
-	pe_svcs = save_and_relax!.(pe)
-	cm_svcs = save_and_relax!.(cm)
+	pe_svcs = @timeit "save_pe" SavedVarConf.(pe)
+	cm_svcs = @timeit "save_cm" SavedVarConf.(cm)
+	@timeit "relax_pe" relax!.(pe)
+	@timeit "relax_cm" relax!.(cm)
 	#@assert length(cm) == length(bp.cuts)
 	rc_vars = cm[rc_idxs]
 	# Even if they are contained in all_svcs, save the var config of the
 	# restricted cuts again, because we will need to restore only them after
 	# and finding them in all_svcs is a drag.
-	rc_svcs = SavedVarConf.(rc_vars)
+	rc_svcs = @timeit "save_rc" SavedVarConf.(rc_vars)
 	# Every variable that is not a restricted cut is a unrestricted cut.
 	uc_idxs = setdiff_sorted(keys(cm), rc_idxs)
 	# Fix all unrestricted cuts (pool vars).
 	uc_vars = cm[uc_idxs]
-	fix.(uc_vars, 0.0; force = true)
+	@timeit "fix_uc" fix.(uc_vars, 0.0; force = true)
 	# Get the solution of the heuristic.
 	bkv, _, shelves = Heuristic.iterated_greedy(
 		d, p, bp.l, bp.w, bp.L, bp.W, rng
@@ -1029,7 +1033,7 @@ function restricted_final_pricing(
 	sol = Heuristic.shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
 	LB = convert(Float64, bkv)
 	# Solve the relaxed restricted model.
-	@timeit "relaxed_restricted" optimize!(model)
+	@timeit "relaxed_optimize" optimize!(model)
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
 		#@show objective_bound(model)
@@ -1057,9 +1061,6 @@ function restricted_final_pricing(
 	@assert has_duals(model)
 	rc_cuts = bp.cuts[rc_idxs]
 	plate_cons = model[:plate_cons]
-	all_constraints(
-		model, GenericAffExpr{Float64, VariableRef}, MOI.LessThan{Float64}
-	)
 	debug && begin
 		restricted_LB = LB
 		restricted_UB = UB
@@ -1081,16 +1082,16 @@ function restricted_final_pricing(
 	# Below the SavedVarConf is not stored because they will be kept fixed
 	# for now, and when restored, they will be restored to their original
 	# state (rc_svcs) not this intermediary one.
-	fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
+	@timeit "fix_rc_subset" fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
 	# The discrete variables are the restricted cuts that were not removed
 	# by the final pricing of the restricted model and will be in the MIP
 	# of the restricted model.
 	rc_discrete_bitstr = .!rc_fix_bitstr
 	discrete_vars = rc_vars[rc_discrete_bitstr]
-	restore!.(discrete_vars, rc_svcs[rc_discrete_bitstr])
+	@timeit "restore_ss_cm" restore!.(discrete_vars, rc_svcs[rc_discrete_bitstr])
 	# All piece extractions also need to be restored.
-	restore!.(pe, pe_svcs)
-	@timeit "discrete_restricted" optimize!(model) # restricted MIP solved
+	@timeit "restore_pe" restore!.(pe, pe_svcs)
+	@timeit "discrete_optimize" optimize!(model) # restricted MIP solved
 	# If some primal solution was obtained, compare its value with the
 	# heuristic and keep the best one (the model can give a worse value
 	# as any variables that cannot contribute to a better solution are
@@ -1106,10 +1107,11 @@ function restricted_final_pricing(
 	end
 	# The variables are left all relaxed but with only the variables used
 	# in the restricted priced model unfixed, the rest are fixed to zero.
-	relax!.(rc_vars[rc_discrete_bitstr])
-	relax!.(pe)
+	@timeit "relax_ss_rc" relax!.(rc_vars[rc_discrete_bitstr])
+	@timeit "relax_pe" relax!.(pe)
 
 	return bkv, sol, pe_svcs, cm_svcs
+	end
 end
 
 # Arguments:
