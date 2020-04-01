@@ -375,6 +375,7 @@ function get_cut_pattern(
 
 	global global_p
 	if !isone(length(patterns)) || !haskey(patterns, 1) || !isone(length(patterns[1]))
+		println("BUG AT GET_CUT_PATTERN")
 		z = 0
 		z_root = 0
 		for (key, subpatts) in patterns
@@ -1011,16 +1012,11 @@ function restricted_final_pricing(
 	# will need to be reworked. Now it only relax/fix variables in those sets
 	# so it will need to be sensibly extended to new sets of variables.
 	@assert n == length(cm) + length(pe)
-	pe_svcs = @timeit "save_pe" SavedVarConf.(pe)
-	cm_svcs = @timeit "save_cm" SavedVarConf.(cm)
-	@timeit "relax_pe" relax!.(pe)
-	@timeit "relax_cm" relax!.(cm)
+	@timeit "relax_cm" cm_svcs = relax!(cm)
+	@timeit "relax_pe" pe_svcs = relax!(pe)
 	#@assert length(cm) == length(bp.cuts)
 	rc_vars = cm[rc_idxs]
-	# Even if they are contained in all_svcs, save the var config of the
-	# restricted cuts again, because we will need to restore only them after
-	# and finding them in all_svcs is a drag.
-	rc_svcs = @timeit "save_rc" SavedVarConf.(rc_vars)
+	rc_svcs = cm_svcs[rc_idxs]
 	# Every variable that is not a restricted cut is a unrestricted cut.
 	uc_idxs = setdiff_sorted(keys(cm), rc_idxs)
 	# Fix all unrestricted cuts (pool vars).
@@ -1088,9 +1084,9 @@ function restricted_final_pricing(
 	# of the restricted model.
 	rc_discrete_bitstr = .!rc_fix_bitstr
 	discrete_vars = rc_vars[rc_discrete_bitstr]
-	@timeit "restore_ss_cm" restore!.(discrete_vars, rc_svcs[rc_discrete_bitstr])
+	@timeit "restore_ss_cm" restore!(discrete_vars, rc_svcs[rc_discrete_bitstr])
 	# All piece extractions also need to be restored.
-	@timeit "restore_pe" restore!.(pe, pe_svcs)
+	@timeit "restore_pe" restore!(pe, pe_svcs)
 	@timeit "discrete_optimize" optimize!(model) # restricted MIP solved
 	# If some primal solution was obtained, compare its value with the
 	# heuristic and keep the best one (the model can give a worse value
@@ -1107,8 +1103,8 @@ function restricted_final_pricing(
 	end
 	# The variables are left all relaxed but with only the variables used
 	# in the restricted priced model unfixed, the rest are fixed to zero.
-	@timeit "relax_ss_rc" relax!.(rc_vars[rc_discrete_bitstr])
-	@timeit "relax_pe" relax!.(pe)
+	@timeit "relax_ss_rc" relax!(rc_vars[rc_discrete_bitstr])
+	@timeit "relax_pe" relax!(pe)
 
 	return bkv, sol, pe_svcs, cm_svcs
 	end

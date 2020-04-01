@@ -121,32 +121,102 @@ struct SavedVarConf
 end
 export SavedVarConf
 
+# Internal structure. It does not validate its input but it should be clear
+# that the values of 'delete_X/unfix' and 'set_X/fix' cannot be both true (both
+# may be false, this means that nothing is done). `fix` and any `set_` cannot
+# be both true either. The idea is to store knowledge of "what to change"
+# that depends on both the SavedVarConf and the current state of the variable.
+# With this structure, all variables may be queried and compared to the saved
+# configurations before the first variable is changed. See the comment at
+# `restore!`.
+struct _VarConfDiff
+	unset_bin :: Bool
+	set_bin :: Bool
+	unset_int :: Bool
+	set_int :: Bool
+	unfix :: Bool
+	fix :: Bool
+	fix_value :: Float64
+	delete_lb :: Bool
+	set_lb :: Bool
+	lb_value :: Float64
+	delete_ub :: Bool
+	set_ub :: Bool
+	ub_value :: Float64
+end
+
+function _diff(var :: VariableRef, c :: SavedVarConf) :: _VarConfDiff
+	is_bin = is_binary(var)
+	is_int = (is_bin ? false : is_integer(var))
+	has_fix = is_fixed(var)
+	has_lb = (has_fix ? false : has_lower_bound(var))
+	has_ub = (has_fix ? false : has_upper_bound(var))
+	return _VarConfDiff(
+		!c.was_bin & is_bin      # unset_bin
+		, c.was_bin & !is_bin    # set_bin
+		, !c.was_int & is_int    # unset_int
+		, c.was_int & !is_int    # set_int
+		, !c.was_fixed & has_fix # unfix
+		, c.was_fixed && (!has_fix || fix_value(var) != c.fix_value) # fix
+		, c.fix_value # fix_value
+		, !c.had_lb && has_lb # delete_lb
+		, c.had_lb && (!has_lb || lower_bound(var) != c.lb) # set_lb
+		, c.lb # lb_value
+		, !c.had_ub && has_ub # delete_ub
+		, c.had_ub && (!has_ub || upper_bound(var) != c.ub) # set_ub
+		, c.ub # ub_value
+	)
+end
+
+function _apply(var :: VariableRef, diff :: _VarConfDiff) :: Nothing
+	# Unset properties before setting ones that cannot coexist with the first.
+	diff.unset_bin && unset_binary(var)
+	diff.unset_int && unset_integer(var)
+	diff.set_bin && set_binary(var)
+	diff.set_int && set_integer(var)
+	diff.delete_lb && delete_lower_bound(var)
+	diff.delete_ub && delete_upper_bound(var)
+	if diff.fix
+		# Alternatively, we could use `force = true`, but we already have the
+		# deletion information queried, and deleted bounds if they existed above
+		# so we can call fix without `force = true`.
+		fix(var, diff.fix_value)
+	else
+		diff.unfix && unfix(var)
+		diff.set_lb && set_lower_bound(var, diff.lb_value)
+		diff.set_ub && set_upper_bound(var, diff.ub_value)
+	end
+	return
+end
+
+# Because of how Gurobi works this method need be be written carefully
+# (see https://github.com/JuliaOpt/Gurobi.jl/pull/301). Basically, we
+# want to query every attribute from the model before setting any of them.
+# Also, broadcasting this method is not a good idea, a batch version is
+# necessary.
 """
     restore!(var :: VariableRef, c :: SavedVarConf) :: Nothing
+    restore!(vars :: Vector{...}, cs :: Vector{...}) :: Nothing
 
 If `var` type and/or bounds are different than the ones specified in `c`,
 then change `var` type and/or bounds to adhere to `c`.
 """
 function restore!(var :: VariableRef, c :: SavedVarConf) :: Nothing
-	!c.was_bin && is_binary(var) && unset_binary(var)
-	!c.was_int && is_integer(var) && unset_integer(var)
-	c.was_bin && !is_binary(var) && set_binary(var)
-	c.was_int && !is_integer(var) && set_integer(var)
-
-	if c.was_fixed && (!is_fixed(var) || fix_value(var) != c.fix_value)
-		fix(var, c.fix_value; force = true)
-	else
-		is_fixed(var) && unfix(var)
-		if c.had_lb && (!has_lower_bound(var) || lower_bound(var) != c.lb)
-			set_lower_bound(var, c.lb)
-		end
-		if c.had_ub && (!has_upper_bound(var) || upper_bound(var) != c.ub)
-			set_upper_bound(var, c.ub)
-		end
-	end
-	nothing
+	_apply(var, _diff(var, c))
+	return
 end
 export restore!
+
+function restore!(
+	vars :: Vector{VariableRef},
+	cs :: Vector{SavedVarConf}
+) :: Nothing
+	@assert length(vars) == length(cs)
+	# do not nest the broadcasts, we do not want them to fuse
+	ds = _diff.(vars, cs)
+	_apply.(vars, ds)
+	return
+end
 
 """
     SavedVarConf(var :: VariableRef) :: SavedVarConf
@@ -156,10 +226,10 @@ Note that the VariableRef itself is not stored.
 """
 function SavedVarConf(var :: VariableRef) :: SavedVarConf
 	was_bin = is_binary(var)
-	was_int = is_integer(var)
+	was_int = (was_bin ? false : is_integer(var))
 	was_fixed = is_fixed(var)
-	had_lb = has_lower_bound(var)
-	had_ub = has_upper_bound(var)
+	had_lb = (was_fixed ? false : has_lower_bound(var))
+	had_ub = (was_fixed ? false : has_upper_bound(var))
 	return SavedVarConf(
 		was_bin, was_int,
 		was_fixed, (was_fixed ? fix_value(var) : 0.0),
@@ -168,66 +238,37 @@ function SavedVarConf(var :: VariableRef) :: SavedVarConf
 	)
 end
 
-"""
-    save_and_fix!(var, fix_value = 0.0) :: SavedVarConf
-
-Fix the variable value and return its SavedVarConf before the fix.
-"""
-function save_and_fix!(var :: VariableRef, fix_value = 0.0)
-	svc = SavedVarConf(var)
-	fix(var, fix_value; force = true)
-	return svc
-end
-export save_and_fix!
-
-"""
-    relax!(var) -> var
-
-The `var` is made continuous. If the variable was binary, and had a lower
-(upper) bound below zero (above one) it is replaced by zero (one).
-"""
-function relax!(var :: VariableRef) :: VariableRef
-	if is_integer(var)
-		unset_integer(var)
-	elseif is_binary(var)
-		unset_binary(var)
-		if !has_lower_bound(var) || lower_bound(var) < 0.0
-			set_lower_bound(var, 0.0)
-		end
-		if !has_upper_bound(var) || upper_bound(var) < 0.0
-			set_upper_bound(var, 1.0)
-		end
-	end
-
-	return var
-end
-export relax!
-
-"""
-    save_and_relax!(var) :: SavedVarConf
-
-Does the same as `relax!` but save the variable configuration first and
-return it.
-
-See also: [`relax!`](@ref)
-"""
-function save_and_relax!(var :: VariableRef)
-	svc = SavedVarConf(var)
+function _relax!(var :: VariableRef, svc :: SavedVarConf) :: Nothing
 	if svc.was_int
 		unset_integer(var)
 	elseif svc.was_bin
 		unset_binary(var)
-		if !svc.had_lb || svc.lb < 0.0
-			set_lower_bound(var, 0.0)
-		end
-		if !svc.had_ub || svc.ub > 1.0
-			set_upper_bound(var, 1.0)
-		end
+		(!svc.had_lb || svc.lb < 0.0) && set_lower_bound(var, 0.0)
+		(!svc.had_ub || svc.ub > 1.0) && set_upper_bound(var, 1.0)
 	end
+	return
+end
 
+"""
+    relax!(var) :: SavedVarConf
+    relax!(vars) :: Vector{SavedVarConf}
+
+The `var` is made continuous. If the variable was binary, and had a lower
+(upper) bound below zero (above one) it is replaced by zero (one).
+"""
+function relax!(var :: VariableRef) :: SavedVarConf
+	svc = SavedVarConf(var)
+	_relax!(var, svc)
 	return svc
 end
-export save_and_relax!
+export relax!
+
+function relax!(vars :: Vector{VariableRef}) :: Vector{SavedVarConf}
+	# do not nest the broadcasts, we do not want them to fuse
+	svcs = SavedVarConf.(vars)
+	_relax!.(vars, svcs)
+	return svcs
+end
 
 # Not used by the rest of Utilities, just made available to other modules.
 include("Args.jl")
