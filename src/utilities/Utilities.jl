@@ -57,6 +57,12 @@ function SortedLinkedLW(::Type{D}, l :: Vector{S}, w :: Vector{S}) where {D, S}
 	SortedLinkedLW(l, w, sl, sw, sli2pii, swi2pii, pii2sli, pii2swi)
 end
 
+function flush_all_output()
+	flush(stdout)
+	flush(stderr)
+end
+export flush_all_output
+
 using JuMP
 using TimerOutputs
 

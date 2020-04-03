@@ -162,12 +162,18 @@ end
 function gather_nonzero(vars, ::Type{D}) where {D}
 	idxs = Vector{eltype(keys(vars))}()
 	vals = Vector{D}()
+	diff = 0.0
 	for (idx, var) in pairs(vars)
-		val = round(D, value(var), RoundNearest)
+		float_val = value(var)
+		val = round(D, float_val, RoundNearest)
+		abs(float_val - val) > diff && (diff = abs(float_val - val))
 		iszero(val) && continue
 		push!(idxs, idx)
 		push!(vals, val)
 	end
+	diff > 1e-4 && @warn "At least one variable of a solved PPG2KP model had" *
+		" a difference of $diff from the nearest integer. Maybe the tolerances" *
+		" are too lax, or some variable that should not be relaxed is relaxed."
 	idxs, vals
 end
 
@@ -391,9 +397,9 @@ function get_cut_pattern(
 		@show z_root
 	end
 
-	#@assert isone(length(patterns))
-	#@assert haskey(patterns, 1)
-	#@assert isone(length(patterns[1]))
+	@assert isone(length(patterns))
+	@assert haskey(patterns, 1)
+	@assert isone(length(patterns[1]))
 
 	return patterns[1][1]
 end
@@ -994,6 +1000,8 @@ function reduced_profit(
 	return rp
 end
 
+# TODO: the call to the heuristic and solving the restricted MIP model
+# probably should not be here, but on no_arg_check_build_model.
 function restricted_final_pricing(
 	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, rng, debug :: Bool = false
@@ -1029,12 +1037,14 @@ function restricted_final_pricing(
 	sol = Heuristic.shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
 	LB = convert(Float64, bkv)
 	# Solve the relaxed restricted model.
+	flush_all_output()
 	@timeit "relaxed_optimize" optimize!(model)
+	flush_all_output()
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
 		#@show objective_bound(model)
 		#@show objective_value(model)
-		UB = objective_value(model)
+		LP = UB = objective_value(model)
 		#@show value.(rc_vars)
 		!isinf(UB) && (UB = floor(UB + eps(UB))) # theoretically sane UB
 		# Note: the iterated_greedy solve the shelf version of the problem,
@@ -1059,14 +1069,16 @@ function restricted_final_pricing(
 	plate_cons = model[:plate_cons]
 	debug && begin
 		restricted_LB = LB
-		restricted_UB = UB
+		restricted_LP = LP
 		@show restricted_LB
-		@show restricted_UB
+		@show restricted_LP
 	end
-	# Do the final pricing, get which variables should be removed.
+
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
-	rc_fix_bitstr = @. floor(UB - reduced_profit(rc_cuts, (plate_cons,))) <= LB
+	rc_discrete_bitstr = # the final pricing (get which variables should remain)
+		@. floor(reduced_profit(rc_cuts, (plate_cons,)) + LP) >= LB
+	rc_fix_bitstr = .!rc_discrete_bitstr
 	debug && begin
 		restricted_vars_removed = sum(rc_fix_bitstr)
 		restricted_vars_remaining = length(rc_cuts) - restricted_vars_removed
@@ -1082,12 +1094,13 @@ function restricted_final_pricing(
 	# The discrete variables are the restricted cuts that were not removed
 	# by the final pricing of the restricted model and will be in the MIP
 	# of the restricted model.
-	rc_discrete_bitstr = .!rc_fix_bitstr
 	discrete_vars = rc_vars[rc_discrete_bitstr]
 	@timeit "restore_ss_cm" restore!(discrete_vars, rc_svcs[rc_discrete_bitstr])
 	# All piece extractions also need to be restored.
 	@timeit "restore_pe" restore!(pe, pe_svcs)
+	flush_all_output()
 	@timeit "discrete_optimize" optimize!(model) # restricted MIP solved
+	flush_all_output()
 	# If some primal solution was obtained, compare its value with the
 	# heuristic and keep the best one (the model can give a worse value
 	# as any variables that cannot contribute to a better solution are
@@ -1205,7 +1218,9 @@ function iterative_pricing(
 	plate_cons = all_constraints(
 		model, GenericAffExpr{Float64, VariableRef}, MOI.LessThan{Float64}
 	)
+	flush_all_output()
 	optimize!(model) # the last solve before this was MIP and has no duals
+	flush_all_output()
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
 	num_positive_rp_vars = recompute_idxs_to_add!(
@@ -1215,16 +1230,20 @@ function iterative_pricing(
 	n_max = round(P, num_positive_rp_vars * alpha, RoundUp)
 	debug && @show num_positive_rp_vars
 	debug && @show n_max
-	# TODO: CONTINUE HERE EXPLAIN RESIZE BELOW
+	# As we called `num_positive_rp_vars!` with `typemax(P)` instead `n_max`
+	# to be able to compute `n_max` in the first place, we need to resize
+	# this first list to `n_max` (in the loop below `recompute_idxs_to_add!`
+	# will do it for us).
 	resize!(to_unfix, n_max)
-	# The iterative pricing continue until there are no variables
-	# with positive reduced profit value to unfix.
-	while !iszero(num_positive_rp_vars)
+	# The iterative pricing continue until there are variables to unfix.
+	while !isempty(to_unfix)
 		unfix.(unused_vars[to_unfix])
 		deleteat!(unused_vars, to_unfix)
 		deleteat!(unused_cuts, to_unfix)
 		@assert length(unused_cuts) == length(unused_vars)
+		flush_all_output()
 		optimize!(model)
+		flush_all_output()
 		num_positive_rp_vars = recompute_idxs_to_add!(
 			to_unfix, unused_cuts, plate_cons, threshold, n_max, debug
 		)
@@ -1234,11 +1253,55 @@ function iterative_pricing(
 	return
 end
 
+function _partition_by_bits(bits, list)
+    accepted = Vector{eltype(list)}(undef, length(list))
+    rejected = Vector{eltype(list)}(undef, length(list))
+    qt_accepted = qt_rejected = 0
+    for (istrue, value) in zip(bits, list)
+        if istrue
+            qt_accepted += 1
+            accepted[qt_accepted] = value
+        else
+            qt_rejected += 1
+            rejected[qt_rejected] = value
+        end
+    end
+    resize!(accepted, qt_accepted)
+    resize!(rejected, qt_rejected)
+    return accepted, rejected
+end
+
+# TODO: check if the kept variables are chosen from the unfixed variables
+# of from all variables.
 function final_pricing(
-	model, byproduct :: ByproductPPG2KP{D, S, P},
-	options :: Dict{String, Any} = Dict{String, Any}()
-) :: ByproductPPG2KP{D, S, P} where {D, S, P}
-	return byproduct
+	model, bp :: ByproductPPG2KP{D, S, P}, LB :: Float64, LP :: Float64,
+	debug :: Bool = false
+) where {D, S, P}
+	plate_cons = model[:plate_cons]
+	vars = model[:cuts_made]
+	#unfixed_bits = !is_fixed(vars)
+	#unfixed_vars, fixed_vars = _partition_by_bits(unfixed_bits, vars)
+	#unfixed_cuts = bp.cuts[unfixed_bits]
+	@show LP
+	@show LB
+	println(string(floor.(reduced_profit.(bp.cuts, (plate_cons,)))))
+	to_keep_bits = # the final pricing (get which variables should remain)
+		@. floor(reduced_profit(bp.cuts, (plate_cons,)) + LP) >= LB
+	#to_keep_idxs = key(vars)[unfixed_bits][to_keep_bits]
+	to_keep_idxs, to_delete_idxs = _partition_by_bits(to_keep_bits, keys(vars))
+	new_fvci = searchsortedfirst(
+		to_keep_idxs, bp.first_vertical_cut_idx
+	)
+	@show bp.cuts[to_delete_idxs]
+	@show bp.cuts[to_keep_idxs]
+	deleteat!(bp.cuts, to_delete_idxs)
+	to_keep_vars, to_delete_vars = _partition_by_bits(to_keep_bits, vars)
+	JuMP.delete(model, to_delete_vars)
+	model[:cuts_made] = to_keep_vars
+	new_bp = ByproductPPG2KP(
+		bp.cuts, new_fvci, bp.np, bp.pli_lwb, bp.l, bp.w, bp.L, bp.W
+	)
+	return new_bp, to_keep_bits
 end
 
 # TODO: remove when JuMP starts providing it.
@@ -1261,27 +1324,35 @@ function no_arg_check_build_model(
 
 	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
 	rc_idxs = all_restricted_cuts_idxs(byproduct)
-	UB, sol, pe_svcs, cm_svcs = restricted_final_pricing(
+	bkv, sol, pe_svcs, cm_svcs = restricted_final_pricing(
 		model, rc_idxs, d, p, byproduct, rng, options["debug"]
 	)
+	UB = convert(Float64, bkv)
 	# If those fail, we need may need to rethink the iterative pricing,
 	# because the use of max_profit seems to assume no negative profit items.
 	@assert all(e -> e >= zero(e), d)
 	@assert all(e -> e >= zero(e), p)
 	# TODO: check if is needed to pass the whole bp structure
-	#=
 	@timeit "iterative_pricing" iterative_pricing(
 		model, byproduct.cuts, sum(d .* p),
 		options["pricing-alpha"], options["pricing-beta"], options["debug"]
 	)
 	LB = objective_value(model)
-	=#
+	# TODO: change the name of the methods to include the exclamation mark
+	byproduct, to_keep_bits = final_pricing(
+		model, byproduct, UB, LB, options["debug"]
+	)
+
+	# Restore the piece extractions and the kept variables to their original
+	# configuration. Note that cuts_made is now a subset of what it was before.
+	restore!(model[:picuts], pe_svcs)
+	restore!(model[:cuts_made], cm_svcs[to_keep_bits])
 
 	# TODO: the empty! and the uncommented return are just while the pricing
 	# is not implemented.
-	empty!(model)
-	return build_complete_model(model, d, p, l, w, L, W, options)
-	#return byproduct
+	#empty!(model)
+	#return build_complete_model(model, d, p, l, w, L, W, options)
+	return byproduct
 end
 
 #=

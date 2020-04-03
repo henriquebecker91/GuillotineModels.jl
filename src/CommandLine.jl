@@ -166,7 +166,9 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 
 	pp["do-not-solve"] && return nothing
 
+	flush_all_output()
 	@timeit "optimize!" optimize!(m)
+	flush_all_output()
 	#See comment above about TimerOutputs.
 	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 
