@@ -1,84 +1,21 @@
 module PPG2KP
-# REVISED PLAN FOR IMPLEMENTING THE PRICING PART:
-# 0) Implement the pricing of the revised model.
-# 0.1) wrap the body of the no_arg_check_build_model inside another method
-#   that just builds the Complete Model (with the reductions); call this
-#   methods inside no_arg_check_build_model and then check if it will be
-#   delivered this way or it will be changed by the pricing. Create a flag for
-#   the initial phase of pricing and test if it reaches the 'if' correctly.
-# 0.2) add documentation to the complete_model_build guaranteeing that the
-#   first plate_amount constraints correspond to the plates of the model.
-# 0.3) inside the pricing branch of no_arg_check_build_model, fix to zero all
-#   non-restricted variables (how to do this?), relax all the other variables.
-#   Solve this relaxed model. Save the UB.
-# 0.4) call the heuristic and get the bkv.
-# 0.6) do the final pricing step over the restricted model (i.e.,
-#   the variables that could only be used to obtain a solution worse than
-#   the heuristic are fixed to zero).
-# 0.7) unrelax the variables that are not fixed to zero.
-# 0.8) Solve the MIP of the priced restricted model, save it as the new bkv
-#   (unless the solving process finished by time and the heuristic bkv is
-#   better).
-# DONE UNTIL THERE
-# 1) Implement the initial pricing.
-# 1.1) inside the pricing branch of no_arg_check_build_model, relax again
-#   all the restricted cuts (the non-restriced variables should be fixed
-#   to zero by now). Solve this relaxed model. Save the UB.
-# 1.2) traverse all the variables and query the dual values of the plates
-#   involved, use it to decide if the variable will or not be unfixed and
-#   relaxed. If some variable was unfixed, repeat both previous step and this
-#   step. NOTE: the check to know if the variable will be unfixed or not is in
-#   p.9 first half of second column and in the first paragraph of p.13.
-# 2) Implement the final pricing.
-# 2.1) Use the UB and LB to do the final pricing (this maybe can reuse code
-#   already developed), this will unfix some variables.
 # 2.2) Finally, check which variables are fixed to zero and remove them both
 #   from the model as from the ByproductPPG2KP. We need to check if we will
 #   remove constraints that become irrelevant, if this is done we will need
 #   to update all the cuts to refer to the new plate indexes.
-# 3) Implement the warm-start using the heuristic.
-# 3.1) Plan this section. Note that the warm-start of the final priced model
-#   should happen inside the read_build_solve_print method and therefore it
-#   needs to be a generic method to be implemented for each different model.
-#   There may be previous warm starts to improve the model building process,
-#   those will happen inside the build_model method.
-# PLAN FOR IMPLEMENTING THE PRICING PART:
-# After each step, document and test.
-# 0) Remember to fix the parameters in the get_cut_pattern method,
-#    it probably should be responsability of the return type to
-#    store the types used, so they do not need to be in the parameters.
-# 0.5) NOTE: It is never clear if the solution of the greedy heuristic is
-#    used for warming up the model (in fact, this step is never described)
-#    or if the LB is given to the model for cutting the search for lower
-#    or equal values, or even used in any way that is not the final pricing.
-# 1) Create a warm-start that is specific for the faithful2furini2016
+# PLAN FOR IMPLEMENTING THE WARM-START
+# 0) Adapt the warm-start flag to be PPG2KP-specific and pricing-specific
+#    it will just define if we will make use of the primal solutions already
+#    available to warm-start the model.
+# 1) The only warm-start that really needs dedicated code is the one made from
+#    the heuristic to a restricted model. The other is just setting the
+#    variable MIP start to the value obtained solving the restricted model.
+# 1) Create a warm-start procedure that is specific for the faithful2furini2016
 #    and, consequently, will serve as base for the more complex one.
 # 2) Create a considerably complex warm-start (comment the code
 #    extensively) that uses the same heuristic to warm-start the
 #    variant that is not faithful2furini2016. Check if the simpler
 #    warm-start may (and should) be abandoned.
-# 3) wrap the body of the no_arg_check_build_model inside another method
-#    that just builds the Complete Model (with the reductions) but not
-#    the priced one; call this methods inside no_arg_check_build_model and
-#    then check if it will be delivered this way or it will be changed by
-#    the pricing. Create a flag for the priced model and test if it reaches
-#    the 'if' correctly.
-# 4) Implement the iterative pricing method. The variables not in the
-#    restricted model should be fixed to zero. The model must be solved
-#    relaxed (check if a method is available for that, or if we will use
-#    a reworked version of the handmade relaxing methods). What is said in
-#    the paper kinda makes sense, but does not seem it is possible to
-#    compute reduced costs for the entire pool based on the plates of the
-#    restricted cut set. Write code that admits this may be impossible and
-#    print the impossible situation and then abort. At the end of the process
-#    (after the final pricing), really delete the not used variables, and
-#    check on the ByproductPPG2KP to delete their correspondences.
-#    SEE SECTION 4.2: unfortunately they decided to complicate the method
-#    even more adding two parameters alpha and beta.
-#    List items 1 and 3 (not numbered) of the first list of section 4.4
-#    complicate things further. In fact, both the greedy heuristic and the
-#    restricted model are solved but with a time limit (the best solution
-#    found in the middle of this process is used for the true final pricing).
 
 include("./Heuristic.jl")
 include("./Args.jl")
@@ -93,43 +30,34 @@ using RandomNumbers.Xorshifts
 import ..to_pretty_str # for debug
 import ..cut_pattern_profit # for debug
 
-global_p = nothing # TODO: for debug, remove after
-
-# TODO: Check if this method will be used, now that variable deletion is
-# efficient (because our PR to JuMP).
-# NOTE: by design, this method do not change the vars vector itself, but
-# instead just calls delete over part of its contents (what mark such content
-# as invalid)
-#=
-function delete_vars_by_pricing!(model, lb :: Float64)
-	# All reduced costs need to be queryied and stored before we start modifying
-	# the model.
-	all_vars_time = @elapsed (vars = all_variables(model))
-	@show all_vars_time
-	obj = objective_value(model)
-	rcs_time = @elapsed (rcs = reduced_cost.(vars))
-	@show rcs_time
-	n = length(vars)
-	mask = Vector{Bool}()
-	del_loop_time = @elapsed for i in 1:n
-		var, rc = vars[i], rcs[i]
-		@assert rc <= obj
-		keep = obj - rc >= lb
-		#del_time = 0.0
-		!keep && #=(del_time = @elapsed=# delete(model, var)#)
-		#@show del_time
-		push!(mask, keep)
-	end
-	@show del_loop_time
-	return mask
-end
-=#
-
 using JuMP
 using TimerOutputs
 import MathOptInterface
 const MOI = MathOptInterface
 
+function _list_useless_plates(cuts, num_plates)
+	reachable = falses(num_plates)
+	reachable[1] = true
+	num_iter_plate_removal = 0
+	found_new_var = true
+	while found_new_var
+		found_new_var = false
+		for (pp, fc, sc) in cuts
+			if reachable[pp]
+				reachable[fc] || reachable[sc] || (found_new_var = true)
+				reachable[fc] = reachable[sc] = true
+			end
+		end
+		num_iter_plate_removal += 1
+	end
+	num_useless_plates = num_plates - sum(reachable)
+	@show num_useless_plates
+	@show num_iter_plate_removal
+	return
+end
+
+# TODO: check if this is used, and if it is, should be adapted to right
+# notation.
 function raw_warm_start(model, nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals)
 	@assert length(nzpe_idxs) == length(nzpe_vals)
 	@assert length(nzcm_idxs) == length(nzcm_vals)
@@ -318,7 +246,7 @@ function get_cut_pattern(
 	build_model_return :: ByproductPPG2KP{D, S}
 ) :: CutPattern{D, S} where {D, S}
 	# local constant to alternate debug mode (method will not take a debug flag)
-	debug = true
+	debug = false
 	# 1. Check if there can be an extraction from the original plate to a
 	#    single piece. If it may and it happens, then just return this single
 	#    piece solution; otherwise the first cut is in `cuts_made`, find it
@@ -379,22 +307,14 @@ function get_cut_pattern(
 
 	bottom_up_tree_build!(patterns, cut_idx_stack, sel_cuts, ori_cuts, bmr, debug)
 
-	global global_p
 	if !isone(length(patterns)) || !haskey(patterns, 1) || !isone(length(patterns[1]))
 		println("BUG AT GET_CUT_PATTERN")
-		z = 0
-		z_root = 0
 		for (key, subpatts) in patterns
 			@show key
 			for subpatt in subpatts
 				println(to_pretty_str(subpatt))
-				x = cut_pattern_profit(subpatt, global_p)
-				key == 1 && (z_root = x)
-				z += x
 			end
 		end
-		@show z
-		@show z_root
 	end
 
 	@assert isone(length(patterns))
@@ -781,10 +701,11 @@ end
     build_complete_model(model, d, p, l, w, L, W; options)
 
 TODO: describe method.
-Note: this method guarantee that the first M constraints of type
-`(GenericAffExpr{Float64,VariableRef}, LessThan{Float64})` in the model,
-where M is the number of plates, will correspond to the plates of the
-model (i.e., as by the field ByproductPPG2KP.pli_lwb).
+Note: `model[:plate_cons]` is a container of constraints of type and set
+`(GenericAffExpr{Float64,VariableRef}, LessThan{Float64})` that represent all
+the plate types (i.e., it will be the same length as ByproductPPG2KP.pli_lwb
+and each position in `model[:plate_cons]` will correspond to the plate
+described in the same position of `ByproductPPG2KP.pli_lwb`).
 """
 function build_complete_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
@@ -940,7 +861,6 @@ end
 function all_restricted_cuts_idxs(
 	bp :: ByproductPPG2KP{D, S, P}
 ) :: Vector{Int} where {D, S, P}
-	@timeit "restricted_idxs" begin
 	rc_idxs = Vector{Int}()
 	usl = unique!(sort(bp.l))
 	usw = unique!(sort(bp.w))
@@ -952,7 +872,6 @@ function all_restricted_cuts_idxs(
 		end
 	end
 	return rc_idxs
-	end
 end
 
 # Internal use.
@@ -1002,12 +921,13 @@ end
 
 # TODO: the call to the heuristic and solving the restricted MIP model
 # probably should not be here, but on no_arg_check_build_model.
-function restricted_final_pricing(
+function _restricted_final_pricing!(
 	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, rng, debug :: Bool = false
 ) #=:: Tuple{P, CutPattern{D, S}, Vector{SavedVarConf}} =# where {D, S, P}
-	@timeit "restricted_final" begin
 	# First we save all the variables bounds and types and relax all of them.
+	#all_vars = all_variables(model)
+	#n = length(all_vars)
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
 	cm = model[:cuts_made] # Cuts Made
@@ -1020,8 +940,10 @@ function restricted_final_pricing(
 	# will need to be reworked. Now it only relax/fix variables in those sets
 	# so it will need to be sensibly extended to new sets of variables.
 	@assert n == length(cm) + length(pe)
-	@timeit "relax_cm" cm_svcs = relax!(cm)
-	@timeit "relax_pe" pe_svcs = relax!(pe)
+	#@timeit "relax_cm"
+	cm_svcs = relax!(cm)
+	#@timeit "relax_pe"
+	pe_svcs = relax!(pe)
 	#@assert length(cm) == length(bp.cuts)
 	rc_vars = cm[rc_idxs]
 	rc_svcs = cm_svcs[rc_idxs]
@@ -1029,7 +951,8 @@ function restricted_final_pricing(
 	uc_idxs = setdiff_sorted(keys(cm), rc_idxs)
 	# Fix all unrestricted cuts (pool vars).
 	uc_vars = cm[uc_idxs]
-	@timeit "fix_uc" fix.(uc_vars, 0.0; force = true)
+	#@timeit "fix_uc"
+	fix.(uc_vars, 0.0; force = true)
 	# Get the solution of the heuristic.
 	bkv, _, shelves = Heuristic.iterated_greedy(
 		d, p, bp.l, bp.w, bp.L, bp.W, rng
@@ -1038,7 +961,7 @@ function restricted_final_pricing(
 	LB = convert(Float64, bkv)
 	# Solve the relaxed restricted model.
 	flush_all_output()
-	@timeit "relaxed_optimize" optimize!(model)
+	@timeit "lp_solve" optimize!(model)
 	flush_all_output()
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
@@ -1065,6 +988,7 @@ function restricted_final_pricing(
 	# some problem has happened (for an example, the solver does not recognize
 	# the model as a LP but think it is a MIP for example, CPLEX does this).
 	@assert has_duals(model)
+	#all_vars_values = value.(all_vars) # needs to be done before any changes
 	rc_cuts = bp.cuts[rc_idxs]
 	plate_cons = model[:plate_cons]
 	debug && begin
@@ -1090,16 +1014,20 @@ function restricted_final_pricing(
 	# Below the SavedVarConf is not stored because they will be kept fixed
 	# for now, and when restored, they will be restored to their original
 	# state (rc_svcs) not this intermediary one.
-	@timeit "fix_rc_subset" fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
+	#@timeit "fix_rc_subset"
+	fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
 	# The discrete variables are the restricted cuts that were not removed
 	# by the final pricing of the restricted model and will be in the MIP
 	# of the restricted model.
 	discrete_vars = rc_vars[rc_discrete_bitstr]
-	@timeit "restore_ss_cm" restore!(discrete_vars, rc_svcs[rc_discrete_bitstr])
+	#@timeit "restore_ss_cm"
+	restore!(discrete_vars, rc_svcs[rc_discrete_bitstr])
 	# All piece extractions also need to be restored.
-	@timeit "restore_pe" restore!(pe, pe_svcs)
+	#@timeit "restore_pe"
+	restore!(pe, pe_svcs)
+	#set_start_value.(all_vars, all_vars_values)
 	flush_all_output()
-	@timeit "discrete_optimize" optimize!(model) # restricted MIP solved
+	@timeit "mip_solve" optimize!(model) # restricted MIP solved
 	flush_all_output()
 	# If some primal solution was obtained, compare its value with the
 	# heuristic and keep the best one (the model can give a worse value
@@ -1107,7 +1035,7 @@ function restricted_final_pricing(
 	# disabled, and the heuristic may be already optimal).
 	if primal_status(model) == MOI.FEASIBLE_POINT
 		model_obj = objective_value(model)
-		model_obj = floor(model_obj + eps(model_obj))
+		model_obj = round(model_obj, RoundNearest)
 		#@show model_obj
 		if model_obj > LB
 			bkv = convert(P, model_obj)
@@ -1116,11 +1044,14 @@ function restricted_final_pricing(
 	end
 	# The variables are left all relaxed but with only the variables used
 	# in the restricted priced model unfixed, the rest are fixed to zero.
-	@timeit "relax_ss_rc" relax!(rc_vars[rc_discrete_bitstr])
-	@timeit "relax_pe" relax!(pe)
+	#@timeit "relax_ss_rc"
+	relax!(rc_vars[rc_discrete_bitstr])
+	#@timeit "relax_pe"
+	relax!(pe)
+	#@assert all(v -> !is_integer(v) && !is_binary(v), all_variables(model))
+	#set_start_value.(all_vars, all_vars_values) # using the values of the LP
 
 	return bkv, sol, pe_svcs, cm_svcs
-	end
 end
 
 # Arguments:
@@ -1135,7 +1066,7 @@ end
 # The most relevant byproduct of this method are the changes to
 # pool_idxs_to_add (i.e., which vars need to be unfixed).
 # Return: the number of positive reduced profit variables found.
-function recompute_idxs_to_add!(
+function _recompute_idxs_to_add!(
 	pool_idxs_to_add, pool, plate_cons, threshold, n_max :: P,
 	debug :: Bool = false
 ) :: P where {P}
@@ -1179,7 +1110,7 @@ end
 # Also, the paper mention the "first X variables", so it is not worth getting
 # all variables and ordering them by reduced profit (if they are more than
 # n-max)?
-function iterative_pricing(
+function _iterative_pricing!(
 	model, cuts :: Vector{NTuple{3, P}}, #bp :: ByproductPPG2KP{D, S, P},
 	max_profit :: P, alpha :: Float64, beta :: Float64, debug :: Bool = false
 ) :: Nothing where {P}
@@ -1213,17 +1144,20 @@ function iterative_pricing(
 	# The vectors are all allocated here (but used inside `price!`) for
 	# reuse (avoiding reallocating them every loop).
 	to_unfix = Vector{eltype(keys(cuts))}()
-	# The first 'number of plates' constraints here are the constraints that
-	# relate to respective 1:'number of plates' plates.
-	plate_cons = all_constraints(
-		model, GenericAffExpr{Float64, VariableRef}, MOI.LessThan{Float64}
-	)
+	plate_cons = model[:plate_cons]
+	#=if JuMP.solver_name(model) == "Gurobi"
+		old_method = get_optimizer_attribute(model, "Method")
+		# Change the LP-solving method to dual simplex, this allows for better
+		# reuse of the partial solution.
+		set_optimizer_attribute(model, "Method", 1)
+	end=#
 	flush_all_output()
-	optimize!(model) # the last solve before this was MIP and has no duals
+	# the last solve before this was MIP and has no duals
+	@timeit "solve_lp" optimize!(model)
 	flush_all_output()
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
-	num_positive_rp_vars = recompute_idxs_to_add!(
+	num_positive_rp_vars = _recompute_idxs_to_add!(
 		to_unfix, unused_cuts, plate_cons, threshold, typemax(P), debug
 	)
 	# The maximum number of variables unfixed at each iteration.
@@ -1232,24 +1166,33 @@ function iterative_pricing(
 	debug && @show n_max
 	# As we called `num_positive_rp_vars!` with `typemax(P)` instead `n_max`
 	# to be able to compute `n_max` in the first place, we need to resize
-	# this first list to `n_max` (in the loop below `recompute_idxs_to_add!`
+	# this first list to `n_max` (in the loop below `_recompute_idxs_to_add!`
 	# will do it for us).
 	resize!(to_unfix, n_max)
+	# Not sure if restarting the model use the old values as start values.
+	#all_vars = all_variables(model)
 	# The iterative pricing continue until there are variables to unfix.
 	while !isempty(to_unfix)
 		unfix.(unused_vars[to_unfix])
 		deleteat!(unused_vars, to_unfix)
 		deleteat!(unused_cuts, to_unfix)
 		@assert length(unused_cuts) == length(unused_vars)
+		#set_start_value.(all_vars, value.(all_vars))
 		flush_all_output()
-		optimize!(model)
+		@timeit "solve_lp" optimize!(model)
 		flush_all_output()
-		num_positive_rp_vars = recompute_idxs_to_add!(
+		num_positive_rp_vars = _recompute_idxs_to_add!(
 			to_unfix, unused_cuts, plate_cons, threshold, n_max, debug
 		)
 		debug && @show num_positive_rp_vars
 		debug && @show length(to_unfix)
 	end
+
+	#=if JuMP.solver_name(model) == "Gurobi"
+		# Undo the change done before (look at where old_method is defined).
+		set_optimizer_attribute(model, "Method", old_method)
+	end=#
+
 	return
 end
 
@@ -1273,7 +1216,7 @@ end
 
 # TODO: check if the kept variables are chosen from the unfixed variables
 # of from all variables.
-function final_pricing(
+function _final_pricing!(
 	model, bp :: ByproductPPG2KP{D, S, P}, LB :: Float64, LP :: Float64,
 	debug :: Bool = false
 ) where {D, S, P}
@@ -1282,9 +1225,12 @@ function final_pricing(
 	#unfixed_bits = !is_fixed(vars)
 	#unfixed_vars, fixed_vars = _partition_by_bits(unfixed_bits, vars)
 	#unfixed_cuts = bp.cuts[unfixed_bits]
-	@show LP
-	@show LB
-	println(string(floor.(reduced_profit.(bp.cuts, (plate_cons,)))))
+	debug && @show LP
+	debug && @show LB
+	# Many optional small adjusts may clean the model duals, if they are not
+	# available we re-solve the LP one more time to make them available again.
+	!has_duals(model) && optimize!(model)
+	#println(string(floor.(reduced_profit.(bp.cuts, (plate_cons,)))))
 	to_keep_bits = # the final pricing (get which variables should remain)
 		@. floor(reduced_profit(bp.cuts, (plate_cons,)) + LP) >= LB
 	#to_keep_idxs = key(vars)[unfixed_bits][to_keep_bits]
@@ -1292,8 +1238,16 @@ function final_pricing(
 	new_fvci = searchsortedfirst(
 		to_keep_idxs, bp.first_vertical_cut_idx
 	)
-	@show bp.cuts[to_delete_idxs]
-	@show bp.cuts[to_keep_idxs]
+	# The two @show below are too verbose to be useful except when debugging
+	# small instances.
+	#@show bp.cuts[to_delete_idxs]
+	#@show bp.cuts[to_keep_idxs]
+	debug && begin
+		final_pricing_num_vars_removed = length(to_delete_idxs)
+		final_pricing_num_vars_kept = length(to_keep_idxs)
+		@show final_pricing_num_vars_removed
+		@show final_pricing_num_vars_kept
+	end
 	deleteat!(bp.cuts, to_delete_idxs)
 	to_keep_vars, to_delete_vars = _partition_by_bits(to_keep_bits, vars)
 	JuMP.delete(model, to_delete_vars)
@@ -1304,27 +1258,23 @@ function final_pricing(
 	return new_bp, to_keep_bits
 end
 
-# TODO: remove when JuMP starts providing it.
-function Base.empty!(model::Model)::Model
-	MOI.empty!(model.moi_backend)
-	empty!(model.shapes)
-	model.nlp_data = nothing
-	empty!(model.obj_dict)
-	empty!(model.ext)
-	return model
-end
-
-function no_arg_check_build_model(
+# SEE SECTION 4.2: unfortunately they decided to complicate the method
+# even more adding two parameters alpha and beta.
+# List items 1 and 3 (not numbered) of the first list of section 4.4
+# complicate things further. In fact, both the greedy heuristic and the
+# restricted model are solved but with a time limit (the best solution
+# found in the middle of this process is used for the true final pricing).
+function _no_arg_check_build_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
-	global global_p = p
 	byproduct = build_complete_model(model, d, p, l, w, L, W, options)
 	options["no-pricing"] && return byproduct
 
+	@timeit "pricing" begin
 	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
 	rc_idxs = all_restricted_cuts_idxs(byproduct)
-	bkv, sol, pe_svcs, cm_svcs = restricted_final_pricing(
+	@timeit "restricted" bkv, sol, pe_svcs, cm_svcs = _restricted_final_pricing!(
 		model, rc_idxs, d, p, byproduct, rng, options["debug"]
 	)
 	UB = convert(Float64, bkv)
@@ -1333,94 +1283,30 @@ function no_arg_check_build_model(
 	@assert all(e -> e >= zero(e), d)
 	@assert all(e -> e >= zero(e), p)
 	# TODO: check if is needed to pass the whole bp structure
-	@timeit "iterative_pricing" iterative_pricing(
+	@timeit "iterative" _iterative_pricing!(
 		model, byproduct.cuts, sum(d .* p),
 		options["pricing-alpha"], options["pricing-beta"], options["debug"]
 	)
 	LB = objective_value(model)
 	# TODO: change the name of the methods to include the exclamation mark
-	byproduct, to_keep_bits = final_pricing(
+	@timeit "final" byproduct, to_keep_bits = _final_pricing!(
 		model, byproduct, UB, LB, options["debug"]
 	)
+	options["debug"] && @timeit "plate_check" begin
+		_list_useless_plates(byproduct.cuts, length(byproduct.pli_lwb))
+	end
 
 	# Restore the piece extractions and the kept variables to their original
 	# configuration. Note that cuts_made is now a subset of what it was before.
-	restore!(model[:picuts], pe_svcs)
-	restore!(model[:cuts_made], cm_svcs[to_keep_bits])
+	@timeit "last_restore" @views restore!(
+		[model[:picuts]; model[:cuts_made]], [pe_svcs; cm_svcs[to_keep_bits]]
+	)
+	end # @timeit "pricing"
 
-	# TODO: the empty! and the uncommented return are just while the pricing
-	# is not implemented.
-	#empty!(model)
-	#return build_complete_model(model, d, p, l, w, L, W, options)
 	return byproduct
 end
 
-#=
-# This block of code needs to find a home here, as it is model specific.
-# Before, it inhabited the script code.
-	if p_args["warm-start"]
-		@assert !p_args["faithful2furini2016"] && !p_args["flow-model"]
-		(heur_obj, heur_sel, heur_pat), heur_time, _, _, _ = @timed iterated_greedy(
-			d, p, l, w, L, W, MersenneTwister(p_args["solver-seed"])
-		)
-		if !no_csv_out
-			@show heur_time
-			@show heur_obj
-			@show heur_sel
-			@show heur_pat
-		end
-		saved_bounds = PPG2KP.disable_unrestricted_cuts!(
-			m, sort(l), sort(w), hvcuts, pli_lwb
-		)
-		heur_ws_time = @elapsed PPG2KP.warm_start(
-			m, l, w, L, W, heur_pat, pli_lwb, hvcuts, np;
-			faithful2furini2016 = p_args["faithful2furini2016"]
-		)
-		!no_csv_out && @show heur_ws_time
-		restricted_time = @elapsed optimize!(m)
-		!no_csv_out && @show restricted_time
-		restricted_sol = value.(all_variables(m))
-		restricted_objval = objective_value(m)
-		PPG2KP.restore_bound!.(saved_bounds)
-		set_start_value.(all_variables(m), restricted_sol)
-	end
-
-	# HERE IT WAS THE DIVISION OF BEFORE BUILDING THE MODEL AND AFTER BUILDING IT
-
-	vars_before_deletes = all_variables(m)
-	if p_args["final-pricing"] || p_args["relax2lp"]
-		original_settings = relax_all_vars!(m)
-	end
-	time_to_solve_model = @elapsed optimize!(m)
-	if (p_args["final-pricing"] || p_args["relax2lp"]) && !no_csv_out
-		println("time_to_solve_relaxed_model = $(time_to_solve_model)")
-	end
-	if p_args["final-pricing"]
-		# get the given lower bound on the instance if there is one
-		best_lb = get(p_args["lower-bounds"], instfname_idx, 0)
-		# if warm-start is enabled and the lb is better, use it
-		p_args["warm-start"] && (best_lb = max(best_lb, restricted_objval))
-		# delete all variables which would only reduce obj to below the lower bound
-		#if !no_csv_out
-		#  @profile (mask = delete_vars_by_pricing!(m, Float64(best_lb)))
-		#  Profile.print()
-		#else
-		#  mask = delete_vars_by_pricing!(m, Float64(best_lb))
-		#end
-		kept = which_vars_to_keep(m, Float64(best_lb))
-		unrelax_vars!(vars_before_deletes, m, original_settings)
-		saved_bounds = fix_vars!(all_variables(m)[.!kept])
-		if !no_csv_out
-			num_vars_after_pricing = sum(kept)
-			num_vars_del_by_pricing = length(kept) - num_vars_after_pricing
-			@show num_vars_after_pricing
-			@show num_vars_del_by_pricing
-		end
-		time_to_solve_model += @elapsed optimize!(m)
-	end
-	sleep(0.01) # shamefully needed to avoid out of order messages from cplex
-=#
-
+# Only used to define `build_model(Val{:PPG2KP}, ...)`.
 import ..Utilities.Args.create_normalized_arg_subset
 import ..Utilities.Args.accepted_arg_list
 import ..build_model
@@ -1437,7 +1323,7 @@ function build_model(
 	norm_options = create_normalized_arg_subset(
 		options, accepted_arg_list(Val(:PPG2KP))
 	)
-	return no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
+	return _no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
 end
 
 end # module

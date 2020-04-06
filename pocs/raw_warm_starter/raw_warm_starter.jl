@@ -42,7 +42,16 @@ GuillotineModels.build_model(Val(:PPG2KP), model, d, p, l, w, L, W, Dict{String,
 	"debug" => true, "no-pricing" => true
 ))
 
-GuillotineModels.PPG2KP.raw_warm_start(model,
+function raw_warm_start(model, nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals)
+	@assert length(nzpe_idxs) == length(nzpe_vals)
+	@assert length(nzcm_idxs) == length(nzcm_vals)
+	pe = model[:picuts]
+	cm = model[:cuts_made]
+	JuMP.set_start_value.(pe[nzpe_idxs], nzpe_vals)
+	JuMP.set_start_value.(cm[nzcm_idxs], nzcm_vals)
+end
+
+raw_warm_start(model,
 #=
 	[704, 740, 813, 849, 1158, 1251, 1294, 1409, 1412, 1930, 3072, 3832],
 	[1, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 1],
