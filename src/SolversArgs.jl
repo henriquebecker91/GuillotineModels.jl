@@ -38,11 +38,32 @@ function __init__()
 	@require CPLEX="a076750e-1247-5638-91d2-ce28b192dca0" begin
 	function empty_configured_model(::Val{:CPLEX}, p_args)
 		scrind_value = p_args["no-output"] ? CPLEX.CPX_OFF : CPLEX.CPX_ON
+		# https://www.ibm.com/support/pages/cplex-performance-tuning-linear-programs
 		configuration = Pair{String, Any}[
 			"CPX_PARAM_EPGAP" => 1e-6,
-			#, "CPLEX.CPX_PARAM_DETTILIM" = p_args["cplex-det-time-limit"],
 			"CPX_PARAM_TILIM" => p_args["time-limit"],
+			# "Sifting is a simple form of column generation well suited for models
+			# where the number of variables dramatically exceeds the number of
+			# constraints."
+			#"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_SIFTING,
+			#"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_SIFTING,
+			# "The barrier method tends to work well on problems where the product
+			# of the constraint matrix multiplied by its transpose is sparse. "
 			"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_BARRIER,
+			"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_BARRIER,
+			# For the LPs of the iterative pricing of PPG2KP we need to avoid
+			# numerical instability problems.
+			"CPX_PARAM_BARALG" => 1,
+			# "[...] the computation time for the simplex method depends more on
+			# the number of constraints than the number of variables."
+			# And the dual is the opposite (CPLEX.CPX_ALG_DUAL).
+			#"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_PRIMAL,
+			#"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_PRIMAL,
+			# Group parameter to help with numerical instability without the need
+			# of fine-tuning.
+			"CPX_PARAM_NUMERICALEMPHASIS" => CPLEX.CPX_ON,
+			"CPX_PARAM_BAREPCOMP" => 1e-6,
+			"CPX_PARAM_EPMRK" => 0.9, # last measure against numerical instability
 			"CPX_PARAM_SCRIND" => scrind_value,
 			"CPX_PARAM_THREADS" => p_args["threads"],
 			"CPX_PARAM_RANDOMSEED" => p_args["seed"]
@@ -71,13 +92,14 @@ function __init__()
 		# Note: without the type prefix below some values are casted and Gurobi.jl
 		# fails to find the correct method to call (it differs from Int and Float).
 		configuration = Pair{String, Any}[
-			"Method" => 2 # use barrier for LP models and MIP root node
-			#, "NodeMethod" => 2 # use barrier for MIP non-root nodes
-			, "Threads" => p_args["threads"]
-			, "OutputFlag" => p_args["no-output"] ? 0 : 1
-			, "TimeLimit" => p_args["time-limit"]
-			, "Seed" => p_args["seed"]
-			, "MIPGap" => 1e-6
+			"Method" => 1, # use dual simplex for LP models and MIP root node
+			#"Method" => 2, # use barrier for LP models and MIP root node
+			# "NodeMethod" => 2, # use barrier for MIP non-root nodes
+			"Threads" => p_args["threads"],
+			"OutputFlag" => p_args["no-output"] ? 0 : 1,
+			"TimeLimit" => p_args["time-limit"],
+			"Seed" => p_args["seed"],
+			"MIPGap" => 1e-6
 		]
 		# TODO: implement a no-trick flag for Gurobi?
 		raw_parameters = eval(

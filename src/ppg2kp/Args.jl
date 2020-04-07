@@ -68,9 +68,14 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"Defines the seed used to start the RNG object passed to the `GuillotineModels.PPG2KP.iterated_greedy` method, which result is used in the final pricing of the restricted model which is, finally, used for the final pricing of the complete model. If you pass the no-pricing flag, this is not used."
 		),
 		Arg(
-			"debug", false,
+			"verbose", false,
 			"Only really relevant if you are studying the code. Will increase" *
-			" the amount of data outputted."
+			" the amount of data outputted. The quiet flag overrides this."
+		),
+		Arg(
+			"quiet", false,
+			"Avoid outputting any information or warning, just output errors." *
+			" Overrides the verbose flag. ."
 		)
 	]
 end

@@ -35,6 +35,33 @@ using TimerOutputs
 import MathOptInterface
 const MOI = MathOptInterface
 
+# total_number_of_plate_types should be greater-than-or-equal-to the largest
+# value found in any field of cuts.
+function _reachable_plate_types(
+	cuts :: Vector{NTuple{3, P}}, total_number_of_plate_types :: P
+) where {P}
+	children = [P[] for _ in 1:total_number_of_plate_types]
+	for (pp, fc, sc) in cuts
+		push!(children[pp], fc)
+		!iszero(sc) && push!(children[pp], sc)
+	end
+	reached = falses(total_number_of_plate_types)
+	num_reached = zero(P)
+	visit_list = P[one(P)]
+	next_of_list = one(P)
+	while next_of_list <= length(visit_list)
+		pp = visit_list[next_of_list]
+		if !reached[pp]
+			num_reached += one(P)
+			reached[pp] = true
+			append!(visit_list, [c for c in children[pp] if !reached[c]])
+		end
+		next_of_list += one(P)
+	end
+	return num_reached, reached
+end
+
+#= disabled because it is O(n^2)
 function _list_useless_plates(cuts, num_plates)
 	reachable = falses(num_plates)
 	reachable[1] = true
@@ -43,9 +70,10 @@ function _list_useless_plates(cuts, num_plates)
 	while found_new_var
 		found_new_var = false
 		for (pp, fc, sc) in cuts
-			if reachable[pp]
-				reachable[fc] || reachable[sc] || (found_new_var = true)
-				reachable[fc] = reachable[sc] = true
+			if reachable[pp] && (!reachable[fc] || iszero(sc) || !reachable[sc])
+				found_new_var = true
+				reachable[fc] = true
+				!iszero(sc) && (reachable[sc] = true)
 			end
 		end
 		num_iter_plate_removal += 1
@@ -55,6 +83,7 @@ function _list_useless_plates(cuts, num_plates)
 	@show num_iter_plate_removal
 	return
 end
+=#
 
 # TODO: check if this is used, and if it is, should be adapted to right
 # notation.
@@ -779,7 +808,7 @@ function build_complete_model(
 		push!(pli2pair[pli], i)
 		push!(pii2pair[pii], i)
 	end
-	end # @timeit "enumeration_related", old: time_to_enumerate_plates
+	end # @timeit "enumeration"
 
 	@timeit "JuMP_calls" begin
 	# If all pieces have demand one, a binary variable will suffice to make the
@@ -1065,11 +1094,11 @@ end
 #   variable indexes that we are interested in adding in a single step).
 # The most relevant byproduct of this method are the changes to
 # pool_idxs_to_add (i.e., which vars need to be unfixed).
-# Return: the number of positive reduced profit variables found.
+# Return: the number of positive reduced profit variables found,
+# and a boolean indicating if some variable above the threshold was found.
 function _recompute_idxs_to_add!(
 	pool_idxs_to_add, pool, plate_cons, threshold, n_max :: P,
-	debug :: Bool = false
-) :: P where {P}
+) :: Tuple{P, Bool} where {P}
 	found_above_threshold = false
 	num_positive_rp_vars = zero(P)
 	# TODO: consider if the optimization of using the pool_idxs_to_add as a
@@ -1093,11 +1122,10 @@ function _recompute_idxs_to_add!(
 		end
 	end
 
-	debug && @show found_above_threshold
 	# Only n_max variables are added/unfixed in a single iteration.
 	n_max <= length(pool_idxs_to_add) && resize!(pool_idxs_to_add, n_max)
 
-	return num_positive_rp_vars
+	return num_positive_rp_vars, found_above_threshold
 end
 
 # NOTE: expect the model to already be relaxed, and with only the restricted
@@ -1145,24 +1173,28 @@ function _iterative_pricing!(
 	# reuse (avoiding reallocating them every loop).
 	to_unfix = Vector{eltype(keys(cuts))}()
 	plate_cons = model[:plate_cons]
-	#=if JuMP.solver_name(model) == "Gurobi"
+	#=
+	if JuMP.solver_name(model) == "Gurobi"
 		old_method = get_optimizer_attribute(model, "Method")
 		# Change the LP-solving method to dual simplex, this allows for better
 		# reuse of the partial solution.
 		set_optimizer_attribute(model, "Method", 1)
-	end=#
+		set_optimizer_attribute(model, "Presolve", 0)
+	end
+	=#
 	flush_all_output()
 	# the last solve before this was MIP and has no duals
 	@timeit "solve_lp" optimize!(model)
 	flush_all_output()
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
-	num_positive_rp_vars = _recompute_idxs_to_add!(
-		to_unfix, unused_cuts, plate_cons, threshold, typemax(P), debug
+	initial_num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
+		to_unfix, unused_cuts, plate_cons, threshold, typemax(P)
 	)
+	pricing_threshold_hits = was_above_threshold ? 1 : 0
+	debug && @show initial_num_positive_rp_vars
 	# The maximum number of variables unfixed at each iteration.
-	n_max = round(P, num_positive_rp_vars * alpha, RoundUp)
-	debug && @show num_positive_rp_vars
+	n_max = round(P, initial_num_positive_rp_vars * alpha, RoundUp)
 	debug && @show n_max
 	# As we called `num_positive_rp_vars!` with `typemax(P)` instead `n_max`
 	# to be able to compute `n_max` in the first place, we need to resize
@@ -1171,27 +1203,40 @@ function _iterative_pricing!(
 	resize!(to_unfix, n_max)
 	# Not sure if restarting the model use the old values as start values.
 	#all_vars = all_variables(model)
+	num_positive_rp_vars = initial_num_positive_rp_vars
 	# The iterative pricing continue until there are variables to unfix.
 	while !isempty(to_unfix)
-		unfix.(unused_vars[to_unfix])
-		deleteat!(unused_vars, to_unfix)
-		deleteat!(unused_cuts, to_unfix)
+		debug && begin
+			@show num_positive_rp_vars
+			@show length(to_unfix)
+			@show was_above_threshold
+		end
+		@timeit "unfix" unfix.(unused_vars[to_unfix])
+		@timeit "deleteat!" begin
+			deleteat!(unused_vars, to_unfix)
+			deleteat!(unused_cuts, to_unfix)
+		end
 		@assert length(unused_cuts) == length(unused_vars)
 		#set_start_value.(all_vars, value.(all_vars))
 		flush_all_output()
 		@timeit "solve_lp" optimize!(model)
 		flush_all_output()
-		num_positive_rp_vars = _recompute_idxs_to_add!(
-			to_unfix, unused_cuts, plate_cons, threshold, n_max, debug
-		)
-		debug && @show num_positive_rp_vars
-		debug && @show length(to_unfix)
+		@timeit "recompute" begin
+			num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
+				to_unfix, unused_cuts, plate_cons, threshold, n_max
+			)
+		end
+		was_above_threshold && (pricing_threshold_hits += 1)
 	end
 
-	#=if JuMP.solver_name(model) == "Gurobi"
+	debug && @show pricing_threshold_hits
+	#=
+	if JuMP.solver_name(model) == "Gurobi"
 		# Undo the change done before (look at where old_method is defined).
 		set_optimizer_attribute(model, "Method", old_method)
-	end=#
+		set_optimizer_attribute(model, "Presolve", -1)
+	end
+	=#
 
 	return
 end
@@ -1270,12 +1315,13 @@ function _no_arg_check_build_model(
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	byproduct = build_complete_model(model, d, p, l, w, L, W, options)
 	options["no-pricing"] && return byproduct
+	debug = options["verbose"] && !options["quiet"]
 
 	@timeit "pricing" begin
 	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
 	rc_idxs = all_restricted_cuts_idxs(byproduct)
 	@timeit "restricted" bkv, sol, pe_svcs, cm_svcs = _restricted_final_pricing!(
-		model, rc_idxs, d, p, byproduct, rng, options["debug"]
+		model, rc_idxs, d, p, byproduct, rng, debug
 	)
 	UB = convert(Float64, bkv)
 	# If those fail, we need may need to rethink the iterative pricing,
@@ -1285,15 +1331,30 @@ function _no_arg_check_build_model(
 	# TODO: check if is needed to pass the whole bp structure
 	@timeit "iterative" _iterative_pricing!(
 		model, byproduct.cuts, sum(d .* p),
-		options["pricing-alpha"], options["pricing-beta"], options["debug"]
+		options["pricing-alpha"], options["pricing-beta"], debug
 	)
 	LB = objective_value(model)
 	# TODO: change the name of the methods to include the exclamation mark
 	@timeit "final" byproduct, to_keep_bits = _final_pricing!(
-		model, byproduct, UB, LB, options["debug"]
+		model, byproduct, UB, LB, debug
 	)
-	options["debug"] && @timeit "plate_check" begin
-		_list_useless_plates(byproduct.cuts, length(byproduct.pli_lwb))
+	debug && @timeit "plate_check" begin
+		total_num_plates = length(byproduct.pli_lwb)
+		num_r, r = _reachable_plate_types(byproduct.cuts, total_num_plates)
+		@assert num_r <= total_num_plates
+		@assert length(r) == total_num_plates
+		num_unreachable_plates = total_num_plates - num_r
+		@show num_unreachable_plates
+		println("START_UNREACHABLE_PLATES")
+		if num_unreachable_plates > 0
+			for (plate_idx, isreachable) in zip(1:total_num_plates, r)
+				if !isreachable
+					l, w, b = byproduct.pli_lwb[plate_idx]
+					println("i $plate_idx l $l w $w b $b")
+				end
+			end
+		end
+		println("END_UNREACHABLE_PLATES")
 	end
 
 	# Restore the piece extractions and the kept variables to their original

@@ -118,6 +118,9 @@ as an argument then the value in `p_args` is used instead the default.
 
 It shows an warning for every key in `p_args` that is not a name in
 `selected`.
+
+If a `quiet` flag is recognized by selected and is true (either by explicit
+definition or by default), then the warnings are not printed.
 """
 function create_normalized_arg_subset(
 	p_args, selected :: Vector{Arg}
@@ -130,12 +133,15 @@ function create_normalized_arg_subset(
 			new_dict[arg.name] = arg.default
 		end
 	end
-	sel_keys = sort(getfield.(selected, :name))
-	old_keys = keys(p_args)
-	for k in old_keys
-		isempty(searchsorted(sel_keys, k)) && @warn(
-			"Key $(k) is not recognized, it will not be used."
-		)
+	quiet = get(new_dict, "quiet", false)
+	if !quiet
+		sel_keys = sort(getfield.(selected, :name))
+		old_keys = keys(p_args)
+		for k in old_keys
+			isempty(searchsorted(sel_keys, k)) && @warn(
+				"Key $(k) is not recognized, it will not be used."
+			)
+		end
 	end
 
 	return new_dict

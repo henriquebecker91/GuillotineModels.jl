@@ -514,6 +514,10 @@ function mock_for_compilation(p_args)
 		copyed_args["instfname"] = path
 		copyed_args["no-csv-output"] = true
 		copyed_args[p_args["solver"] * "-" * "no-output"] = true
+		valid_model_args = accepted_arg_list(Val(Symbol(p_args["model"])))
+		if any(arg -> arg.name == "quiet", valid_model_args)
+			copyed_args[p_args["model"] * "-" * "quiet"] = true
+		end
 		read_build_solve_and_print(copyed_args)
 	end
 	end # @timeit
