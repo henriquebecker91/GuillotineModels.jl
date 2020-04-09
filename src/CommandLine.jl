@@ -113,8 +113,8 @@ function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 
 	solver_pp = create_unprefixed_subset(pp["solver"], pp)
-	@timeit "empty_configured_model" begin
-	m = empty_configured_model(Val(Symbol(pp["solver"])), solver_pp)
+	m = @timeit "empty_configured_model" begin
+		empty_configured_model(Val(Symbol(pp["solver"])), solver_pp)
 	end # timeit
 
 	@timeit "build_model" begin

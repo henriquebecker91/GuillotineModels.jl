@@ -1318,28 +1318,10 @@ function _final_pricing!(
 	return new_bp, to_keep_bits
 end
 
-# SEE SECTION 4.2: unfortunately they decided to complicate the method
-# even more adding two parameters alpha and beta.
-# List items 1 and 3 (not numbered) of the first list of section 4.4
-# complicate things further. In fact, both the greedy heuristic and the
-# restricted model are solved but with a time limit (the best solution
-# found in the middle of this process is used for the true final pricing).
-function _no_arg_check_build_model(
-	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
-	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
-) :: ByproductPPG2KP{D, S, P} where {D, S, P}
-	byproduct = build_complete_model(model, d, p, l, w, L, W, options)
-	debug = options["verbose"] && !options["quiet"]
-	debug && begin
-		length_pe_before_pricing = length(model[:picuts])
-		length_cm_before_pricing = length(model[:cuts_made])
-		@show length_pe_before_pricing
-		@show length_cm_before_pricing
-	end
-	options["no-pricing"] && return byproduct
-
-	@timeit "pricing" begin
-	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
+function _furini_pricing!(
+	model, byproduct, d, p, seed, alpha, beta, debug
+) where {D, S, P}
+	rng = Xoroshiro128Plus(seed)
 	rc_idxs = all_restricted_cuts_idxs(byproduct)
 	@timeit "restricted" bkv, sol, pe_svcs, cm_svcs = _restricted_final_pricing!(
 		model, rc_idxs, d, p, byproduct, rng, debug
@@ -1351,8 +1333,7 @@ function _no_arg_check_build_model(
 	@assert all(e -> e >= zero(e), p)
 	# TODO: check if is needed to pass the whole bp structure
 	@timeit "iterative" _iterative_pricing!(
-		model, byproduct.cuts, cm_svcs, sum(d .* p),
-		options["pricing-alpha"], options["pricing-beta"], debug
+		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug
 	)
 	LB = objective_value(model)
 	# TODO: change the name of the methods to include the exclamation mark
@@ -1383,6 +1364,45 @@ function _no_arg_check_build_model(
 	@timeit "last_restore" @views restore!(
 		[model[:picuts]; model[:cuts_made]], [pe_svcs; cm_svcs[to_keep_bits]]
 	)
+
+	return byproduct
+end
+
+# SEE SECTION 4.2: unfortunately they decided to complicate the method
+# even more adding two parameters alpha and beta.
+# List items 1 and 3 (not numbered) of the first list of section 4.4
+# complicate things further. In fact, both the greedy heuristic and the
+# restricted model are solved but with a time limit (the best solution
+# found in the middle of this process is used for the true final pricing).
+function _no_arg_check_build_model(
+	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
+	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	byproduct = build_complete_model(model, d, p, l, w, L, W, options)
+	debug = options["verbose"] && !options["quiet"]
+	debug && begin
+		length_pe_before_pricing = length(model[:picuts])
+		length_cm_before_pricing = length(model[:cuts_made])
+		@show length_pe_before_pricing
+		@show length_cm_before_pricing
+	end
+	pricing_method = options["pricing"]
+	pricing_method == "none" && return byproduct
+
+	@timeit "pricing" begin
+		if pricing_method == "expected"
+			pricing_method = (options["faithful2furini2016"] ? "furini" : "becker")
+		end
+
+		if pricing_method == "furini"
+			_furini_pricing!(
+				model, byproduct, d, p, options["pricing-heuristic-seed"],
+				options["pricing-alpha"], options["pricing-beta"], debug
+			)
+		else
+			@assert pricing_method == "becker"
+			@warn "The 'becker' pricing was not yet implemented. Acting as 'none' was passed."
+		end
 	end # @timeit "pricing"
 
 	return byproduct
