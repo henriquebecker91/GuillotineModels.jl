@@ -49,11 +49,15 @@ function __init__()
 			#"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_SIFTING,
 			# "The barrier method tends to work well on problems where the product
 			# of the constraint matrix multiplied by its transpose is sparse. "
-			"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_BARRIER,
-			"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_BARRIER,
+			#"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_BARRIER,
+			#"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_BARRIER,
+			"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_NET,
+			"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_NET,
+			#"CPX_PARAM_BARDISPLAY" => 2, # 2 == diagnostic information level
+			#"CPX_PARAM_SIMDISPLAY" => 2, # 2 == diagnostic information level
 			# For the LPs of the iterative pricing of PPG2KP we need to avoid
 			# numerical instability problems.
-			"CPX_PARAM_BARALG" => 1,
+			#"CPX_PARAM_BARALG" => 1,
 			# "[...] the computation time for the simplex method depends more on
 			# the number of constraints than the number of variables."
 			# And the dual is the opposite (CPLEX.CPX_ALG_DUAL).
@@ -61,9 +65,9 @@ function __init__()
 			#"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_PRIMAL,
 			# Group parameter to help with numerical instability without the need
 			# of fine-tuning.
-			"CPX_PARAM_NUMERICALEMPHASIS" => CPLEX.CPX_ON,
-			"CPX_PARAM_BAREPCOMP" => 1e-6,
-			"CPX_PARAM_EPMRK" => 0.9, # last measure against numerical instability
+			#"CPX_PARAM_NUMERICALEMPHASIS" => CPLEX.CPX_ON,
+			#"CPX_PARAM_BAREPCOMP" => 1e-10,
+			#"CPX_PARAM_EPMRK" => 0.9, # last measure against numerical instability
 			"CPX_PARAM_SCRIND" => scrind_value,
 			"CPX_PARAM_THREADS" => p_args["threads"],
 			"CPX_PARAM_RANDOMSEED" => p_args["seed"]

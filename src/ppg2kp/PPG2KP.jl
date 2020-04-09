@@ -823,7 +823,9 @@ function build_complete_model(
 		Int)
 	end
 
-	@variable(model, cuts_made[1:length(hvcuts)] >= 0, Int)
+	@variable(model,
+		0 <= cuts_made[i = 1:length(hvcuts)] <= pli_lwb[hvcuts[i][1]][3]
+	, Int)
 
 	# The objective function is to maximize the profit made by extracting
 	# pieces from subplates.
@@ -960,11 +962,6 @@ function _restricted_final_pricing!(
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
 	cm = model[:cuts_made] # Cuts Made
-	debug && begin
-		@show n
-		@show length(pe)
-		@show length(cm)
-	end
 	# This assert is here because, if this becomes false some day, the code
 	# will need to be reworked. Now it only relax/fix variables in those sets
 	# so it will need to be sensibly extended to new sets of variables.
@@ -1139,7 +1136,7 @@ end
 # all variables and ordering them by reduced profit (if they are more than
 # n-max)?
 function _iterative_pricing!(
-	model, cuts :: Vector{NTuple{3, P}}, #bp :: ByproductPPG2KP{D, S, P},
+	model, cuts :: Vector{NTuple{3, P}}, cm_svcs :: Vector{SavedVarConf},
 	max_profit :: P, alpha :: Float64, beta :: Float64, debug :: Bool = false
 ) :: Nothing where {P}
 	# Summary of the method:
@@ -1153,8 +1150,16 @@ function _iterative_pricing!(
 	# the first list instead. If the first list is empty too, then we finished
 	# the iterative pricing process.
 
-	# We use copy, and not deepcopy, because we do not want the original
-	# containers to change, the contents either need to change or cannot change.
+	# This code is simplified by the assumption all variables had lower and
+	# upper bounds in their original discrete (integer or binary) configuration.
+	# If the asserts below triggers, then this method need to be reevaluated.
+	@assert all(svc -> svc.had_ub, cm_svcs)
+	@assert all(svc -> svc.had_lb, cm_svcs)
+	unused_lbs = getfield.(cm_svcs, :lb)
+	unused_ubs = getfield.(cm_svcs, :ub)
+	# We use copy, and not deepcopy, because we want to avoid only the original
+	# *container* to change, the contents either need to change or cannot be
+	# changed (i.e., are immutable).
 	unused_cuts = copy(cuts)
 	unfixed_at_start = (!is_fixed).(model[:cuts_made])
 	unused_vars = copy(model[:cuts_made])
@@ -1163,7 +1168,10 @@ function _iterative_pricing!(
 	# reevaluated.
 	deleteat!(unused_vars, unfixed_at_start)
 	deleteat!(unused_cuts, unfixed_at_start)
-	@assert length(unused_cuts) == length(unused_vars)
+	deleteat!(unused_lbs, unfixed_at_start)
+	deleteat!(unused_ubs, unfixed_at_start)
+	allsame(x) = all(y -> y == x[1], x)
+	@assert allsame(length.((unused_vars, unused_cuts, unused_lbs, unused_ubs)))
 	# The p̄ value in the paper, if there are variables with reduced profit
 	# above this threshold then they are added (and none below the threshold),
 	# but the n_max limit of variables added in a single iteration is respected.
@@ -1211,12 +1219,19 @@ function _iterative_pricing!(
 			@show length(to_unfix)
 			@show was_above_threshold
 		end
-		@timeit "unfix" unfix.(unused_vars[to_unfix])
+		@timeit "update_bounds" begin
+			unfixed_vars = unused_vars[to_unfix]
+			unfix.(unfixed_vars)
+			set_lower_bound.(unfixed_vars, unused_lbs[to_unfix])
+			set_upper_bound.(unfixed_vars, unused_ubs[to_unfix])
+		end
 		@timeit "deleteat!" begin
 			deleteat!(unused_vars, to_unfix)
 			deleteat!(unused_cuts, to_unfix)
+			deleteat!(unused_lbs, to_unfix)
+			deleteat!(unused_ubs, to_unfix)
 		end
-		@assert length(unused_cuts) == length(unused_vars)
+		@assert allsame(length.((unused_vars, unused_cuts, unused_lbs, unused_ubs)))
 		#set_start_value.(all_vars, value.(all_vars))
 		flush_all_output()
 		@timeit "solve_lp" optimize!(model)
@@ -1314,8 +1329,14 @@ function _no_arg_check_build_model(
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	byproduct = build_complete_model(model, d, p, l, w, L, W, options)
-	options["no-pricing"] && return byproduct
 	debug = options["verbose"] && !options["quiet"]
+	debug && begin
+		length_pe_before_pricing = length(model[:picuts])
+		length_cm_before_pricing = length(model[:cuts_made])
+		@show length_pe_before_pricing
+		@show length_cm_before_pricing
+	end
+	options["no-pricing"] && return byproduct
 
 	@timeit "pricing" begin
 	rng = Xoroshiro128Plus(options["pricing-heuristic-seed"])
@@ -1330,7 +1351,7 @@ function _no_arg_check_build_model(
 	@assert all(e -> e >= zero(e), p)
 	# TODO: check if is needed to pass the whole bp structure
 	@timeit "iterative" _iterative_pricing!(
-		model, byproduct.cuts, sum(d .* p),
+		model, byproduct.cuts, cm_svcs, sum(d .* p),
 		options["pricing-alpha"], options["pricing-beta"], debug
 	)
 	LB = objective_value(model)
