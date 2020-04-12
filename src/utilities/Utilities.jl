@@ -214,8 +214,8 @@ end
 export restore!
 
 function restore!(
-	vars :: Vector{VariableRef},
-	cs :: Vector{SavedVarConf}
+	vars :: AbstractVector,
+	cs :: AbstractVector
 ) :: Nothing
 	@assert length(vars) == length(cs)
 	# do not nest the broadcasts, we do not want them to fuse
@@ -269,7 +269,7 @@ function relax!(var :: VariableRef) :: SavedVarConf
 end
 export relax!
 
-function relax!(vars :: Vector{VariableRef}) :: Vector{SavedVarConf}
+function relax!(vars :: AbstractVector) :: Vector{SavedVarConf}
 	# do not nest the broadcasts, we do not want them to fuse
 	svcs = SavedVarConf.(vars)
 	_relax!.(vars, svcs)

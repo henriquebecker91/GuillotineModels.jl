@@ -75,6 +75,13 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"quiet", false,
 			"Avoid outputting any information or warning, just output errors." *
 			" Overrides the verbose flag. ."
+		),
+		Arg(
+			"no-unreachable-check", false,
+			"By default, the code removes variables and constraints that are" *
+			" useless (because the only way to reach them was removed by some" *
+			" other mechanism, like pricing), this flag disables this feature" *
+			" and leave the work to the presolver of the MIP solver."
 		)
 	]
 end
