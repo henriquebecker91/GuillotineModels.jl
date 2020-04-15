@@ -96,8 +96,8 @@ function __init__()
 		# Note: without the type prefix below some values are casted and Gurobi.jl
 		# fails to find the correct method to call (it differs from Int and Float).
 		configuration = Pair{String, Any}[
-			"Method" => 1, # use dual simplex for LP models and MIP root node
-			#"Method" => 2, # use barrier for LP models and MIP root node
+			"Method" => 2, # use barrier for LP models and MIP root node
+			#"Method" => 1, # use dual simplex for LP models and MIP root node
 			# "NodeMethod" => 2, # use barrier for MIP non-root nodes
 			"Threads" => p_args["threads"],
 			"OutputFlag" => p_args["no-output"] ? 0 : 1,

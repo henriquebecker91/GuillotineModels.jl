@@ -52,12 +52,15 @@ function _reduced_profit(
 	pp_dual = dual(constraints[pp])
 	fc_dual = dual(constraints[fc])
 	sc_dual = iszero(sc) ? 0.0 : dual(constraints[sc])
-	#@show pp_dual
-	#@show fc_dual
-	#@show sc_dual
 	# The reduced profit computation shown in the paper is done here.
-	rp = fc_dual + sc_dual - pp_dual
-	#@show rp
+	rp = -fc_dual + -sc_dual - -pp_dual
+	#=if rp < zero(rp)
+		@show cut
+		@show pp_dual
+		@show fc_dual
+		@show sc_dual
+		@show rp
+	end=#
 	return rp
 end
 
@@ -104,13 +107,20 @@ function _restricted_final_pricing!(
 	if termination_status(model) == MOI.OPTIMAL
 		#@show objective_bound(model)
 		#@show objective_value(model)
+		@show model
 		LP = UB = objective_value(model)
 		#@show value.(rc_vars)
 		!isinf(UB) && (UB = floor(UB + eps(UB))) # theoretically sane UB
 		# Note: the iterated_greedy solve the shelf version of the problem,
 		# that is restricted, so it cannot return a better known value than the
 		# restricted upper bound.
-		@assert LB <= UB
+		restricted_LB = LB
+		restricted_LP = LP
+		debug && begin
+			@show restricted_LB
+			@show restricted_LP
+		end
+		@assert restricted_LB <= restricted_LP
 	else
 		@error(
 			"For some reason, solving the relaxed restricted model did not" *
@@ -128,13 +138,11 @@ function _restricted_final_pricing!(
 	#all_vars_values = value.(all_vars) # needs to be done before any changes
 	rc_cuts = bp.cuts[rc_idxs]
 	plate_cons = model[:plate_cons]
-	debug && begin
-		restricted_LB = LB
-		restricted_LP = LP
-		@show restricted_LB
-		@show restricted_LP
+	if debug
+		println("stats on reduced profit values of restricted final pricing")
+		rps = _reduced_profit.(rc_cuts, (plate_cons,))
+		vector_summary(rps) # defined in GuillotineModels.Utilities
 	end
-
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
 	rc_discrete_bitstr = # the final pricing (get which variables should remain)
@@ -215,7 +223,7 @@ function _recompute_idxs_to_add!(
 
 	for (pool_idx, cut) in pairs(pool)
 		rp = _reduced_profit(cut, plate_cons)
-		rp > 0.0 && continue # non-positive reduced profit is irrelevant to us
+		rp <= 0.0 && continue # non-positive reduced profit is irrelevant to us
 		num_positive_rp_vars += one(P)
 		if rp > threshold
 			!found_above_threshold && empty!(pool_idxs_to_add)
@@ -225,13 +233,14 @@ function _recompute_idxs_to_add!(
 			length(pool_idxs_to_add) >= n_max && break
 		elseif !found_above_threshold
 			# Unfortunately we cannot stop here if we find n_max variables because
-			# we can find one above the threshold later yet.
-			push!(pool_idxs_to_add, pool_idx)
+			# we can find one above the threshold later yet. At least, we can stop
+			# pushing new variables to the pool.
+			length(pool_idxs_to_add) < n_max && push!(pool_idxs_to_add, pool_idx)
 		end
 	end
 
 	# Only n_max variables are added/unfixed in a single iteration.
-	n_max <= length(pool_idxs_to_add) && resize!(pool_idxs_to_add, n_max)
+	#n_max <= length(pool_idxs_to_add) && resize!(pool_idxs_to_add, n_max)
 
 	return num_positive_rp_vars, found_above_threshold
 end
@@ -292,15 +301,15 @@ function _iterative_pricing!(
 	# reuse (avoiding reallocating them every loop).
 	to_unfix = Vector{eltype(keys(cuts))}()
 	plate_cons = model[:plate_cons]
-	#=
 	if JuMP.solver_name(model) == "Gurobi"
 		old_method = get_optimizer_attribute(model, "Method")
 		# Change the LP-solving method to dual simplex, this allows for better
 		# reuse of the partial solution.
 		set_optimizer_attribute(model, "Method", 1)
-		set_optimizer_attribute(model, "Presolve", 0)
+		#set_optimizer_attribute(model, "Presolve", 0)
 	end
-	=#
+	size_var_pool_before_iterative = length(unused_vars)
+	debug && @show size_var_pool_before_iterative
 	flush_all_output()
 	# the last solve before this was MIP and has no duals
 	@timeit "solve_lp" optimize!(model)
@@ -324,10 +333,12 @@ function _iterative_pricing!(
 	#all_vars = all_variables(model)
 	num_positive_rp_vars = initial_num_positive_rp_vars
 	# The iterative pricing continue until there are variables to unfix.
+	num_vars_added_back_to_LP_by_iterated = zero(P)
 	while !isempty(to_unfix)
 		debug && begin
 			@show num_positive_rp_vars
 			@show length(to_unfix)
+			num_vars_added_back_to_LP_by_iterated += length(to_unfix)
 			@show was_above_threshold
 		end
 		@timeit "update_bounds" begin
@@ -355,14 +366,15 @@ function _iterative_pricing!(
 		was_above_threshold && (pricing_threshold_hits += 1)
 	end
 
-	debug && @show pricing_threshold_hits
-	#=
+	if debug
+		@show pricing_threshold_hits
+		@show num_vars_added_back_to_LP_by_iterated
+	end
 	if JuMP.solver_name(model) == "Gurobi"
 		# Undo the change done before (look at where old_method is defined).
 		set_optimizer_attribute(model, "Method", old_method)
-		set_optimizer_attribute(model, "Presolve", -1)
+		#set_optimizer_attribute(model, "Presolve", -1)
 	end
-	=#
 
 	return
 end
@@ -382,8 +394,12 @@ function _final_pricing!(
 	debug && @show LB
 	# Many optional small adjusts may clean the model duals, if they are not
 	# available we re-solve the LP one more time to make them available again.
-	#!has_duals(model) && optimize!(model)
-	#println(string(floor.(_reduced_profit.(bp.cuts, (plate_cons,)))))
+	!has_duals(model) && optimize!(model)
+	if debug
+		println("stats on reduced profit values of final pricing")
+		rps = _reduced_profit.(bp.cuts, (plate_cons,))
+		vector_summary(rps) # defined in GuillotineModels.Utilities
+	end
 	to_keep_bits = # the final pricing (get which variables should remain)
 		@. floor(_reduced_profit(bp.cuts, (plate_cons,)) + LP) >= LB
 	return _delete_vars!(bp, model, to_keep_bits, :cuts_made), to_keep_bits
@@ -403,7 +419,7 @@ function _furini_pricing!(
 	@timeit "restricted" bkv, sol, pe_svcs, cm_svcs = _restricted_final_pricing!(
 		model, rc_idxs, d, p, byproduct, rng, debug
 	)
-	UB = convert(Float64, bkv)
+	LB = convert(Float64, bkv)
 	# If those fail, we need may need to rethink the iterative pricing,
 	# because the use of max_profit seems to assume no negative profit items.
 	@assert all(e -> e >= zero(e), d)
@@ -412,10 +428,10 @@ function _furini_pricing!(
 	@timeit "iterative" _iterative_pricing!(
 		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug
 	)
-	LB = objective_value(model)
+	LP = objective_value(model)
 	# TODO: change the name of the methods to include the exclamation mark
 	@timeit "final" byproduct, to_keep_bits = _final_pricing!(
-		model, byproduct, UB, LB, debug
+		model, byproduct, LB, LP, debug
 	)
 	# Restore the piece extractions and the kept variables to their original
 	# configuration. Note that cuts_made is now a subset of what it was before.

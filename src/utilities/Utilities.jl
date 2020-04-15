@@ -279,4 +279,19 @@ end
 # Not used by the rest of Utilities, just made available to other modules.
 include("Args.jl")
 
+using Statistics
+function vector_summary(v :: AbstractVector)
+	println(summary(v))
+	if !isempty(v)
+		q0_to_100 = quantile(v, 0.0:0.1:1.0)
+		@show q0_to_100
+		@show mean(v)
+		@show std(v)
+		@show var(v)
+		num_zeros = sum(isapprox.(0.0, v; atol = 1e-6))
+		@show num_zeros
+	end
+end
+export vector_summary
+
 end # module
