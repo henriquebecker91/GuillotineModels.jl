@@ -1,4 +1,5 @@
 [deps]
 GLPK = "60bf3e95-4087-53dc-ae20-288a0d20c6a6"
 GuillotineModels = "300ad42c-a273-11e9-37f6-175a19b744a4"
+Gurobi = "2e9cd046-0924-5485-92f1-d5272153d98b"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"

@@ -14,6 +14,7 @@ import ArgParse: @add_arg_table!, add_arg_table!
 include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
 using .SolversArgs
 
+import ..MY_HB_TIMER # The global module timer.
 using ..InstanceReader
 import ..build_model
 using ..Utilities
@@ -58,8 +59,7 @@ the specified way (no two keys may have a value different than one).
 If a copy is returned, the type of the scalars and the element type of
 the arrays is converted to typeof(L).
 """
-function div_and_round_instance(L, W, l, w, p_args)
-	@timeit "div_and_round_instance" begin
+@timeit MY_HB_TIMER function div_and_round_instance(L, W, l, w, p_args)
 	# assert explanation: at least two of the three flags are disabled (i.e., 
 	# have value one)
 	@assert sum(isone.((
@@ -87,7 +87,6 @@ function div_and_round_instance(L, W, l, w, p_args)
 		l = convert.(S, round.(l ./ factor, roundmode))
 		w = convert.(S, round.(w ./ factor, roundmode))
 	end
-	end # timeit
 	L, W, l, w
 end
 
@@ -105,7 +104,7 @@ list returned by `generic_args()` (it also needs the required arguments
 in `core_argparse_settings()`). The other arguments are solver or model
 specific and are extracted and passed to their specific methods.
 """
-function read_build_solve_and_print(pp) # pp stands for parsed parameters
+@timeit MY_HB_TIMER function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	instfname = pp["instfname"]
 	!pp["no-csv-output"] && @show instfname
 

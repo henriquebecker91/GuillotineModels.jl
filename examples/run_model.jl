@@ -20,7 +20,7 @@ import TimerOutputs
 
 # Supported solvers as of Tue 28 Jan 2020 02:06:06 AM -03:
 #import CPLEX
-#import Gurobi
+import Gurobi
 #import Cbc
 import GLPK
 
@@ -31,6 +31,6 @@ import GLPK
 # here, as it is done with the already supported solvers.
 
 GuillotineModels.CommandLine.run()
-TimerOutputs.print_timer() # global timer used
+TimerOutputs.print_timer(GuillotineModels.timer())
 println()
 

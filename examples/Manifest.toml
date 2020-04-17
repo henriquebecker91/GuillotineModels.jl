@@ -103,11 +103,15 @@ version = "0.12.1"
 
 [[GuillotineModels]]
 deps = ["ArgParse", "Dates", "DocStringExtensions", "JuMP", "MathOptInterface", "Random", "RandomNumbers", "Requires", "Statistics", "TimerOutputs"]
-git-tree-sha1 = "be1de3c55064bd90b6774d86ef506a0a97ab9872"
-repo-rev = "pricing"
-repo-url = ".."
+path = ".."
 uuid = "300ad42c-a273-11e9-37f6-175a19b744a4"
 version = "0.1.0"
+
+[[Gurobi]]
+deps = ["Libdl", "LinearAlgebra", "MathOptInterface", "MathProgBase", "SparseArrays"]
+git-tree-sha1 = "619f241433b5127f9561ddcdc75b2023513c76ea"
+uuid = "2e9cd046-0924-5485-92f1-d5272153d98b"
+version = "0.7.6"
 
 [[HTTP]]
 deps = ["Base64", "Dates", "IniFile", "MbedTLS", "Sockets"]
@@ -166,6 +170,12 @@ deps = ["BenchmarkTools", "CodecBzip2", "CodecZlib", "JSON", "JSONSchema", "Line
 git-tree-sha1 = "27f2ef85879b8f1d144266ab44f076ba0dfbd8a1"
 uuid = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 version = "0.9.13"
+
+[[MathProgBase]]
+deps = ["LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "9abbe463a1e9fc507f12a69e7f29346c2cdc472c"
+uuid = "fdba3010-5040-5b88-9595-932c9decdf73"
+version = "0.7.8"
 
 [[MbedTLS]]
 deps = ["Dates", "MbedTLS_jll", "Random", "Sockets"]
