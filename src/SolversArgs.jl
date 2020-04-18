@@ -22,8 +22,8 @@ module SolversArgs
 
 export empty_configured_model
 
-import TimerOutputs # needed for the expansion of @timeit
 import TimerOutputs.@timeit
+import ...TIMER
 import Requires.@require
 import JuMP
 
@@ -36,7 +36,7 @@ import ...Utilities.Args: accepted_arg_list, throw_if_incompatible_options
 function __init__()
 	#function cplex_empty_configured_model(p_args)
 	@require CPLEX="a076750e-1247-5638-91d2-ce28b192dca0" begin
-	function empty_configured_model(::Val{:CPLEX}, p_args)
+	@timeit TIMER function empty_configured_model(::Val{:CPLEX}, p_args)
 		scrind_value = p_args["no-output"] ? CPLEX.CPX_OFF : CPLEX.CPX_ON
 		# https://www.ibm.com/support/pages/cplex-performance-tuning-linear-programs
 		configuration = Pair{String, Any}[
@@ -92,7 +92,7 @@ function __init__()
 	end # @require CPLEX
 
 	@require Gurobi="2e9cd046-0924-5485-92f1-d5272153d98b" begin
-	function empty_configured_model(::Val{:Gurobi}, p_args)
+	@timeit TIMER function empty_configured_model(::Val{:Gurobi}, p_args)
 		# Note: without the type prefix below some values are casted and Gurobi.jl
 		# fails to find the correct method to call (it differs from Int and Float).
 		configuration = Pair{String, Any}[
@@ -117,7 +117,7 @@ function __init__()
 	end # @require Gurobi
 
 	@require Cbc="9961bab8-2fa3-5c5a-9d89-47fab24efd76" begin
-	function empty_configured_model(::Val{:Cbc}, p_args)
+	@timeit TIMER function empty_configured_model(::Val{:Cbc}, p_args)
 		configuration = Pair{String, Any}[
 			# TODO: discover if the barrier algorithm is being correctly used.
 			# The `barrier` command-line "parameter" is in fact an action/command
@@ -145,7 +145,7 @@ function __init__()
 	end # @require Cbc
 
 	@require GLPK="60bf3e95-4087-53dc-ae20-288a0d20c6a6" begin
-	function empty_configured_model(::Val{:GLPK}, p_args)
+	@timeit TIMER function empty_configured_model(::Val{:GLPK}, p_args)
 		configuration = Pair{String, Any}[
 			# TODO: find how configure: # of threads, tolerance gap, barrier, etc...
 			# TODO: specially: does GLPK have a RANDOMSEED option?!

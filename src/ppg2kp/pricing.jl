@@ -66,7 +66,7 @@ end
 
 # TODO: the call to the heuristic and solving the restricted MIP model
 # probably should not be here, but on no_arg_check_build_model.
-function _restricted_final_pricing!(
+@timeit TIMER function _restricted_final_pricing!(
 	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, rng, debug :: Bool = false
 ) #=:: Tuple{P, CutPattern{D, S}, Vector{SavedVarConf}} =# where {D, S, P}
@@ -80,9 +80,9 @@ function _restricted_final_pricing!(
 	# will need to be reworked. Now it only relax/fix variables in those sets
 	# so it will need to be sensibly extended to new sets of variables.
 	@assert n == length(cm) + length(pe)
-	#@timeit "relax_cm"
+	#@timeit TIMER "relax_cm"
 	cm_svcs = relax!(cm)
-	#@timeit "relax_pe"
+	#@timeit TIMER "relax_pe"
 	pe_svcs = relax!(pe)
 	#@assert length(cm) == length(bp.cuts)
 	rc_vars = cm[rc_idxs]
@@ -91,7 +91,7 @@ function _restricted_final_pricing!(
 	uc_idxs = _setdiff_sorted(keys(cm), rc_idxs)
 	# Fix all unrestricted cuts (pool vars).
 	uc_vars = cm[uc_idxs]
-	#@timeit "fix_uc"
+	#@timeit TIMER "fix_uc"
 	fix.(uc_vars, 0.0; force = true)
 	# Get the solution of the heuristic.
 	bkv, _, shelves = Heuristic.iterated_greedy(
@@ -101,7 +101,7 @@ function _restricted_final_pricing!(
 	LB = convert(Float64, bkv)
 	# Solve the relaxed restricted model.
 	flush_all_output()
-	@timeit "lp_solve" optimize!(model)
+	@timeit TIMER "lp_solve" optimize!(model)
 	flush_all_output()
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
@@ -159,20 +159,20 @@ function _restricted_final_pricing!(
 	# Below the SavedVarConf is not stored because they will be kept fixed
 	# for now, and when restored, they will be restored to their original
 	# state (rc_svcs) not this intermediary one.
-	#@timeit "fix_rc_subset"
+	#@timeit TIMER "fix_rc_subset"
 	fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
 	# The discrete variables are the restricted cuts that were not removed
 	# by the final pricing of the restricted model and will be in the MIP
 	# of the restricted model.
 	discrete_vars = rc_vars[rc_discrete_bitstr]
-	#@timeit "restore_ss_cm"
+	#@timeit TIMER "restore_ss_cm"
 	restore!(discrete_vars, rc_svcs[rc_discrete_bitstr])
 	# All piece extractions also need to be restored.
-	#@timeit "restore_pe"
+	#@timeit TIMER "restore_pe"
 	restore!(pe, pe_svcs)
 	#set_start_value.(all_vars, all_vars_values)
 	flush_all_output()
-	@timeit "mip_solve" optimize!(model) # restricted MIP solved
+	@timeit TIMER "mip_solve" optimize!(model) # restricted MIP solved
 	flush_all_output()
 	# If some primal solution was obtained, compare its value with the
 	# heuristic and keep the best one (the model can give a worse value
@@ -189,9 +189,9 @@ function _restricted_final_pricing!(
 	end
 	# The variables are left all relaxed but with only the variables used
 	# in the restricted priced model unfixed, the rest are fixed to zero.
-	#@timeit "relax_ss_rc"
+	#@timeit TIMER "relax_ss_rc"
 	relax!(rc_vars[rc_discrete_bitstr])
-	#@timeit "relax_pe"
+	#@timeit TIMER "relax_pe"
 	relax!(pe)
 	#@assert all(v -> !is_integer(v) && !is_binary(v), all_variables(model))
 	#set_start_value.(all_vars, all_vars_values) # using the values of the LP
@@ -212,7 +212,7 @@ end
 # pool_idxs_to_add (i.e., which vars need to be unfixed).
 # Return: the number of positive reduced profit variables found,
 # and a boolean indicating if some variable above the threshold was found.
-function _recompute_idxs_to_add!(
+@timeit TIMER function _recompute_idxs_to_add!(
 	pool_idxs_to_add, pool, plate_cons, threshold, n_max :: P,
 ) :: Tuple{P, Bool} where {P}
 	found_above_threshold = false
@@ -255,7 +255,7 @@ end
 # Also, the paper mention the "first X variables", so it is not worth getting
 # all variables and ordering them by reduced profit (if they are more than
 # n-max)?
-function _iterative_pricing!(
+@timeit TIMER function _iterative_pricing!(
 	model, cuts :: Vector{NTuple{3, P}}, cm_svcs :: Vector{SavedVarConf},
 	max_profit :: P, alpha :: Float64, beta :: Float64, debug :: Bool = false
 ) :: Nothing where {P}
@@ -312,7 +312,7 @@ function _iterative_pricing!(
 	debug && @show size_var_pool_before_iterative
 	flush_all_output()
 	# the last solve before this was MIP and has no duals
-	@timeit "solve_lp" optimize!(model)
+	@timeit TIMER "solve_lp" optimize!(model)
 	flush_all_output()
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
@@ -341,13 +341,13 @@ function _iterative_pricing!(
 			num_vars_added_back_to_LP_by_iterated += length(to_unfix)
 			@show was_above_threshold
 		end
-		@timeit "update_bounds" begin
+		@timeit TIMER "update_bounds" begin
 			unfixed_vars = unused_vars[to_unfix]
 			unfix.(unfixed_vars)
 			set_lower_bound.(unfixed_vars, unused_lbs[to_unfix])
 			set_upper_bound.(unfixed_vars, unused_ubs[to_unfix])
 		end
-		@timeit "deleteat!" begin
+		@timeit TIMER "deleteat!" begin
 			deleteat!(unused_vars, to_unfix)
 			deleteat!(unused_cuts, to_unfix)
 			deleteat!(unused_lbs, to_unfix)
@@ -356,13 +356,11 @@ function _iterative_pricing!(
 		@assert allsame(length.((unused_vars, unused_cuts, unused_lbs, unused_ubs)))
 		#set_start_value.(all_vars, value.(all_vars))
 		flush_all_output()
-		@timeit "solve_lp" optimize!(model)
+		@timeit TIMER "solve_lp" optimize!(model)
 		flush_all_output()
-		@timeit "recompute" begin
-			num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
-				to_unfix, unused_cuts, plate_cons, threshold, n_max
-			)
-		end
+		num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
+			to_unfix, unused_cuts, plate_cons, threshold, n_max
+		)
 		was_above_threshold && (pricing_threshold_hits += 1)
 	end
 
@@ -381,7 +379,7 @@ end
 
 # TODO: check if the kept variables are chosen from the unfixed variables
 # of from all variables.
-function _final_pricing!(
+@timeit TIMER function _final_pricing!(
 	model, bp :: ByproductPPG2KP{D, S, P}, LB :: Float64, LP :: Float64,
 	debug :: Bool = false
 ) where {D, S, P}
@@ -411,12 +409,12 @@ end
 # both the greedy heuristic and the restricted model are solved but with a time
 # limit (the best solution found in the middle of this process is used for the
 # true final pricing).
-function _furini_pricing!(
+@timeit TIMER function _furini_pricing!(
 	model, byproduct, d, p, seed, alpha, beta, debug
 ) where {D, S, P}
 	rng = Xoroshiro128Plus(seed)
 	rc_idxs = _all_restricted_cuts_idxs(byproduct)
-	@timeit "restricted" bkv, sol, pe_svcs, cm_svcs = _restricted_final_pricing!(
+	bkv, sol, pe_svcs, cm_svcs = _restricted_final_pricing!(
 		model, rc_idxs, d, p, byproduct, rng, debug
 	)
 	LB = convert(Float64, bkv)
@@ -425,17 +423,17 @@ function _furini_pricing!(
 	@assert all(e -> e >= zero(e), d)
 	@assert all(e -> e >= zero(e), p)
 	# TODO: check if is needed to pass the whole bp structure
-	@timeit "iterative" _iterative_pricing!(
+	_iterative_pricing!(
 		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug
 	)
 	LP = objective_value(model)
 	# TODO: change the name of the methods to include the exclamation mark
-	@timeit "final" byproduct, to_keep_bits = _final_pricing!(
+	byproduct, to_keep_bits = _final_pricing!(
 		model, byproduct, LB, LP, debug
 	)
 	# Restore the piece extractions and the kept variables to their original
 	# configuration. Note that cuts_made is now a subset of what it was before.
-	@timeit "last_restore" @views restore!(
+	@timeit TIMER "last_restore" @views restore!(
 		[model[:picuts]; model[:cuts_made]], [pe_svcs; cm_svcs[to_keep_bits]]
 	)
 
@@ -446,15 +444,15 @@ end
 # the furini pricing, but in the future we need to allow it to receive
 # an arbitrary LB value, and let it call the heuristic if it is not passed
 # NOTE: the d and p are necessary exactly because of the heuristic
-function _becker_pricing!(
+@timeit TIMER function _becker_pricing!(
 	bp, model, d, p, seed, debug
 )
 	pe_vars = model[:picuts]
 	cm_vars = model[:cuts_made]
 	all_vars = [pe_vars; cm_vars]
-	@timeit "relax!" all_scvs = relax!(all_vars)
+	@timeit TIMER "relax!" all_scvs = relax!(all_vars)
 	flush_all_output()
-	@timeit "lp_solve" optimize!(model)
+	@timeit TIMER "lp_solve" optimize!(model)
 	flush_all_output()
 	# Check if the variables are relaxed.
 	@assert all(v -> !is_integer(v) & !is_binary(v), all_vars)
@@ -464,14 +462,14 @@ function _becker_pricing!(
 	@assert all(v -> has_lower_bound(v) & !is_fixed(v), cm_vars)
 	LP = objective_value(model) # the model should be relaxed and solved now
 	LB = 0.0
-	@timeit "heuristic" begin
+	@timeit TIMER "heuristic" begin
 		rng = Xoroshiro128Plus(seed)
 		bkv, _, _ = Heuristic.iterated_greedy(
 			d, p, bp.l, bp.w, bp.L, bp.W, rng
 		)
 		LB = convert(Float64, bkv)
 	end
-	@timeit "sel_del_res" begin
+	@timeit TIMER "sel_del_res" begin
 		pe_rcvs = @. dual(LowerBoundRef(pe_vars))
 		cm_rcvs = @. dual(LowerBoundRef(cm_vars))
 		to_keep_pe_bits = @. LP - pe_rcvs >= LB

@@ -133,7 +133,7 @@ function _inner_purge_unreachable!(
 	return bp
 end
 
-function _purge_unreachable!(bp, model, debug)
+@timeit TIMER function _purge_unreachable!(bp, model, debug)
 	qt_re, re, qt_rc, rc, qt_rp, rp = _reachable(
 		bp.np, bp.cuts, lastindex(bp.pli_lwb)
 	)

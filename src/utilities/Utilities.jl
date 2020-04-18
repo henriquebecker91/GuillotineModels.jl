@@ -64,10 +64,6 @@ end
 export flush_all_output
 
 using JuMP
-using TimerOutputs
-
-# Style guideline: as the module block is left unindented, the @timeit
-# blocks that wrap the whole method body also are not indented.
 
 """
     num_all_constraints(m) :: Int64

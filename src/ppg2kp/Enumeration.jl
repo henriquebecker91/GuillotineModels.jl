@@ -419,7 +419,7 @@ struct ByproductPPG2KP{D, S, P}
 	l :: Vector{S}
 	"The width of the pieces."
 	w :: Vector{S}
-	#d :: Vector{D} # for now, it is not necessary
+	#d :: Vector{D} # why this is not here? d is used in the enumeration
 	#p :: Vector{P} # for now, it is not necessary
 	"The length of the original plate."
 	L :: S

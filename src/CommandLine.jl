@@ -3,7 +3,7 @@ module CommandLine
 # TODO: accept command-line arguments to set the instance parsing configuration
 
 # External packages used.
-using TimerOutputs
+import TimerOutputs.@timeit
 using JuMP
 import Dates
 import Dates.@dateformat_str
@@ -14,7 +14,7 @@ import ArgParse: @add_arg_table!, add_arg_table!
 include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
 using .SolversArgs
 
-import ..MY_HB_TIMER # The global module timer.
+import ..TIMER # The global module timer.
 using ..InstanceReader
 import ..build_model
 using ..Utilities
@@ -59,7 +59,7 @@ the specified way (no two keys may have a value different than one).
 If a copy is returned, the type of the scalars and the element type of
 the arrays is converted to typeof(L).
 """
-@timeit MY_HB_TIMER function div_and_round_instance(L, W, l, w, p_args)
+@timeit TIMER function div_and_round_instance(L, W, l, w, p_args)
 	# assert explanation: at least two of the three flags are disabled (i.e., 
 	# have value one)
 	@assert sum(isone.((
@@ -104,7 +104,7 @@ list returned by `generic_args()` (it also needs the required arguments
 in `core_argparse_settings()`). The other arguments are solver or model
 specific and are extracted and passed to their specific methods.
 """
-@timeit MY_HB_TIMER function read_build_solve_and_print(pp) # pp stands for parsed parameters
+@timeit TIMER function read_build_solve_and_print(pp) # pp stands for parsed parameters
 	instfname = pp["instfname"]
 	!pp["no-csv-output"] && @show instfname
 
@@ -112,17 +112,13 @@ specific and are extracted and passed to their specific methods.
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 
 	solver_pp = create_unprefixed_subset(pp["solver"], pp)
-	m = @timeit "empty_configured_model" begin
-		empty_configured_model(Val(Symbol(pp["solver"])), solver_pp)
-	end # timeit
+	m = empty_configured_model(Val(Symbol(pp["solver"])), solver_pp)
 
-	@timeit "build_model" begin
 	model_pp = create_unprefixed_subset(pp["model"], pp)
 	model_id = Val(Symbol(pp["model"]))
 	bmr = build_model(
 		model_id, m, d, p, l, w, L, W, model_pp
 	)
-	end # @timeit
 	#@show build_model_return
 	#= This does not work unless we give the full path, what is a load of shit.
 	# Needs to be fixed either by: (1) PR to the package solving the problem;
@@ -134,7 +130,7 @@ specific and are extracted and passed to their specific methods.
 	=#
 
 	!isempty(pp["save-model"]) && !pp["no-csv-output"] &&
-		@timeit "save_model" JuMP.write_to_file(m, pp["save-model"])
+		@timeit TIMER "save_model" JuMP.write_to_file(m, pp["save-model"])
 
 	if !pp["no-csv-output"]
 		#@show time_to_build_model
@@ -166,7 +162,7 @@ specific and are extracted and passed to their specific methods.
 	pp["do-not-solve"] && return nothing
 
 	flush_all_output()
-	@timeit "optimize!" optimize!(m)
+	@timeit TIMER "optimize!" optimize!(m)
 	flush_all_output()
 	#See comment above about TimerOutputs.
 	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
@@ -467,13 +463,11 @@ available models and solvers, parse the arguments. If the `args`
 refer to a model or solver not in `models_list` or `solvers_list`
 exceptions may be thrown.
 """
-function parse_args(args, models_list, solvers_list) :: Dict{String, Any}
-	@timeit "parse_args" begin
+@timeit TIMER function parse_args(args, models_list, solvers_list) :: Dict{String, Any}
 	s = argparse_settings(models_list, solvers_list)
 	p_args = ArgParse.parse_args(args, s) :: Dict{String, Any}
 	warn_if_changed_unused_values(p_args, models_list, solvers_list)
 	throw_if_incompatible_options(p_args)
-	end # @timeit
 
 	return p_args
 end
@@ -504,8 +498,7 @@ with `no-csv-output` and `USED_SOLVER_NAME-no-output` as true.
 
 See also: [`mock_instance`](@ref), [`read_build_solve_and_print`](@ref)
 """
-function mock_for_compilation(p_args)
-	@timeit "mock_for_compilation" begin
+@timeit TIMER function mock_for_compilation(p_args)
 	mktemp() do path, io
 		copyed_args = copy(p_args)
 		write(io, mock_instance())
@@ -519,7 +512,6 @@ function mock_for_compilation(p_args)
 		end
 		read_build_solve_and_print(copyed_args)
 	end
-	end # @timeit
 end
 
 """
@@ -549,12 +541,11 @@ GuillotineModels.CommandLine.run(
 Which will give you the help message. If you want to use it as an script
 you just need to remove the `["--help"]` from the call.
 """
-function run(
+@timeit TIMER function run(
 	args = ARGS;
 	implemented_models :: Vector{Symbol} = [:Flow, :PPG2KP],#, :KnapsackPlates],
 	supported_solvers :: Vector{Symbol} = [:CPLEX, :Gurobi, :Cbc, :GLPK]
 )
-	@timeit "run" begin
 	p_args = parse_args(args, implemented_models, supported_solvers)
 	!p_args["no-csv-output"] && @show args
 	!p_args["no-csv-output"] && @show p_args
@@ -565,7 +556,6 @@ function run(
 	delete!(p_args, "do-not-mock-for-compilation")
 	total_instance_time = @elapsed read_build_solve_and_print(p_args)
 	!p_args["no-csv-output"] && @show total_instance_time
-	end # timeit
 end
 
 end # module

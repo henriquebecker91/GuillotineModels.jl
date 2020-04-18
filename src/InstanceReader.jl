@@ -6,7 +6,8 @@ width, profit, and demand).
 """
 module InstanceReader
 
-using TimerOutputs
+import TimerOutputs.@timeit
+import ..TIMER
 
 export read_from_string, read_from_file
 
@@ -40,12 +41,11 @@ profit, and demand, of a piece.
 
 See also: [`read_from_file`](@ref)
 """
-function read_from_string(
+@timeit TIMER function read_from_string(
 	s :: AbstractString
 ) :: Tuple{
 	Int64,Int64,Int64,Vector{Int64},Vector{Int64},Vector{Int64},Vector{Int64}
 }
-	@timeit "read_from_string" begin
 	N = L = W = (0 :: Int64)
 	(l, w, p, q) = (
 		Vector{Int64}(), Vector{Int64}(), Vector{Int64}(), Vector{Int64}()
@@ -73,7 +73,6 @@ function read_from_string(
 		# have removed the unused lines...).
 		lnc = lnc + 1
 	end
-	end # @timeit
 	return N, L, W, l, w, p, q
 end
 
@@ -89,12 +88,11 @@ Reads the given file and apply `read_from_string` to its contents.
 
 See also: [`read_from_string`](@ref)
 """
-function read_from_file(
+@timeit TIMER function read_from_file(
 	filepath :: AbstractString
 ) :: Tuple{
 	Int64,Int64,Int64,Vector{Int64},Vector{Int64},Vector{Int64},Vector{Int64}
 }
-	@timeit "read_from_file" begin
 	# Just declare and define the type, does not matter that is the same shared
 	# array, they will refer to others after.
 	N = L = W = (0 :: Int64)
@@ -102,7 +100,6 @@ function read_from_file(
 	open(filepath) do f
 		N, L, W, l, w, p, q = read_from_string(read(f, String))
 	end
-	end # @timeit
 
 	return N, L, W, l, w, p, q
 end

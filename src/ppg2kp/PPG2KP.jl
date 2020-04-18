@@ -8,6 +8,7 @@ include("./Heuristic.jl")
 include("./Args.jl")
 include("./Enumeration.jl")
 
+import ..TIMER # for use with TimerOutputs.@timeit
 using .Enumeration
 export ByproductPPG2KP # re-export ByproductPPG2KP from Enumeration
 
@@ -17,7 +18,7 @@ import ..to_pretty_str # for debug
 
 # Import third-party libraries.
 using JuMP
-using TimerOutputs
+import TimerOutputs.@timeit
 import MathOptInterface
 const MOI = MathOptInterface
 
@@ -76,60 +77,15 @@ end
 # in the include below only _purge_unreachable! is used here.
 include("./unreachable.jl")
 
-# HIGH LEVEL EXPLANATION OF THE MODEL
-#
-# Variables:
-#
-# `picuts[n, pii]`: Integer. The number of pieces `pii` generated from
-#   subplates of type `n`.
-# `cuts_made[n1, n2, n3]`: Integer. The number of subplates of type
-#   `n1` that are cut into subplates `n2` and `n3` (horizontal and
-#   vertical cuts are together for now).
-#
-# Objective function:
-#
-# Maximize the profit of the pieces cut.
-#   sum(p[pii] * picuts[_, pii])
-#
-# Constraints:
-#
-# There is exactly one of the original plate, which may be used for cutting
-# or extracting a piece.
-#   sum(picuts[1, _]) + sum(cuts_made[1, _,  _]) <= 1
-# The number of subplates available depends on the number of plates that have
-# it as children.
-#   sum(picuts[n1>1, _]) + sum(cuts_made[n1>1, _, _]) <=
-#     sum(cuts_made[_, n2, n3])
-#     where n2 == n1 or n3 == n1, doubling cuts_made[_, n2, n3] if n2 == n3
-# The number of pieces of some type is always less than or equal to the demand.
-#   sum(picuts[_, pii]) <= d[pii]
-#
-# Unnecessary constraints:
-#
-# The number of times a pair pli-pii appear is at most the min between:
-# d[pii] and the number of subplates pli that fit in the original plate.
-#   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
-"""
-    build_complete_model(model, d, p, l, w, L, W; options)
-
-TODO: describe method.
-Note: `model[:plate_cons]` is a container of constraints of type and set
-`(GenericAffExpr{Float64,VariableRef}, LessThan{Float64})` that represent all
-the plate types (i.e., it will be the same length as ByproductPPG2KP.pli_lwb
-and each position in `model[:plate_cons]` will correspond to the plate
-described in the same position of `ByproductPPG2KP.pli_lwb`).
-"""
-function build_complete_model(
-	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
+# TODO: consider if the options should be passed along as they are now.
+@timeit TIMER function _preprocess(
+	::Type{P}, d :: Vector{D}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
-) :: ByproductPPG2KP{D, S, P} where {D, S, P}
-	@timeit "enumeration" begin
+) where {D, S, P}
 	@assert length(d) == length(l) && length(l) == length(w)
-	num_piece_types = convert(D, length(d))
-
-	sllw = SortedLinkedLW(D, l, w)
 	# TODO: change enumeration to also use a Dict?
-	byproduct = gen_cuts(P, d, sllw, L, W;
+	num_piece_types = convert(D, length(d))
+	byproduct = gen_cuts(P, d, SortedLinkedLW(D, l, w), L, W;
 		ignore_2th_dim = options["ignore-2th-dim"],
 		ignore_d = options["ignore-d"],
 		round2disc = options["round2disc"],
@@ -138,8 +94,8 @@ function build_complete_model(
 		no_furini_symmbreak = options["no-furini-symmbreak"],
 		faithful2furini2016 = options["faithful2furini2016"]
 	)
-	hvcuts, pli_lwb, np = byproduct.cuts, byproduct.pli_lwb, byproduct.np
-	num_plate_types = length(pli_lwb)
+	hvcuts, np = byproduct.cuts, byproduct.np
+	num_plate_types = length(byproduct.pli_lwb)
 
 	# TODO: Optional. Consider if changing the order of the variables can impact
 	# the solver performance. The only problem with this is that current
@@ -172,14 +128,6 @@ function build_complete_model(
 		parent, fchild, schild = hvcuts[i]
 		push!(parent2cut[parent], i)
 		push!(child2cut[fchild], i)
-		#=if iszero(schild)
-			@show parent
-			@show pli_lwb[parent]
-			@show fchild
-			@show pli_lwb[fchild]
-			@show schild
-		end=#
-		#@assert faithful2furini2016 || !iszero(schild)
 		!iszero(schild) && push!(child2cut[schild], i)
 	end
 
@@ -188,9 +136,21 @@ function build_complete_model(
 		push!(pli2pair[pli], i)
 		push!(pii2pair[pii], i)
 	end
-	end # @timeit "enumeration"
 
-	@timeit "JuMP_calls" begin
+	return byproduct, pli2pair, pii2pair, child2cut, parent2cut
+end
+
+@timeit TIMER function _build_base_model!(
+	model, d :: Vector{D}, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P},
+	pli2pair, pii2pair, child2cut, parent2cut,
+	options :: Dict{String, Any} = Dict{String, Any}()
+) where {D, S, P}
+	# shorten the names
+	l, w, L, W, np, hvcuts, pli_lwb = bp.l, bp.w, bp.L, bp.W,
+		bp.np, bp.cuts, bp.pli_lwb
+	num_piece_types = convert(D, length(d))
+	num_plate_types = length(pli_lwb)
+
 	# If all pieces have demand one, a binary variable will suffice to make the
 	# connection between a piece type and the plate it is extracted from.
 	naturally_only_binary = all(di -> di <= 1, d)
@@ -264,7 +224,61 @@ function build_complete_model(
 			sum(p[pii]*sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types) <= ub
 		)
 	end
-	end # @timeit "calls_to_JuMP", old: time_to_solver_build
+end
+
+# HIGH LEVEL EXPLANATION OF THE MODEL
+#
+# Variables:
+#
+# `picuts[n, pii]`: Integer. The number of pieces `pii` generated from
+#   subplates of type `n`.
+# `cuts_made[n1, n2, n3]`: Integer. The number of subplates of type
+#   `n1` that are cut into subplates `n2` and `n3` (horizontal and
+#   vertical cuts are together for now).
+#
+# Objective function:
+#
+# Maximize the profit of the pieces cut.
+#   sum(p[pii] * picuts[_, pii])
+#
+# Constraints:
+#
+# There is exactly one of the original plate, which may be used for cutting
+# or extracting a piece.
+#   sum(picuts[1, _]) + sum(cuts_made[1, _,  _]) <= 1
+# The number of subplates available depends on the number of plates that have
+# it as children.
+#   sum(picuts[n1>1, _]) + sum(cuts_made[n1>1, _, _]) <=
+#     sum(cuts_made[_, n2, n3])
+#     where n2 == n1 or n3 == n1, doubling cuts_made[_, n2, n3] if n2 == n3
+# The number of pieces of some type is always less than or equal to the demand.
+#   sum(picuts[_, pii]) <= d[pii]
+#
+# Unnecessary constraints:
+#
+# The number of times a pair pli-pii appear is at most the min between:
+# d[pii] and the number of subplates pli that fit in the original plate.
+#   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
+"""
+    build_complete_model(model, d, p, l, w, L, W; options)
+
+TODO: describe method.
+Note: `model[:plate_cons]` is a container of constraints of type and set
+`(GenericAffExpr{Float64,VariableRef}, LessThan{Float64})` that represent all
+the plate types (i.e., it will be the same length as ByproductPPG2KP.pli_lwb
+and each position in `model[:plate_cons]` will correspond to the plate
+described in the same position of `ByproductPPG2KP.pli_lwb`).
+"""
+function build_complete_model(
+	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
+	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	byproduct, pli2pair, pii2pair, child2cut, parent2cut = _preprocess(
+		P, d, l, w, L, W, options
+	)
+	_build_base_model!(
+		model, d, p, byproduct, pli2pair, pii2pair, child2cut, parent2cut, options
+	)
 
 	return byproduct
 end
@@ -286,21 +300,19 @@ function _no_arg_check_build_model(
 		@show length_cm_before_pricing
 	end
 	if pricing != "none"
-		@timeit "pricing" begin
-			if pricing == "expected"
-				pricing = (options["faithful2furini2016"] ? "furini" : "becker")
-			end
-			if pricing == "furini"
-				bp = _furini_pricing!(
-					model, bp, d, p, options["pricing-heuristic-seed"],
-					options["pricing-alpha"], options["pricing-beta"], debug
-				)
-			else
-				@assert pricing == "becker"
-				bp = _becker_pricing!(
-					bp, model, d, p, options["pricing-heuristic-seed"], debug
-				)
-			end
+		if pricing == "expected"
+			pricing = (options["faithful2furini2016"] ? "furini" : "becker")
+		end
+		if pricing == "furini"
+			bp = _furini_pricing!(
+				model, bp, d, p, options["pricing-heuristic-seed"],
+				options["pricing-alpha"], options["pricing-beta"], debug
+			)
+		else
+			@assert pricing == "becker"
+			bp = _becker_pricing!(
+				bp, model, d, p, options["pricing-heuristic-seed"], debug
+			)
 		end
 	end
 	if debug
@@ -308,7 +320,7 @@ function _no_arg_check_build_model(
 		println("length_cm_after_pricing = $(length(model[:cuts_made]))")
 	end
 	if !options["no-unreachable-check"]
-		@timeit "unreachable" bp = _purge_unreachable!(bp, model, debug)
+		bp = _purge_unreachable!(bp, model, debug)
 	end
 
 	return bp
@@ -323,7 +335,7 @@ import ..build_model
 
 
 """
-function build_model(
+@timeit TIMER function build_model(
 	::Val{:PPG2KP}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
 	options :: Dict{String, Any} = Dict{String, Any}()

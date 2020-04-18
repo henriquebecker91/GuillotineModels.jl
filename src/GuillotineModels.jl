@@ -15,11 +15,7 @@ The main features are:
 module GuillotineModels
 
 import TimerOutputs
-const MY_HB_TIMER = TimerOutputs.TimerOutput()
-
-function timer()
-	return MY_HB_TIMER
-end
+const TIMER = TimerOutputs.TimerOutput()
 
 # Just include all submodules. Except by the specializations of build_model,
 # all methods are part of some submodule and not of the top-level.
