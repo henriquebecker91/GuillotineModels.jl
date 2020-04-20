@@ -660,7 +660,7 @@ function gen_cuts(
 					if trim_cut
 						# From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
 						# from j through a trim cut with orientation v:"
-						fchild_sfhv = (-1, 0, sh_j, sv_j)
+						fchild_sfhv = (0, -1, sh_j, sv_j)
 					else
 						# If a plate (NEW or existing) j_1 is obtained from j without a trim
 						# cut: set all flags of j 1 to 1.
@@ -749,7 +749,7 @@ function gen_cuts(
 					if trim_cut
 						# From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
 						# from j through a trim cut with orientation v:"
-						fchild_sfhv = (0, -1, sh_j, sv_j)
+						fchild_sfhv = (-1, 0, sh_j, sv_j)
 					else
 						# If a plate (NEW or existing) j_1 is obtained from j without a trim
 						# cut: set all flags of j 1 to 1.
@@ -819,6 +819,12 @@ function gen_cuts(
 	if faithful2furini2016
 		# Apply Redundant-Cut.
 		if !no_redundant_cut
+			# red_cut_flags = collect(zip(sh, sv, fh, fv))
+			# println("red_cut_flags begin")
+			# show(stdout, "text/plain", red_cut_flags)
+			# println()
+			# println("red_cut_flags end")
+
 			filter_redundant_cuts!(hnnn, sh, fh)
 			filter_redundant_cuts!(vnnn, sv, fv)
 		end

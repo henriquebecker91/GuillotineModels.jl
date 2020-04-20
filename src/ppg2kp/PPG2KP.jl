@@ -343,7 +343,10 @@ import ..build_model
 	norm_options = create_normalized_arg_subset(
 		options, accepted_arg_list(Val(:PPG2KP))
 	)
-	return _no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
+	bmr = _no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
+	# show(stdout, "text/plain", bmr.cuts)
+	# show(stdout, "text/plain", bmr.pli_lwb)
+	return bmr
 end
 
 end # module
