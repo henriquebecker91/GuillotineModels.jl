@@ -301,13 +301,6 @@ end
 	# reuse (avoiding reallocating them every loop).
 	to_unfix = Vector{eltype(keys(cuts))}()
 	plate_cons = model[:plate_cons]
-	if JuMP.solver_name(model) == "Gurobi"
-		old_method = get_optimizer_attribute(model, "Method")
-		# Change the LP-solving method to dual simplex, this allows for better
-		# reuse of the partial solution.
-		set_optimizer_attribute(model, "Method", 1)
-		#set_optimizer_attribute(model, "Presolve", 0)
-	end
 	size_var_pool_before_iterative = length(unused_vars)
 	debug && @show size_var_pool_before_iterative
 	flush_all_output()
@@ -328,12 +321,19 @@ end
 	# to be able to compute `n_max` in the first place, we need to resize
 	# this first list to `n_max` (in the loop below `_recompute_idxs_to_add!`
 	# will do it for us).
-	resize!(to_unfix, n_max)
+	n_max < length(to_unfix) && resize!(to_unfix, n_max)
 	# Not sure if restarting the model use the old values as start values.
 	#all_vars = all_variables(model)
 	num_positive_rp_vars = initial_num_positive_rp_vars
 	# The iterative pricing continue until there are variables to unfix.
 	num_vars_added_back_to_LP_by_iterated = zero(P)
+	if JuMP.solver_name(model) == "Gurobi"
+		old_method = get_optimizer_attribute(model, "Method")
+		# Change the LP-solving method to dual simplex, this allows for better
+		# reuse of the partial solution.
+		set_optimizer_attribute(model, "Method", 1)
+		#set_optimizer_attribute(model, "Presolve", 0)
+	end
 	while !isempty(to_unfix)
 		debug && begin
 			@show num_positive_rp_vars

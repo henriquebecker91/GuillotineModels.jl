@@ -1,6 +1,8 @@
+#import InteractiveUtils.@which
+
 # highest_plate_idx should be greater-than-or-equal-to the largest
 # value found in any field of any element of `cuts`.
-function _reachable_plate_types(
+@timeit TIMER function _reachable_plate_types(
 	cuts :: Vector{NTuple{3, P}}, highest_plate_idx :: P
 ) where {P}
 	children = [P[] for _ in 1:highest_plate_idx]
@@ -26,7 +28,7 @@ end
 
 # Works for both cuts and extractions, both have the parent plate as their
 # first field.
-function _reachable_carves(carves, reachable_plates)
+@timeit TIMER function _reachable_carves(carves, reachable_plates)
 	# We start from the premise the extractions are reachable because this is
 	# more probable than the opposite.
 	qt_rc = length(carves) # TODO: get the correct number type for this?
@@ -41,7 +43,7 @@ function _reachable_carves(carves, reachable_plates)
 	return qt_rc, rc
 end
 
-function _reachable(
+@timeit TIMER function _reachable(
 	np :: Vector{Tuple{P, D}},
 	cuts :: Vector{NTuple{3, P}},
 	highest_plate_idx :: P
@@ -52,26 +54,28 @@ function _reachable(
 	return qt_re, re, qt_rc, rc, qt_rp, rp
 end
 
-function _print_unreachable_plates(num_reached, reachable, pli_lwb)
+@timeit TIMER function _print_unreachable_plates(num_reached, reachable, pli_lwb)
 	total_num_plates = length(pli_lwb)
 	@assert num_reached <= total_num_plates
 	@assert length(reachable) == total_num_plates
 	qt_unreachable_plate_types = total_num_plates - num_reached
 	@show qt_unreachable_plate_types
-	println("START_UNREACHABLE_PLATES")
+	iob = IOBuffer()
+	write(iob, "START_UNREACHABLE_PLATES\n")
 	if qt_unreachable_plate_types > 0
 		for (plate_idx, isreachable) in zip(1:total_num_plates, reachable)
 			if !isreachable
 				l, w, b = pli_lwb[plate_idx]
-				println("i $plate_idx l $l w $w b $b")
+				write(iob, "i $plate_idx l $l w $w b $b\n")
 			end
 		end
 	end
-	println("END_UNREACHABLE_PLATES")
+	write(iob, "END_UNREACHABLE_PLATES\n")
+	print(read(seekstart(iob), String))
 	return
 end
 
-function _inner_purge_unreachable!(
+@timeit TIMER function _purge_unreachable!(
 	bp :: ByproductPPG2KP{D, S, P}, model, qt_re, re, qt_rc, rc, qt_rp, rp
 ) where {D, S, P}
 	@assert length(bp.np) == length(re)
@@ -126,6 +130,9 @@ function _inner_purge_unreachable!(
 	# Then we remove the constraints and the new indexes of cuts and
 	# extractions are now correct.
 	kept_cons, blot_cons = _partition_by_bits(rp, model[:plate_cons])
+	#@show @which JuMP.delete(model, blot_cons)
+	#@show @which MOI.delete(backend(model), index.(blot_cons))
+	#MOI.delete(backend(model), index.(blot_cons))
 	JuMP.delete(model, blot_cons)
 	model[:plate_cons] = kept_cons
 	deleteat!(bp.pli_lwb, .!rp)
@@ -133,22 +140,25 @@ function _inner_purge_unreachable!(
 	return bp
 end
 
-@timeit TIMER function _purge_unreachable!(bp, model, debug)
+@timeit TIMER function _handle_unreachable!(bp, model, debug, purge)
+	!debug && !purge && return bp
 	qt_re, re, qt_rc, rc, qt_rp, rp = _reachable(
 		bp.np, bp.cuts, lastindex(bp.pli_lwb)
 	)
-	# TODO: consider printing unreachable vars too?
+	# The unreachable variables are not printed because they can be derived from
+	# the set of unreachable plates. Every unreachable variable is just a
+	# variable/cut in which the parent plate is an unreachable plate.
 	debug && _print_unreachable_plates(qt_rp, rp, bp.pli_lwb)
 	@assert qt_re <= length(bp.np) && qt_re >= zero(qt_re)
 	@assert qt_rc <= length(bp.cuts) && qt_rc >= zero(qt_rc)
 	@assert qt_rp <= length(bp.pli_lwb) && qt_rp >= zero(qt_rp)
-	if (qt_re + qt_rc + qt_rp) > 0
-		if debug
-			println("qt_reachable_extractions = $qt_re")
-			println("qt_reachable_cuts = $qt_rc")
-			println("qt_reachable_plate_types = $qt_rp")
-		end
-		bp = _inner_purge_unreachable!(bp, model, qt_re, re, qt_rc, rc, qt_rp, rp)
+	if debug
+		println("qt_reachable_extractions = $qt_re")
+		println("qt_reachable_cuts = $qt_rc")
+		println("qt_reachable_plate_types = $qt_rp")
+	end
+	if purge && (qt_re + qt_rc + qt_rp) > 0
+		bp = _purge_unreachable!(bp, model, qt_re, re, qt_rc, rc, qt_rp, rp)
 	end
 	return bp
 end

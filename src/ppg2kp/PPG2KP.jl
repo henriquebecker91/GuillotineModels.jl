@@ -319,9 +319,8 @@ function _no_arg_check_build_model(
 		println("length_pe_after_pricing = $(length(model[:picuts]))")
 		println("length_cm_after_pricing = $(length(model[:cuts_made]))")
 	end
-	if !options["no-unreachable-check"]
-		bp = _purge_unreachable!(bp, model, debug)
-	end
+	purge = !options["do-not-purge-unreachable"]
+	bp = _handle_unreachable!(bp, model, debug, purge)
 
 	return bp
 end

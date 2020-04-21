@@ -109,9 +109,9 @@ version = "0.1.0"
 
 [[Gurobi]]
 deps = ["Libdl", "LinearAlgebra", "MathOptInterface", "MathProgBase", "SparseArrays"]
-git-tree-sha1 = "619f241433b5127f9561ddcdc75b2023513c76ea"
+path = "/home/henrique/AreaDeTrabalho/Gurobi.jl/"
 uuid = "2e9cd046-0924-5485-92f1-d5272153d98b"
-version = "0.7.6"
+version = "0.7.7"
 
 [[HTTP]]
 deps = ["Base64", "Dates", "IniFile", "MbedTLS", "Sockets"]

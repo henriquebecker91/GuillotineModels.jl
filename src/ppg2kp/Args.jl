@@ -77,11 +77,14 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			" Overrides the verbose flag. ."
 		),
 		Arg(
-			"no-unreachable-check", false,
+			"do-not-purge-unreachable", false,
 			"By default, the code removes variables and constraints that are" *
 			" useless (because the only way to reach them was removed by some" *
 			" other mechanism, like pricing), this flag disables this feature" *
-			" and leave the work to the presolver of the MIP solver."
+			" and leave the work to the presolver of the MIP solver. Note that" *
+			" if the 'verbose' flag is enabled then the unreachable variables" *
+			" and constraints will be searched and printed, even if they are" *
+			" not removed from the model after."
 		)
 	]
 end
