@@ -317,3 +317,17 @@ end # build_model_with_symmbreak
 	end
 =#
 
+# A situation that occurred with some LP solving methods was the following:
+# The method below intends to fix an unproductive behavior that happened with
+# some LP methods. The method would give a very small positive reduced profit
+# for a few variables, and the _iterative_pricing would keep executing because
+# of it. The values were so small and the variables so few that they could not
+# affect the objective value of the LP significantly, but triggered a
+# resolving anyway.
+function _is_significant(LP, cuts, plate_cons)
+	delta_to_next_int = (one(LP) + floor(LP)) - LP
+	improvement = sum(_reduced_profit.(cuts, (plate_cons,)))
+	@show improvement
+	@show delta_to_next_int
+	return improvement >= delta_to_next_int
+end

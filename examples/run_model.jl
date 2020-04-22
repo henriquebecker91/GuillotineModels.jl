@@ -31,6 +31,6 @@ import GLPK
 # here, as it is done with the already supported solvers.
 
 GuillotineModels.CommandLine.run()
-TimerOutputs.print_timer(GuillotineModels.TIMER)
+TimerOutputs.print_timer(GuillotineModels.TIMER; allocations = false)
 println()
 

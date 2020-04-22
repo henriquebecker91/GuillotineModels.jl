@@ -94,7 +94,7 @@ end
 	#@timeit TIMER "fix_uc"
 	fix.(uc_vars, 0.0; force = true)
 	# Get the solution of the heuristic.
-	bkv, _, shelves = Heuristic.iterated_greedy(
+	bkv, _, shelves = @timeit TIMER "primal_heuristic" Heuristic.iterated_greedy(
 		d, p, bp.l, bp.w, bp.L, bp.W, rng
 	)
 	sol = Heuristic.shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
@@ -107,7 +107,6 @@ end
 	if termination_status(model) == MOI.OPTIMAL
 		#@show objective_bound(model)
 		#@show objective_value(model)
-		@show model
 		LP = UB = objective_value(model)
 		#@show value.(rc_vars)
 		!isinf(UB) && (UB = floor(UB + eps(UB))) # theoretically sane UB
@@ -326,20 +325,15 @@ end
 	#all_vars = all_variables(model)
 	num_positive_rp_vars = initial_num_positive_rp_vars
 	# The iterative pricing continue until there are variables to unfix.
-	num_vars_added_back_to_LP_by_iterated = zero(P)
-	if JuMP.solver_name(model) == "Gurobi"
-		old_method = get_optimizer_attribute(model, "Method")
-		# Change the LP-solving method to dual simplex, this allows for better
-		# reuse of the partial solution.
-		set_optimizer_attribute(model, "Method", 1)
-		#set_optimizer_attribute(model, "Presolve", 0)
-	end
+	qt_vars_added_back_to_LP_by_iterated = zero(P)
+	qt_iters = zero(P)
 	while !isempty(to_unfix)
 		debug && begin
-			@show num_positive_rp_vars
-			@show length(to_unfix)
-			num_vars_added_back_to_LP_by_iterated += length(to_unfix)
-			@show was_above_threshold
+			qt_iters += one(P)
+			println("qt_positive_rp_vars_iter_$(qt_iters) = $(num_positive_rp_vars)")
+			println("above_threshold_iter_$(qt_iters) = $(was_above_threshold)")
+			println("qt_vars_added_to_LP_iter_$(qt_iters) = $(length(to_unfix))")
+			qt_vars_added_back_to_LP_by_iterated += length(to_unfix)
 		end
 		@timeit TIMER "update_bounds" begin
 			unfixed_vars = unused_vars[to_unfix]
@@ -363,15 +357,10 @@ end
 		)
 		was_above_threshold && (pricing_threshold_hits += 1)
 	end
-
 	if debug
+		println("qt_iterations_of_iterated_pricing = $qt_iters")
 		@show pricing_threshold_hits
-		@show num_vars_added_back_to_LP_by_iterated
-	end
-	if JuMP.solver_name(model) == "Gurobi"
-		# Undo the change done before (look at where old_method is defined).
-		set_optimizer_attribute(model, "Method", old_method)
-		#set_optimizer_attribute(model, "Presolve", -1)
+		@show qt_vars_added_back_to_LP_by_iterated
 	end
 
 	return
@@ -412,6 +401,14 @@ end
 @timeit TIMER function _furini_pricing!(
 	model, byproduct, d, p, seed, alpha, beta, debug
 ) where {D, S, P}
+	if JuMP.solver_name(model) == "Gurobi"
+		old_method = get_optimizer_attribute(model, "Method")
+		# Change the LP-solving method to dual simplex, this allows for better
+		# reuse of the partial solution.
+		set_optimizer_attribute(model, "Method", 1)
+		#set_optimizer_attribute(model, "Presolve", 0)
+	end
+
 	rng = Xoroshiro128Plus(seed)
 	rc_idxs = _all_restricted_cuts_idxs(byproduct)
 	bkv, sol, pe_svcs, cm_svcs = _restricted_final_pricing!(
@@ -436,6 +433,11 @@ end
 	@timeit TIMER "last_restore" @views restore!(
 		[model[:picuts]; model[:cuts_made]], [pe_svcs; cm_svcs[to_keep_bits]]
 	)
+	if JuMP.solver_name(model) == "Gurobi"
+		# Undo the change done before (look at where old_method is defined).
+		set_optimizer_attribute(model, "Method", old_method)
+		#set_optimizer_attribute(model, "Presolve", -1)
+	end
 
 	return byproduct
 end
@@ -462,7 +464,7 @@ end
 	@assert all(v -> has_lower_bound(v) & !is_fixed(v), cm_vars)
 	LP = objective_value(model) # the model should be relaxed and solved now
 	LB = 0.0
-	@timeit TIMER "heuristic" begin
+	@timeit TIMER "primal_heuristic" begin
 		rng = Xoroshiro128Plus(seed)
 		bkv, _, _ = Heuristic.iterated_greedy(
 			d, p, bp.l, bp.w, bp.L, bp.W, rng

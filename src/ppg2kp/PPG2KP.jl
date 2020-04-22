@@ -293,11 +293,10 @@ function _no_arg_check_build_model(
 	bp = build_complete_model(model, d, p, l, w, L, W, options)
 	debug = options["verbose"] && !options["quiet"]
 	pricing = options["pricing"]
-	debug && begin
-		length_pe_before_pricing = length(model[:picuts])
-		length_cm_before_pricing = length(model[:cuts_made])
-		@show length_pe_before_pricing
-		@show length_cm_before_pricing
+	if debug
+		println("length_pe_before_pricing = $(length(model[:picuts]))")
+		println("length_cm_before_pricing = $(length(model[:cuts_made]))")
+		println("length_pc_before_pricing = $(length(model[:plate_cons]))")
 	end
 	if pricing != "none"
 		if pricing == "expected"
@@ -318,9 +317,15 @@ function _no_arg_check_build_model(
 	if debug
 		println("length_pe_after_pricing = $(length(model[:picuts]))")
 		println("length_cm_after_pricing = $(length(model[:cuts_made]))")
+		println("length_pc_after_pricing = $(length(model[:plate_cons]))")
 	end
 	purge = !options["do-not-purge-unreachable"]
 	bp = _handle_unreachable!(bp, model, debug, purge)
+	if debug && purge
+		println("length_pe_after_purge = $(length(model[:picuts]))")
+		println("length_cm_after_purge = $(length(model[:cuts_made]))")
+		println("length_pc_after_purge = $(length(model[:plate_cons]))")
+	end
 
 	return bp
 end
