@@ -169,27 +169,26 @@ specific and are extracted and passed to their specific methods.
 
 	if !pp["no-csv-output"]
 		#@show time_to_solve_model
+		obj_value = 0.0
 		if primal_status(m) == MOI.FEASIBLE_POINT
-			obj_value = objective_value(m)
-			solution = get_cut_pattern(model_id, m, eltype(d), eltype(l), bmr)
-			@show solution
-			println(
-				"PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
-				"\nPRETTY_STR_SOLUTION_END\n"
-			)
-			println(
-				"SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
-				to_pretty_str(simplify!(deepcopy(solution))) *
-				"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
-			)
-		else
-			obj_value = 0
+			@timeit TIMER "print_solution" begin
+				obj_value = objective_value(m)
+				solution = get_cut_pattern(model_id, m, eltype(d), eltype(l), bmr)
+				@show solution
+				println(
+					"PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
+					"\nPRETTY_STR_SOLUTION_END\n"
+				)
+				println(
+					"SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
+					to_pretty_str(simplify!(deepcopy(solution))) *
+					"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
+				)
+			end
 		end
 		@show obj_value
-		if !pp["relax2lp"]
-			obj_bound = objective_bound(m)
-			@show obj_bound
-		end
+		obj_bound = objective_bound(m)
+		@show obj_bound
 		stop_reason = termination_status(m)
 		@show stop_reason
 		stop_code = Int64(stop_reason)

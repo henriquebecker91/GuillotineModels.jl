@@ -19,6 +19,7 @@ using Random#: shuffle!
 import ...CutPattern
 
 export first_fit_decr, iterated_greedy
+export Levels, fast_first_fit_decr, fast_iterated_greedy
 
 """
     promising_kfirst(::Type{D}, p, a, bkv, A) :: D
@@ -43,7 +44,7 @@ function promising_kfirst(
 ) :: D where {D, P}
 	@assert length(p) == length(a)
 	sump, suma = zero(P), zero(P)
-	for k = 1:length(p)
+	for k in eachindex(p)
 		suma += a[k]
 		suma > A && return zero(D)
 		sump += p[k]
@@ -68,16 +69,20 @@ expand([0, 1, 2, 3], [4, 5, 6, 7])
 """
 function expand(
 	d :: AbstractVector{D}, a :: AbstractVector{T}
-) :: Vector{T} where {D, T}
+) where {D, T}
 	n = length(d)
-	@assert length(a) == n
-	collect(Base.Iterators.Flatten(
-		map(zip(a, d)) do (v, q)
-			vs = similar(a, 1)
-			vs[1] = v
-			repeat(vs, q)
+	@assert axes(d) == axes(a)
+	sum_d = sum(d)
+	b = Vector{T}(undef, sum_d)
+	next = 1
+	for k in eachindex(d)
+		a_k = a[k]
+		for _ = 1:d[k]
+			b[next] = a_k
+			next += 1
 		end
-	))
+	end
+	return b
 end
 
 """
@@ -197,6 +202,108 @@ function iterated_greedy(
 	return bkv, sel, pat
 end
 
+# Pre-allocated struct for fast_first_fit_decr.
+struct Levels{D, S}
+	lw :: Vector{S} # width of the level
+	ll :: Vector{S} # length of the level
+	la :: Vector{D} # the amount of pieces in the level
+	qt :: Ref{Int} # quantity of levels
+	function Levels{D, S}(max_length :: Int) where {D, S}
+		return new(
+			Vector{S}(undef, max_length),
+			Vector{S}(undef, max_length),
+			Vector{D}(undef, max_length),
+			Ref(0)
+		)
+	end
+end
+
+Base.empty!(c :: Levels{D, S}) where {D, S} = c.qt[] = 0
+
+function _extract_shelves(
+	pat :: AbstractArray{D, 2},
+	lvls :: Levels{D, S}
+) where {D, S}
+	shelves = [Vector{D}(undef, lvls.la[i]) for i = 1:lvls.qt[]]
+	for i = 1:lvls.qt[]
+		shelve = shelves[i]
+		for j = 1:lvls.la[i]
+			shelve[j] = pat[j, i]
+		end
+	end
+	return shelves
+end
+
+function fast_iterated_greedy(
+	d :: AbstractVector{D},
+	p :: AbstractVector{P},
+	l :: AbstractVector{S},
+	w :: AbstractVector{S},
+	L :: S,
+	W :: S,
+	rng :: AbstractRNG,
+	max_iter_since_last_improv :: I = 1000000
+) :: Tuple{P, Vector{D}, Vector{Vector{D}}} where {D, S, P, I}
+	n = length(d) # number of distinct piece types
+	A = convert(P, L) * convert(P, W)
+	# assert explanation: all vectors should be the same length.
+	@assert [n] == unique!(length.([p, l, w]))
+	# loop control variables
+	curr_iter = 0 # current iteration
+	iter_last_improv = 0 # last iteration in which bkv changed
+	# Expand all vector by the demand. This corrects the algorithm for instances
+	# in which not all piece types have just a single piece.
+	pe, le, we = expand.((d, d, d), (p, l, w))
+	m = length(pe) # the same as sum(d), the number of pieces (not piece types)
+	# The values for first_fit_decr (they will be overwritten unless n == 0)
+	bkv = zero(P) # best known value
+	sel = zeros(D, n) # like 'd' but with the pieces selected for the solution
+	pat = Array{D, 2}(undef, (m, m)) # the cut pattern (is always a 2-stage cut)
+	lvls = Levels{D, S}(m)
+	# Create a first ordering by efficiency (i.e., cost-benefit, profit-to-area
+	# ratio). This way, the same instance with the same RNG will have the same
+	# results, independent from the initial ordering of the piece types.
+	ie = expand(d, collect(1:n)) # permutation used to keep the original order
+	ae = @. convert(P, le) * convert(P, we)
+	ee = @. pe / convert(Float64, ae)
+	oe = sortperm(ee)
+
+	tmp_sel = zeros(D, n)
+	tmp_pat = Array{D, 2}(undef, (m, m))
+	tmp_lvls = Levels{D, S}(m)
+	while curr_iter - iter_last_improv <= max_iter_since_last_improv
+		curr_iter += 1
+		permute!.((pe, le, we, ae, ie), (oe, oe, oe, oe, oe))
+		k = promising_kfirst(D, pe, ae, bkv, A)
+		if !iszero(k)
+			@views pe_,le_,we_,ae_,ie_ = pe[1:k],le[1:k],we[1:k],ae[1:k],ie[1:k]
+			oe_ = sortperm(we_; rev = true)
+			permute!.((pe_, le_, we_, ae_, ie_), (oe_, oe_, oe_, oe_, oe_))
+			new_v = fast_first_fit_decr!(
+				tmp_sel, tmp_pat, tmp_lvls, pe_, le_, we_, ie_, n, L, W
+			)
+			@assert sum(tmp_sel .* p) == new_v
+			if new_v > bkv
+				bkv, sel, pat, lvls = new_v,
+					deepcopy(tmp_sel), deepcopy(tmp_pat), deepcopy(tmp_lvls)
+			end
+		end
+		shuffle!(rng, oe)
+	end
+
+	#=
+	nz_i = collect(i for i in 1:n if !iszero(sel[i]))
+	@show nz_i
+	nz_sel = collect(sel[i] for i in 1:n if !iszero(sel[i]))
+	@show nz_sel
+	nz_l = collect(l[i] for i in 1:n if !iszero(sel[i]))
+	@show nz_l
+	nz_w = collect(w[i] for i in 1:n if !iszero(sel[i]))
+	@show nz_w
+	=#
+	return bkv, sel, _extract_shelves(pat, lvls)
+end
+
 """
     first_fit_decr(p, l, w, t, n, L, W) :: (P, [D], [[D]])
 
@@ -286,5 +393,69 @@ function first_fit_decr(
 	return bkv, sel, pat
 end
 
+function fast_first_fit_decr!(
+	sel :: AbstractArray{D},
+	pat :: AbstractArray{D, 2},
+	lvls :: Levels{D, S},
+	p :: AbstractVector{P},
+	l :: AbstractVector{S},
+	w :: AbstractVector{S},
+	t :: AbstractVector{D},
+	n :: D, # number of distinct piece types (n >= maximum(t))
+	L :: S, # length of the plate
+	W :: S # width of the plate
+) :: P where {D, S, P}
+	c = lvls
+	# assert explanation: all vectors should be the same length.
+	#@assert isone(length(unique!(length.([p, l, w, t]))))
+	# assert explanation: this is first-fit WIDTH-decreasing
+	#@assert issorted(w; rev = true)
+	#lw = Vector{S}() # levels width
+	#ll = Vector{S}() # levels length
+	rw = W # remaining width
+	fill!(sel, zero(eltype(sel)))
+	empty!(lvls)
+	# The `pat` parameter is not reset because the code already
+	# works on the assumption that it is a dirty buffer.
+
+	bkv = zero(P) # best known value
+	#sel = zeros(D, n) # if piece i is cut then sel[t[i]] is incremented
+	#pat = Vector{Vector{D}}() # the pattern (always a 2-stage pattern)
+	for i in eachindex(t) # for each piece
+		assigned = false
+		for j in 1:c.qt[] # for each already open level
+			# assert reasoning: the levels are created with the width of previous
+			# pieces, and the pieces are ordered by decreasing width, therefore
+			# no piece may have more width than an already open level.
+			#@assert lw[j] >= w[i]
+			if c.ll[j] >= l[i] # checks if the level has enough length yet
+				c.ll[j] -= l[i]
+				bkv += p[i]
+				sel[t[i]] += one(D)
+				c.la[j] += 1 # increase the amount of pieces in that level
+				pat[c.la[j], j] = t[i]
+				assigned = true
+				break
+			end
+		end
+		# If the piece does not fit any already open level...
+		if !assigned
+			# ... and there is no space to open a new level, then jump to the
+			# next piece type.
+			rw < w[i] && continue
+			# ... but there is yet space to open a new level, create a new level.
+			c.qt[] += 1
+			c.lw[c.qt[]] = w[i]
+			c.ll[c.qt[]] = L - l[i]
+			c.la[c.qt[]] = one(D)
+			rw -= w[i]
+			bkv += p[i]
+			sel[t[i]] += one(D)
+			pat[1, c.qt[]] = t[i]
+		end
+	end
+
+	return bkv
+end
 end # module
 

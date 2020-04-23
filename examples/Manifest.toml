@@ -111,7 +111,7 @@ version = "0.1.0"
 deps = ["Libdl", "LinearAlgebra", "MathOptInterface", "MathProgBase", "SparseArrays"]
 path = "/home/henrique/AreaDeTrabalho/Gurobi.jl/"
 uuid = "2e9cd046-0924-5485-92f1-d5272153d98b"
-version = "0.7.7"
+version = "0.8.0"
 
 [[HTTP]]
 deps = ["Base64", "Dates", "IniFile", "MbedTLS", "Sockets"]
@@ -185,9 +185,9 @@ version = "1.0.2"
 
 [[MbedTLS_jll]]
 deps = ["Libdl", "Pkg"]
-git-tree-sha1 = "066a4467008745eed36dad973ceb66405785a621"
+git-tree-sha1 = "c83f5a1d038f034ad0549f9ee4d5fac3fb429e33"
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
-version = "2.16.0+1"
+version = "2.16.0+2"
 
 [[Mmap]]
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
