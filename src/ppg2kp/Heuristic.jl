@@ -17,6 +17,7 @@ module Heuristic
 
 using Random#: shuffle!
 import ...CutPattern
+import UnsafeArrays
 
 export first_fit_decr, iterated_greedy
 export Levels, fast_first_fit_decr, fast_iterated_greedy
@@ -234,6 +235,16 @@ function _extract_shelves(
 	return shelves
 end
 
+# CAUTION: this method does not assert it, but the three vectors need to have
+# the same axes (not just the length) and all values inside indexes must be
+# valid indexes for the two other vectors.
+function _swap_permute!(buffer, values, indexes)
+	for (new, old) in pairs(indexes)
+		buffer[new] = values[old]
+	end
+	return buffer, values
+end
+
 function fast_iterated_greedy(
 	d :: AbstractVector{D},
 	p :: AbstractVector{P},
@@ -244,7 +255,7 @@ function fast_iterated_greedy(
 	rng :: AbstractRNG,
 	max_iter_since_last_improv :: I = 1000000
 ) :: Tuple{P, Vector{D}, Vector{Vector{D}}} where {D, S, P, I}
-	n = length(d) # number of distinct piece types
+	n = convert(D, length(d)) # number of distinct piece types
 	A = convert(P, L) * convert(P, W)
 	# assert explanation: all vectors should be the same length.
 	@assert [n] == unique!(length.([p, l, w]))
@@ -253,7 +264,9 @@ function fast_iterated_greedy(
 	iter_last_improv = 0 # last iteration in which bkv changed
 	# Expand all vector by the demand. This corrects the algorithm for instances
 	# in which not all piece types have just a single piece.
-	pe, le, we = expand.((d, d, d), (p, l, w))
+	pe = expand(d, p)
+	le = expand(d, l)
+	we = expand(d, w)
 	m = length(pe) # the same as sum(d), the number of pieces (not piece types)
 	# The values for first_fit_decr (they will be overwritten unless n == 0)
 	bkv = zero(P) # best known value
@@ -263,32 +276,57 @@ function fast_iterated_greedy(
 	# Create a first ordering by efficiency (i.e., cost-benefit, profit-to-area
 	# ratio). This way, the same instance with the same RNG will have the same
 	# results, independent from the initial ordering of the piece types.
-	ie = expand(d, collect(1:n)) # permutation used to keep the original order
+	ie = expand(d, collect(one(D):n)) # permutation used to keep the original order
 	ae = @. convert(P, le) * convert(P, we)
 	ee = @. pe / convert(Float64, ae)
-	oe = sortperm(ee)
+	oe = convert.(D, sortperm(ee))
 
 	tmp_sel = zeros(D, n)
 	tmp_pat = Array{D, 2}(undef, (m, m))
 	tmp_lvls = Levels{D, S}(m)
-	while curr_iter - iter_last_improv <= max_iter_since_last_improv
-		curr_iter += 1
-		permute!.((pe, le, we, ae, ie), (oe, oe, oe, oe, oe))
-		k = promising_kfirst(D, pe, ae, bkv, A)
-		if !iszero(k)
-			@views pe_,le_,we_,ae_,ie_ = pe[1:k],le[1:k],we[1:k],ae[1:k],ie[1:k]
-			oe_ = sortperm(we_; rev = true)
-			permute!.((pe_, le_, we_, ae_, ie_), (oe_, oe_, oe_, oe_, oe_))
-			new_v = fast_first_fit_decr!(
-				tmp_sel, tmp_pat, tmp_lvls, pe_, le_, we_, ie_, n, L, W
-			)
-			@assert sum(tmp_sel .* p) == new_v
-			if new_v > bkv
-				bkv, sel, pat, lvls = new_v,
-					deepcopy(tmp_sel), deepcopy(tmp_pat), deepcopy(tmp_lvls)
+	aux_vec_D = Vector{D}(undef, m)
+	aux_oe_  = Vector{D}(undef, m)
+	aux_vec_S = Vector{S}(undef, m)
+	aux_vec_P = Vector{P}(undef, m)
+	# I think I do not need UnsafeArrays. The reason for views are:
+	# (1) fast_first_fit_decr, that is trivial to receive a `k` value and then
+	# just work over that subset; (2) getting the sortperm of a prefix of one
+	# of the arrays; (3) permuting the prefix of other arrays inplace considering
+	# this prefix.
+	UnsafeArrays.@uviews pe le we ae ie aux_oe_ aux_vec_D aux_vec_S aux_vec_P begin
+		while curr_iter - iter_last_improv <= max_iter_since_last_improv
+			curr_iter += 1
+			pe, aux_vec_P = _swap_permute!(aux_vec_P, pe, oe)
+			le, aux_vec_S = _swap_permute!(aux_vec_S, le, oe)
+			we, aux_vec_S = _swap_permute!(aux_vec_S, we, oe)
+			ae, aux_vec_P = _swap_permute!(aux_vec_P, ae, oe)
+			ie, aux_vec_D = _swap_permute!(aux_vec_D, ie, oe)
+			k = promising_kfirst(D, pe, ae, bkv, A)
+			if !iszero(k)
+				r = 1:k
+				@views pe_, le_, we_, ae_, ie_ = pe[r], le[r], we[r], ae[r], ie[r]
+				@views aux_vec_D_, aux_vec_S_, aux_vec_P_ = aux_vec_D[r], aux_vec_S[r], aux_vec_P[r]
+				oe_ = @view aux_oe_[r]
+				sortperm!(oe_, we_; rev = true)
+				permute!.((pe_, le_, we_, ae_, ie_), (oe_, oe_, oe_, oe_, oe_))
+				#pe_, aux_vec_P_ = _swap_permute!(aux_vec_P_, pe_, oe_)
+				#le_, aux_vec_S_ = _swap_permute!(aux_vec_S_, le_, oe_)
+				#we_, aux_vec_S_ = _swap_permute!(aux_vec_S_, we_, oe_)
+				#ae_, aux_vec_P_ = _swap_permute!(aux_vec_P_, ae_, oe_)
+				#ie_, aux_vec_D_ = _swap_permute!(aux_vec_D_, ie_, oe_)
+				new_v = fast_first_fit_decr!(
+					tmp_sel, tmp_pat, tmp_lvls, pe_, le_, we_, ie_, n, L, W
+				)
+				#@assert sum(tmp_sel .* p) == new_v
+				if new_v > bkv
+					bkv = new_v
+					sel, tmp_sel = tmp_sel, sel
+					pat, tmp_pat = tmp_pat, pat
+					lvls, tmp_lvls = tmp_lvls, lvls
+				end
 			end
+			shuffle!(rng, oe)
 		end
-		shuffle!(rng, oe)
 	end
 
 	#=

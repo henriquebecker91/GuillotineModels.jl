@@ -102,7 +102,7 @@ uuid = "60bf3e95-4087-53dc-ae20-288a0d20c6a6"
 version = "0.12.1"
 
 [[GuillotineModels]]
-deps = ["ArgParse", "Dates", "DocStringExtensions", "JuMP", "MathOptInterface", "Random", "RandomNumbers", "Requires", "Statistics", "TimerOutputs"]
+deps = ["ArgParse", "Dates", "DocStringExtensions", "JuMP", "MathOptInterface", "Random", "RandomNumbers", "Requires", "Statistics", "TimerOutputs", "UnsafeArrays"]
 path = ".."
 uuid = "300ad42c-a273-11e9-37f6-175a19b744a4"
 version = "0.1.0"
@@ -229,6 +229,10 @@ uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
+[[Profile]]
+deps = ["Printf"]
+uuid = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
+
 [[REPL]]
 deps = ["InteractiveUtils", "Markdown", "Sockets"]
 uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
@@ -305,6 +309,11 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [[Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
+
+[[UnsafeArrays]]
+git-tree-sha1 = "9740b414f85ec2fa9135066f81b1fb14212befd6"
+uuid = "c4a57d5a-5b31-53a6-b365-19f8c011fbd6"
+version = "1.0.1"
 
 [[Zlib_jll]]
 deps = ["Libdl", "Pkg"]

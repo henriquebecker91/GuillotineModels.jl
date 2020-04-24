@@ -8,6 +8,7 @@ import GuillotineModels.InstanceReader.read_from_file
 using GuillotineModels.PPG2KP.Heuristic
 using TimerOutputs
 using RandomNumbers.Xorshifts # for Xoroshiro128Plus (for heuristic rng)
+import Profile
 
 function main(args)
 	timer = TimerOutput()
@@ -18,20 +19,20 @@ function main(args)
 		exit()
 	end
 	filename = args[1]
-	seed = (qt_args > 1 ? args[2] : 1)
-	max_iter = (qt_args > 2 ? args[3] : 1000000)
+	seed = (qt_args > 1 ? parse(Int, args[2]) : 1)
+	max_iter = (qt_args > 2 ? parse(Int, args[3]) : 1000000)
 
 	# Initializing.
 	N, L, W, l, w, p, d = read_from_file(filename)
 
-	GC.enable(false)
+	#GC.enable(false)
 	# Running.
 	rng = Xoroshiro128Plus(seed)
 	bkv2, sel2, pat2 = @timeit timer "mock_fast" begin
 		bkv, sel, pat = fast_iterated_greedy(
 			d, p, l, w, L, W, rng, 1
 		)
-		GC.gc()
+		#GC.gc()
 		bkv, sel, pat
 	end
 	rng = Xoroshiro128Plus(seed)
@@ -39,7 +40,7 @@ function main(args)
 		bkv, sel, pat = iterated_greedy(
 			d, p, l, w, L, W, rng, 1
 		)
-		GC.gc()
+		#GC.gc()
 		bkv, sel, pat
 	end
 	if (bkv1, sel1, pat1) == (bkv2, sel2, pat2)
@@ -59,13 +60,13 @@ function main(args)
 		@show pat2
 	end
 
-	# TODO: disable GC and the re-enable it and call it for each call
+	Profile.clear_malloc_data()
 	rng = Xoroshiro128Plus(seed)
 	bkv1, sel1, pat1 = @timeit timer "normal" begin
 		bkv, sel, pat = iterated_greedy(
 			d, p, l, w, L, W, rng, max_iter
 		)
-		GC.gc()
+		#GC.gc()
 		bkv, sel, pat
 	end
 	rng = Xoroshiro128Plus(seed)
@@ -73,7 +74,7 @@ function main(args)
 		bkv, sel, pat = fast_iterated_greedy(
 			d, p, l, w, L, W, rng, max_iter
 		)
-		GC.gc()
+		#GC.gc()
 		bkv, sel, pat
 	end
 	if (bkv1, sel1, pat1) == (bkv2, sel2, pat2)
