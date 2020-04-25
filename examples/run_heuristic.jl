@@ -30,7 +30,7 @@ function main(args)
 	rng = Xoroshiro128Plus(seed)
 	bkv2, sel2, pat2 = @timeit timer "mock_fast" begin
 		bkv, sel, pat = fast_iterated_greedy(
-			d, p, l, w, L, W, rng, 1
+			d, p, l, w, L, W, rng, max_iter
 		)
 		#GC.gc()
 		bkv, sel, pat
@@ -38,7 +38,7 @@ function main(args)
 	rng = Xoroshiro128Plus(seed)
 	bkv1, sel1, pat1 = @timeit timer "mock_normal" begin
 		bkv, sel, pat = iterated_greedy(
-			d, p, l, w, L, W, rng, 1
+			d, p, l, w, L, W, rng, max_iter
 		)
 		#GC.gc()
 		bkv, sel, pat

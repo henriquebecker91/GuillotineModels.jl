@@ -17,7 +17,6 @@ module Heuristic
 
 using Random#: shuffle!
 import ...CutPattern
-import UnsafeArrays
 
 export first_fit_decr, iterated_greedy
 export Levels, fast_first_fit_decr, fast_iterated_greedy
@@ -178,7 +177,7 @@ function iterated_greedy(
 		permute!.((pe, le, we, ae, ie), (oe, oe, oe, oe, oe))
 		k = promising_kfirst(D, pe, ae, bkv, A)
 		if !iszero(k)
-			@views pe_,le_,we_,ae_,ie_ = pe[1:k],le[1:k],we[1:k],ae[1:k],ie[1:k]
+			pe_,le_,we_,ae_,ie_ = pe[1:k],le[1:k],we[1:k],ae[1:k],ie[1:k]
 			oe_ = sortperm(we_; rev = true)
 			permute!.((pe_, le_, we_, ae_, ie_), (oe_, oe_, oe_, oe_, oe_))
 			new_v, new_sel, new_pat = first_fit_decr(pe_, le_, we_, ie_, n, L, W)
@@ -208,18 +207,18 @@ struct Levels{D, S}
 	lw :: Vector{S} # width of the level
 	ll :: Vector{S} # length of the level
 	la :: Vector{D} # the amount of pieces in the level
-	qt :: Ref{Int} # quantity of levels
-	function Levels{D, S}(max_length :: Int) where {D, S}
+	qt :: Base.RefValue{D} # quantity of levels (type `Ref` is abstract)
+	function Levels{D, S}(max_length :: D) where {D, S}
 		return new(
 			Vector{S}(undef, max_length),
 			Vector{S}(undef, max_length),
 			Vector{D}(undef, max_length),
-			Ref(0)
+			Ref(zero(D))
 		)
 	end
 end
 
-Base.empty!(c :: Levels{D, S}) where {D, S} = c.qt[] = 0
+Base.empty!(c :: Levels{D, S}) where {D, S} = c.qt[] = zero(D)
 
 function _extract_shelves(
 	pat :: AbstractArray{D, 2},
@@ -235,14 +234,36 @@ function _extract_shelves(
 	return shelves
 end
 
-# CAUTION: this method does not assert it, but the three vectors need to have
-# the same axes (not just the length) and all values inside indexes must be
-# valid indexes for the two other vectors.
-function _swap_permute!(buffer, values, indexes)
-	for (new, old) in pairs(indexes)
+# This method changes the first `length(indexes)` positions of `buffer`
+# to have the same value as `values[indexes]` would return. Then it returns
+# the two first parameters for convenience (the idea here is swap their
+# bindings and attribute `buffer` to the old name of `values` and `values` to
+# the old name of `buffer`).
+function _swap_permute!(buffer, values, indexes, k = length(indexes))
+	for (new, old) in zip(1:k, indexes)
 		buffer[new] = values[old]
 	end
 	return buffer, values
+end
+# The same as above for the inverse of the permutation.
+function _swap_invpermute!(buffer, values, indexes, k = length(indexes))
+	for (new, old) in zip(1:k, indexes)
+		buffer[old] = values[new]
+	end
+	return buffer, values
+end
+
+function insertionsort!(a, k = length(a))
+	for i in 1:(k-1)
+		value = a[i+1]
+		j = i
+		while j > 0 && a[j] > value
+			a[j+1] = a[j]
+			j -= 1
+		end
+		a[j+1] = value
+	end
+	return a
 end
 
 function fast_iterated_greedy(
@@ -281,53 +302,57 @@ function fast_iterated_greedy(
 	ee = @. pe / convert(Float64, ae)
 	oe = convert.(D, sortperm(ee))
 
-	tmp_sel = zeros(D, n)
-	tmp_pat = Array{D, 2}(undef, (m, m))
-	tmp_lvls = Levels{D, S}(m)
-	aux_vec_D = Vector{D}(undef, m)
-	aux_oe_  = Vector{D}(undef, m)
-	aux_vec_S = Vector{S}(undef, m)
-	aux_vec_P = Vector{P}(undef, m)
+	# Create unintialized copies of many structures above for using the
+	# technique of overwrite-and-swap-bindings, which avoid repeated allocation,
+	# or just use as a buffer.
+	aux_sel, aux_pat = similar(sel), similar(pat)
+	aux_lvls = Levels{D, S}(m)
+	aux_pe, aux_le, aux_we, aux_ae, aux_ie = similar.((pe, le, we, ae, ie))
+	prefix_oe = Vector{D}(undef, m)
+	permsort_buffer = Vector{Tuple{S, D}}(undef, m)
 	# I think I do not need UnsafeArrays. The reason for views are:
 	# (1) fast_first_fit_decr, that is trivial to receive a `k` value and then
 	# just work over that subset; (2) getting the sortperm of a prefix of one
 	# of the arrays; (3) permuting the prefix of other arrays inplace considering
 	# this prefix.
-	UnsafeArrays.@uviews pe le we ae ie aux_oe_ aux_vec_D aux_vec_S aux_vec_P begin
-		while curr_iter - iter_last_improv <= max_iter_since_last_improv
-			curr_iter += 1
-			pe, aux_vec_P = _swap_permute!(aux_vec_P, pe, oe)
-			le, aux_vec_S = _swap_permute!(aux_vec_S, le, oe)
-			we, aux_vec_S = _swap_permute!(aux_vec_S, we, oe)
-			ae, aux_vec_P = _swap_permute!(aux_vec_P, ae, oe)
-			ie, aux_vec_D = _swap_permute!(aux_vec_D, ie, oe)
-			k = promising_kfirst(D, pe, ae, bkv, A)
-			if !iszero(k)
-				r = 1:k
-				@views pe_, le_, we_, ae_, ie_ = pe[r], le[r], we[r], ae[r], ie[r]
-				@views aux_vec_D_, aux_vec_S_, aux_vec_P_ = aux_vec_D[r], aux_vec_S[r], aux_vec_P[r]
-				oe_ = @view aux_oe_[r]
-				sortperm!(oe_, we_; rev = true)
-				permute!.((pe_, le_, we_, ae_, ie_), (oe_, oe_, oe_, oe_, oe_))
-				#pe_, aux_vec_P_ = _swap_permute!(aux_vec_P_, pe_, oe_)
-				#le_, aux_vec_S_ = _swap_permute!(aux_vec_S_, le_, oe_)
-				#we_, aux_vec_S_ = _swap_permute!(aux_vec_S_, we_, oe_)
-				#ae_, aux_vec_P_ = _swap_permute!(aux_vec_P_, ae_, oe_)
-				#ie_, aux_vec_D_ = _swap_permute!(aux_vec_D_, ie_, oe_)
-				new_v = fast_first_fit_decr!(
-					tmp_sel, tmp_pat, tmp_lvls, pe_, le_, we_, ie_, n, L, W
-				)
-				#@assert sum(tmp_sel .* p) == new_v
-				if new_v > bkv
-					bkv = new_v
-					sel, tmp_sel = tmp_sel, sel
-					pat, tmp_pat = tmp_pat, pat
-					lvls, tmp_lvls = tmp_lvls, lvls
-				end
+	while curr_iter - iter_last_improv <= max_iter_since_last_improv
+		curr_iter += 1
+		pe, aux_pe = _swap_permute!(aux_pe, pe, oe)
+		le, aux_le = _swap_permute!(aux_le, le, oe)
+		we, aux_we = _swap_permute!(aux_we, we, oe)
+		ae, aux_ae = _swap_permute!(aux_ae, ae, oe)
+		ie, aux_ie = _swap_permute!(aux_ie, ie, oe)
+		k = promising_kfirst(D, pe, ae, bkv, A)
+		if !iszero(k)
+			# Create a sortperm of the first `k` elements of `we` with as
+			# little allocation as possible.
+			for i = one(D):k; permsort_buffer[i] = (we[i], i); end
+			insertionsort!(permsort_buffer, k)
+			reverse!(permsort_buffer, 1, k)
+			for i = one(D):k; prefix_oe[i] = last(permsort_buffer[i]); end
+			pe, aux_pe = _swap_permute!(aux_pe, pe, prefix_oe, k)
+			le, aux_le = _swap_permute!(aux_le, le, prefix_oe, k)
+			we, aux_we = _swap_permute!(aux_we, we, prefix_oe, k)
+			ae, aux_ae = _swap_permute!(aux_ae, ae, prefix_oe, k)
+			ie, aux_ie = _swap_permute!(aux_ie, ie, prefix_oe, k)
+			new_value = fast_first_fit_decr!(
+				aux_sel, aux_pat, aux_lvls, pe, le, we, ie, k, L, W
+			)
+			pe, aux_pe = _swap_invpermute!(aux_pe, pe, prefix_oe, k)
+			le, aux_le = _swap_invpermute!(aux_le, le, prefix_oe, k)
+			we, aux_we = _swap_invpermute!(aux_we, we, prefix_oe, k)
+			ae, aux_ae = _swap_invpermute!(aux_ae, ae, prefix_oe, k)
+			ie, aux_ie = _swap_invpermute!(aux_ie, ie, prefix_oe, k)
+			#@assert sum(aux_sel .* p) == new_value
+			if new_value > bkv
+				bkv = new_value
+				sel, aux_sel = aux_sel, sel
+				pat, aux_pat = aux_pat, pat
+				lvls, aux_lvls = aux_lvls, lvls
 			end
-			shuffle!(rng, oe)
 		end
-	end
+		shuffle!(rng, oe)
+	end # while
 
 	#=
 	nz_i = collect(i for i in 1:n if !iszero(sel[i]))
@@ -434,34 +459,24 @@ end
 function fast_first_fit_decr!(
 	sel :: AbstractArray{D},
 	pat :: AbstractArray{D, 2},
-	lvls :: Levels{D, S},
+	c :: Levels{D, S},
 	p :: AbstractVector{P},
 	l :: AbstractVector{S},
 	w :: AbstractVector{S},
 	t :: AbstractVector{D},
-	n :: D, # number of distinct piece types (n >= maximum(t))
+	k :: D, # consider only the first k positions in p, l, w, and, t
 	L :: S, # length of the plate
 	W :: S # width of the plate
 ) :: P where {D, S, P}
-	c = lvls
-	# assert explanation: all vectors should be the same length.
-	#@assert isone(length(unique!(length.([p, l, w, t]))))
-	# assert explanation: this is first-fit WIDTH-decreasing
-	#@assert issorted(w; rev = true)
-	#lw = Vector{S}() # levels width
-	#ll = Vector{S}() # levels length
 	rw = W # remaining width
 	fill!(sel, zero(eltype(sel)))
-	empty!(lvls)
+	empty!(c)
 	# The `pat` parameter is not reset because the code already
 	# works on the assumption that it is a dirty buffer.
-
 	bkv = zero(P) # best known value
-	#sel = zeros(D, n) # if piece i is cut then sel[t[i]] is incremented
-	#pat = Vector{Vector{D}}() # the pattern (always a 2-stage pattern)
-	for i in eachindex(t) # for each piece
+	for i in one(D):k # for each piece selected
 		assigned = false
-		for j in 1:c.qt[] # for each already open level
+		for j in one(D):c.qt[] # for each already open level
 			# assert reasoning: the levels are created with the width of previous
 			# pieces, and the pieces are ordered by decreasing width, therefore
 			# no piece may have more width than an already open level.
@@ -470,7 +485,7 @@ function fast_first_fit_decr!(
 				c.ll[j] -= l[i]
 				bkv += p[i]
 				sel[t[i]] += one(D)
-				c.la[j] += 1 # increase the amount of pieces in that level
+				c.la[j] += one(D) # increase the amount of pieces in that level
 				pat[c.la[j], j] = t[i]
 				assigned = true
 				break
@@ -482,14 +497,14 @@ function fast_first_fit_decr!(
 			# next piece type.
 			rw < w[i] && continue
 			# ... but there is yet space to open a new level, create a new level.
-			c.qt[] += 1
+			c.qt[] += one(D)
 			c.lw[c.qt[]] = w[i]
 			c.ll[c.qt[]] = L - l[i]
 			c.la[c.qt[]] = one(D)
 			rw -= w[i]
 			bkv += p[i]
 			sel[t[i]] += one(D)
-			pat[1, c.qt[]] = t[i]
+			pat[one(D), c.qt[]] = t[i]
 		end
 	end
 

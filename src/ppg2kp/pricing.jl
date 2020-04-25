@@ -1,3 +1,5 @@
+import .Heuristic.fast_iterated_greedy
+
 # Gives the indexes of all elements of bp.cuts that refer to a restricted cut.
 # NOTE: no extraction in bp.np can be seen as an unrestricted cut.
 function _all_restricted_cuts_idxs(
@@ -94,7 +96,7 @@ end
 	#@timeit TIMER "fix_uc"
 	fix.(uc_vars, 0.0; force = true)
 	# Get the solution of the heuristic.
-	bkv, _, shelves = @timeit TIMER "primal_heuristic" Heuristic.iterated_greedy(
+	bkv, _, shelves = @timeit TIMER "primal_heuristic" fast_iterated_greedy(
 		d, p, bp.l, bp.w, bp.L, bp.W, rng
 	)
 	sol = Heuristic.shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
@@ -466,7 +468,7 @@ end
 	LB = 0.0
 	@timeit TIMER "primal_heuristic" begin
 		rng = Xoroshiro128Plus(seed)
-		bkv, _, _ = Heuristic.iterated_greedy(
+		bkv, _, _ = fast_iterated_greedy(
 			d, p, bp.l, bp.w, bp.L, bp.W, rng
 		)
 		LB = convert(Float64, bkv)
