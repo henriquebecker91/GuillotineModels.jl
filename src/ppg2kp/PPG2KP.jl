@@ -1,15 +1,12 @@
 module PPG2KP
-# 2.2) Finally, check which variables are fixed to zero and remove them both
-#   from the model as from the ByproductPPG2KP. We need to check if we will
-#   remove constraints that become irrelevant, if this is done we will need
-#   to update all the cuts to refer to the new plate indexes.
-# Include submodules.
+# Include submodules. Even if not used here, they need to be here to be
+# avaliable for users to access/import.
 include("./Heuristic.jl")
 include("./Args.jl")
 include("./Enumeration.jl")
 
-import ..TIMER # for use with TimerOutputs.@timeit
-using .Enumeration
+import ..TIMER # Global module timer for use with TimerOutputs.@timeit.
+using .Enumeration # Where all the plate enumeration logic is defined.
 export ByproductPPG2KP # re-export ByproductPPG2KP from Enumeration
 
 using ..Utilities

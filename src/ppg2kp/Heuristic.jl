@@ -253,17 +253,26 @@ function _swap_invpermute!(buffer, values, indexes, k = length(indexes))
 	return buffer, values
 end
 
-function insertionsort!(a, k = length(a))
-	for i in 1:(k-1)
-		value = a[i+1]
+# Shamelessly stolen from: https://github.com/JuliaLang/julia/blob/
+# 81a044f988abd26509d9c1db53f6e9eee2f5da6f/base/sort.jl#L493-L508
+# License is MIT: https://julialang.org/license
+function _sort_range_rev_by_insertion!(
+	v::AbstractVector, lo::Integer, hi::Integer
+)
+	@inbounds for i = lo+1:hi
 		j = i
-		while j > 0 && a[j] > value
-			a[j+1] = a[j]
-			j -= 1
+		x = v[i]
+		while j > lo
+			if x > v[j-1]
+				v[j] = v[j-1]
+				j -= 1
+				continue
+			end
+			break
 		end
-		a[j+1] = value
+		v[j] = x
 	end
-	return a
+	return v
 end
 
 function fast_iterated_greedy(
@@ -327,8 +336,15 @@ function fast_iterated_greedy(
 			# Create a sortperm of the first `k` elements of `we` with as
 			# little allocation as possible.
 			for i = one(D):k; permsort_buffer[i] = (we[i], i); end
-			insertionsort!(permsort_buffer, k)
-			reverse!(permsort_buffer, 1, k)
+			# If this call to a internal undocumented `Base.Sort.sort!` method ever
+			# breaks, just comment it and uncomment the call to InsertionSort right
+			# below, it can be a little slower for larger sets, but works fine
+			# enough. The code of the method below was not copyed because it makes
+			# use of many helper methods (as opposed to InsertionSortAlg).
+			Base.Sort.sort!(
+				permsort_buffer, 1, k, Base.Sort.QuickSort, Base.Sort.Reverse
+			)
+			#_sort_range_rev_by_insertion!(permsort_buffer, 1, k)
 			for i = one(D):k; prefix_oe[i] = last(permsort_buffer[i]); end
 			pe, aux_pe = _swap_permute!(aux_pe, pe, prefix_oe, k)
 			le, aux_le = _swap_permute!(aux_le, le, prefix_oe, k)
