@@ -71,7 +71,7 @@ end
 @timeit TIMER function _restricted_final_pricing!(
 	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, rng, debug :: Bool = false
-) #=:: Tuple{P, CutPattern{D, S}, Vector{SavedVarConf}} =# where {D, S, P}
+) where {D, S, P}
 	# First we save all the variables bounds and types and relax all of them.
 	#all_vars = all_variables(model)
 	#n = length(all_vars)
@@ -82,10 +82,8 @@ end
 	# will need to be reworked. Now it only relax/fix variables in those sets
 	# so it will need to be sensibly extended to new sets of variables.
 	@assert n == length(cm) + length(pe)
-	#@timeit TIMER "relax_cm"
-	cm_svcs = relax!(cm)
-	#@timeit TIMER "relax_pe"
-	pe_svcs = relax!(pe)
+	@timeit TIMER "relax_cm" cm_svcs = relax!(cm)
+	@timeit TIMER "relax_pe" pe_svcs = relax!(pe)
 	#@assert length(cm) == length(bp.cuts)
 	rc_vars = cm[rc_idxs]
 	rc_svcs = cm_svcs[rc_idxs]
@@ -93,13 +91,15 @@ end
 	uc_idxs = _setdiff_sorted(keys(cm), rc_idxs)
 	# Fix all unrestricted cuts (pool vars).
 	uc_vars = cm[uc_idxs]
-	#@timeit TIMER "fix_uc"
-	fix.(uc_vars, 0.0; force = true)
+	@timeit TIMER "fix_uc" fix.(uc_vars, 0.0; force = true)
 	# Get the solution of the heuristic.
 	bkv, _, shelves = @timeit TIMER "primal_heuristic" fast_iterated_greedy(
 		d, p, bp.l, bp.w, bp.L, bp.W, rng
 	)
-	sol = Heuristic.shelves2cutpattern(shelves, bp.l, bp.w, bp.L, bp.W)
+	# TODO: use shelves to warmstart the model
+	sol = @timeit TIMER "shelves2cutpatterns" Heuristic.shelves2cutpattern(
+		shelves, bp.l, bp.w, bp.L, bp.W
+	)
 	LB = convert(Float64, bkv)
 	# Solve the relaxed restricted model.
 	flush_all_output()
@@ -139,11 +139,12 @@ end
 	#all_vars_values = value.(all_vars) # needs to be done before any changes
 	rc_cuts = bp.cuts[rc_idxs]
 	plate_cons = model[:plate_cons]
-	if debug
+	# This is a little costy, and not necessary anymore.
+	#=if debug
 		println("stats on reduced profit values of restricted final pricing")
 		rps = _reduced_profit.(rc_cuts, (plate_cons,))
 		vector_summary(rps) # defined in GuillotineModels.Utilities
-	end
+	end=#
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
 	rc_discrete_bitstr = # the final pricing (get which variables should remain)
@@ -160,21 +161,23 @@ end
 	# Below the SavedVarConf is not stored because they will be kept fixed
 	# for now, and when restored, they will be restored to their original
 	# state (rc_svcs) not this intermediary one.
-	#@timeit TIMER "fix_rc_subset"
-	fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
+	@timeit TIMER "fix_rc_subset" fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
 	# The discrete variables are the restricted cuts that were not removed
 	# by the final pricing of the restricted model and will be in the MIP
 	# of the restricted model.
 	discrete_vars = rc_vars[rc_discrete_bitstr]
-	#@timeit TIMER "restore_ss_cm"
-	restore!(discrete_vars, rc_svcs[rc_discrete_bitstr])
+	@timeit TIMER "restore_ss_cm" restore!(
+		discrete_vars, rc_svcs[rc_discrete_bitstr]
+	)
 	# All piece extractions also need to be restored.
-	#@timeit TIMER "restore_pe"
-	restore!(pe, pe_svcs)
-	#set_start_value.(all_vars, all_vars_values)
+	@timeit TIMER "restore_pe" restore!(pe, pe_svcs)
+	#@timeit TIMER "raw_ws" set_start_value.(all_vars, all_vars_values)
 	flush_all_output()
 	@timeit TIMER "mip_solve" optimize!(model) # restricted MIP solved
 	flush_all_output()
+	# NOTE: the below was disabled because get_cut_pattern is slow and
+	# we decided to keep the pricing as a '<=' (not '<'), so the variables
+	# necessary for the solution in the heuristic are present.
 	# If some primal solution was obtained, compare its value with the
 	# heuristic and keep the best one (the model can give a worse value
 	# as any variables that cannot contribute to a better solution are
@@ -185,19 +188,18 @@ end
 		#@show model_obj
 		if model_obj > LB
 			bkv = convert(P, model_obj)
-			sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
+			# Disabled because get_cut_pattern is not optimized nor necessary.
+			#sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
 		end
 	end
 	# The variables are left all relaxed but with only the variables used
 	# in the restricted priced model unfixed, the rest are fixed to zero.
-	#@timeit TIMER "relax_ss_rc"
-	relax!(rc_vars[rc_discrete_bitstr])
-	#@timeit TIMER "relax_pe"
-	relax!(pe)
+	@timeit TIMER "relax_ss_rc" relax!(rc_vars[rc_discrete_bitstr])
+	@timeit TIMER "relax_pe" relax!(pe)
 	#@assert all(v -> !is_integer(v) && !is_binary(v), all_variables(model))
 	#set_start_value.(all_vars, all_vars_values) # using the values of the LP
 
-	return bkv, sol, pe_svcs, cm_svcs
+	return bkv, #=sol,=# pe_svcs, cm_svcs
 end
 
 # Arguments:
@@ -413,7 +415,7 @@ end
 
 	rng = Xoroshiro128Plus(seed)
 	rc_idxs = _all_restricted_cuts_idxs(byproduct)
-	bkv, sol, pe_svcs, cm_svcs = _restricted_final_pricing!(
+	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
 		model, rc_idxs, d, p, byproduct, rng, debug
 	)
 	LB = convert(Float64, bkv)
@@ -449,12 +451,33 @@ end
 # an arbitrary LB value, and let it call the heuristic if it is not passed
 # NOTE: the d and p are necessary exactly because of the heuristic
 @timeit TIMER function _becker_pricing!(
-	bp, model, d, p, seed, debug
-)
+	bp :: ByproductPPG2KP{D, S, P}, model, d, p, seed, debug
+) where {D, S, P}
 	pe_vars = model[:picuts]
 	cm_vars = model[:cuts_made]
 	all_vars = [pe_vars; cm_vars]
 	@timeit TIMER "relax!" all_scvs = relax!(all_vars)
+	@timeit TIMER "primal_heuristic" begin
+		rng = Xoroshiro128Plus(seed)
+		bkv, _, pattern = fast_iterated_greedy(
+			d, p, bp.l, bp.w, bp.L, bp.W, rng
+		)
+		LB = convert(Float64, bkv)
+		if debug
+			# too costly, need to think about a --extra-verbose flag
+			#cp = Heuristic.shelves2cutpattern(pattern, bp.l, bp.w, bp.L, bp.W)
+			#println(to_pretty_str(cp))
+			@show LB
+		end
+	end
+	@timeit TIMER "warm_start" begin
+		cuts, extractions = cuts_and_extractions_from_2_staged_solution(
+			pattern, bp, false
+		)
+		qt_cuts = unify!(D, cuts)
+		qt_extractions = unify!(D, extractions)
+		raw_warm_start!(model, extractions, qt_extractions, cuts, qt_cuts)
+	end
 	flush_all_output()
 	@timeit TIMER "lp_solve" optimize!(model)
 	flush_all_output()
@@ -466,13 +489,6 @@ end
 	@assert all(v -> has_lower_bound(v) & !is_fixed(v), cm_vars)
 	LP = objective_value(model) # the model should be relaxed and solved now
 	LB = 0.0
-	@timeit TIMER "primal_heuristic" begin
-		rng = Xoroshiro128Plus(seed)
-		bkv, _, _ = fast_iterated_greedy(
-			d, p, bp.l, bp.w, bp.L, bp.W, rng
-		)
-		LB = convert(Float64, bkv)
-	end
 	@timeit TIMER "sel_del_res" begin
 		pe_rcvs = @. dual(LowerBoundRef(pe_vars))
 		cm_rcvs = @. dual(LowerBoundRef(cm_vars))

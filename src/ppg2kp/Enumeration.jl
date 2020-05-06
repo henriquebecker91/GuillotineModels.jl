@@ -473,15 +473,18 @@ function gen_cuts(
 	ignore_2th_dim = false, ignore_d = false, round2disc = true,
 	faithful2furini2016 = false,
 	no_redundant_cut = false, no_cut_position = false,
-	no_furini_symmbreak = false
+	no_furini_symmbreak = false, quiet = false
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
-	faithful2furini2016 && round2disc && @warn(
-		"Enabling both faithful2furini2016 and round2disc is allowed, but you are not being entirely faithful to Furini2016 if you do so."
+	!quiet && faithful2furini2016 && round2disc && @warn(
+		"Enabling both faithful2furini2016 and round2disc is allowed, but you" *
+		" are not being entirely faithful to Furini2016 if you do so."
 	)
-	!faithful2furini2016 && no_redundant_cut && @warn(
-		"The Redundant-Cut is only used when faithful2furini2016 is enabled. As flag faithful2furini2016 is not enabled, flag no-redundant-cut has no effect."
-	)
-	!faithful2furini2016 && (no_redundant_cut = true)
+	if !faithful2furini2016 && no_redundant_cut
+		!quiet && @warn "The Redundant-Cut is only used when faithful2furini2016" *
+			" is enabled. As flag faithful2furini2016 is not enabled, flag" *
+			" no-redundant-cut has no effect."
+		no_redundant_cut = true
+	end
 	l = sllw.l
 	w = sllw.w
 	@assert length(d) == length(l)

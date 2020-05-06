@@ -20,17 +20,18 @@ end
 # length (that is itself smaller than the given list). The first list is
 # of indexes of the first list that have non-zero values (after aplying
 # RoundNearest to them) and the second is the rounded (to nearest) values.
-function _gather_nonzero(vars, ::Type{D}) where {D}
+function _gather_nonzero(vars, ::Type{D}, sol_idx = 1) where {D}
 	idxs = Vector{eltype(keys(vars))}()
 	vals = Vector{D}()
 	diff = 0.0
 	for (idx, var) in pairs(vars)
-		float_val = value(var)
+		float_val = value(var; result = sol_idx)
 		val = round(D, float_val, RoundNearest)
 		abs(float_val - val) > diff && (diff = abs(float_val - val))
-		iszero(val) && continue
-		push!(idxs, idx)
-		push!(vals, val)
+		if abs(float_val - val) > 1e-4 || !iszero(val)
+			push!(idxs, idx)
+			push!(vals, val)
+		end
 	end
 	diff > 1e-4 && @warn "At least one variable of a solved PPG2KP model had" *
 		" a difference of $diff from the nearest integer. Maybe the tolerances" *

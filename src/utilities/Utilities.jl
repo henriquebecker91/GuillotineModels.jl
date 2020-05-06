@@ -3,6 +3,60 @@ module Utilities
 using DocStringExtensions # for TYPEDFIELDS
 
 """
+    unify!(::Type{QT_TYPE}, a)
+
+Apply `sort!` and `unique!` to array `a` and then returns a `Vector{QT_TYPE}`
+with the corresponding quantity of value in `a` before compacting it.
+
+
+```julia-repl
+> a = [40, 10, 20, 10, 20, 30, 20];
+
+> unify!(Int16, a)
+4-element Array{Int16,1}:
+ 2
+ 3
+ 1
+ 1
+
+> a
+4-element Array{Int64,1}:
+ 10
+ 20
+ 30
+ 40
+
+```
+"""
+function unify!(::Type{QT_TYPE}, a) where {QT_TYPE}
+	isempty(a) && return QT_TYPE[]
+	sort!(a)
+	last_v = first(a)
+	num_distinct_values = one(QT_TYPE)
+	for v in a
+		if v != last_v
+			num_distinct_values += one(QT_TYPE)
+			last_v = v
+		end
+	end
+	num_distinct_values == length(a) && return ones(QT_TYPE, num_distinct_values)
+	qts = zeros(QT_TYPE, num_distinct_values)
+	qts_idx = 1
+	last_v = first(a)
+	for v in a
+		if v != last_v
+			last_v = v
+			qts_idx += 1
+		end
+		qts[qts_idx] += one(QT_TYPE)
+	end
+
+	unique!(a)
+	return qts
+end
+export unify!
+
+"""
 Grouping of the length and width piece vectors (in original and sorted order),
 and their reverse indexes, allowing to, for example, iterate the pieces
 by length while having `O(1)` access to their width.

@@ -19,6 +19,19 @@ import TimerOutputs.@timeit
 import MathOptInterface
 const MOI = MathOptInterface
 
+@enum Dimension begin
+	LENGTH = 1
+	WIDTH = 2
+end
+Base.getindex(tuple :: Tuple, s :: Dimension) = tuple[Int(s)]
+
+@enum Relation begin
+	PARENT = 1
+	FIRST_CHILD = 2
+	SECOND_CHILD = 3
+end
+Base.getindex(tuple :: Tuple, s :: Relation) = tuple[Int(s)]
+
 # Include code that is focused on implementing a specific feature, but does
 # not merit a module of their own. Non-exported methods of these files are not
 # expected to be used in this module, but exported methods are exports from
@@ -61,6 +74,10 @@ function _delete_vars!(bp, model, to_keep_bits, var_set_name_in_model)
 	to_keep_vars, to_delete_vars = _partition_by_bits(to_keep_bits, vars)
 	JuMP.delete(model, to_delete_vars)
 	model[var_set_name_in_model] = to_keep_vars
+	# Update the variable names to make the debug to make more sense.
+	for (i, var) in enumerate(to_keep_vars)
+		set_name(var, "$(var_set_name_in_model)[$(i)]")
+	end
 	var_set_name_in_model == :picuts && return bp
 	new_fvci = searchsortedfirst(to_keep_idxs, bp.first_vertical_cut_idx)
 	return ByproductPPG2KP( # new_fvci was computed and need to be updated
@@ -82,6 +99,7 @@ include("./unreachable.jl")
 	@assert length(d) == length(l) && length(l) == length(w)
 	# TODO: change enumeration to also use a Dict?
 	num_piece_types = convert(D, length(d))
+	debug = options["verbose"] && !options["quiet"]
 	byproduct = gen_cuts(P, d, SortedLinkedLW(D, l, w), L, W;
 		ignore_2th_dim = options["ignore-2th-dim"],
 		ignore_d = options["ignore-d"],
@@ -89,7 +107,8 @@ include("./unreachable.jl")
 		no_cut_position = options["no-cut-position"],
 		no_redundant_cut = options["no-redundant-cut"],
 		no_furini_symmbreak = options["no-furini-symmbreak"],
-		faithful2furini2016 = options["faithful2furini2016"]
+		faithful2furini2016 = options["faithful2furini2016"],
+		quiet = options["quiet"]
 	)
 	hvcuts, np = byproduct.cuts, byproduct.np
 	num_plate_types = length(byproduct.pli_lwb)
@@ -273,6 +292,9 @@ function build_complete_model(
 	byproduct, pli2pair, pii2pair, child2cut, parent2cut = _preprocess(
 		P, d, l, w, L, W, options
 	)
+	bp = byproduct
+	@assert issorted(@view bp.cuts[1:(bp.first_vertical_cut_idx-1)]; by = c -> c[PARENT])
+	@assert	issorted(@view bp.cuts[bp.first_vertical_cut_idx:end]; by = c -> c[PARENT])
 	_build_base_model!(
 		model, d, p, byproduct, pli2pair, pii2pair, child2cut, parent2cut, options
 	)

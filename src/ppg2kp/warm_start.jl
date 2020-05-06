@@ -1,126 +1,323 @@
-# PLAN FOR IMPLEMENTING THE WARM-START
-# 0) Adapt the warm-start flag to be PPG2KP-specific and pricing-specific
-#    it will just define if we will make use of the primal solutions already
-#    available to warm-start the model.
-# 1) The only warm-start that really needs dedicated code is the one made from
-#    the heuristic to a restricted model. The other is just setting the
-#    variable MIP start to the value obtained solving the restricted model.
-# 1) Create a warm-start procedure that is specific for the faithful2furini2016
-#    and, consequently, will serve as base for the more complex one.
-# 2) Create a considerably complex warm-start (comment the code
-#    extensively) that uses the same heuristic to warm-start the
-#    variant that is not faithful2furini2016. Check if the simpler
-#    warm-start may (and should) be abandoned.
+# Returns the length (width) of the piece of smallest length (width) that fits
+# the plate defined by LxW. Errors if there is no piece that fits the plate.
+function _min_l_of_fit_piece(
+	sllw :: SortedLinkedLW{D, S}, L :: S, W :: S
+) :: S where {D, S}
+	for (i, l) in enumerate(sllw.sl)
+		l > L && break
+		sllw.w[sllw.sli2pii[i]] <= W && return l
+	end
+	@error "No piece fits the plate"
+end
+function _min_w_of_fit_piece(
+	sllw :: SortedLinkedLW{D, S}, L :: S, W :: S
+) :: S where {D, S}
+	for (i, w) in enumerate(sllw.sw)
+		w > W && break
+		sllw.l[sllw.swi2pii[i]] <= L && return w
+	end
+	@error "No piece fits the plate"
+end
 
-"""
-    _search_approx_cut(pp, fcl, fcw, max_diff, approx_l, nnn, pli_lwb) :: P
+# Returns a vector with length equal to highest_plate, and in which position
+# `p` gives the range of `cuts` that have `p` as their first field (i.e., the
+# parent plate). This range is shifted by offset.
+# NOTE: `highest_plate >= maximum(getindex.(cuts, 1))` or undefined behavior.
+# NOTE: if some plate `p` (1 < p <= highest_plate) is not the first field of
+# any element in `cuts`, then the range of `p` in the returned vector will be
+# an empty range and, consequently, the returned array will probably fail a
+# `issorted` check, because no empty range is considered greater than a
+# non-empty range;
+function _build_pp_ranges(
+	cuts :: AbstractVector{NTuple{3, P}},
+	highest_plate :: P,
+	offset :: P = zero(P)
+) :: Vector{UnitRange{P}} where {P}
+	# If `cuts` is empty, return a vector of empty ranges of the expected size.
+	empty_r = one(P):zero(P)
+	isempty(cuts) && return fill(empty_r, highest_plate)
+	# If there is a cut, there should be at least one plate.
+	@assert highest_plate >= one(P)
+	ranges = Vector{UnitRange{P}}(undef, highest_plate)
+	curr_pp = first(cuts)[PARENT]
+	# The original plate (index one) is always present.
+	@assert isone(curr_pp)
+	first_idx_curr_pp = one(P)
+	# The first field of `cuts` elements (i.e., PARENT) never decreases, and when
+	# it increases, the range in which they kept the same value is saved.
+	for (i, cut) in pairs(cuts)
+		pp = cut[PARENT]
+		if pp < curr_pp
+			@error "The parameter `cuts` must be sorted by its first field."
+		elseif pp > curr_pp
+			ranges[curr_pp] = (offset + first_idx_curr_pp):(offset + i - 1)
+			# If pp - curr_pp > 1 (i.e., pp values were skipped) save empty
+			# ranges for such values.
+			for j = (curr_pp+1):(pp-1); ranges[j] = empty_r; end
+			# Update our sentinels.
+			curr_pp = pp
+			first_idx_curr_pp = i
+		end
+		# If `curr_pp` is equal to `highest_plate` we assume `cuts` is
+		# non-decreasing and break early. The `ranges[highest_plate]` is
+		# saved after the loop.
+		curr_pp == highest_plate && break
+	end
+	# The last `curr_pp` has no change of value to trigger its writting.
+	ranges[curr_pp] = (offset + first_idx_curr_pp):(offset + length(cuts))
+	return ranges
+end
 
-!!! **Internal use.**
+function _get_LW(
+	bp :: ByproductPPG2KP{D, S, P},
+	plate_idx :: P
+) :: Tuple{S, S} where {D, S, P}
+	return bp.pli_lwb[plate_idx][LENGTH], bp.pli_lwb[plate_idx][WIDTH]
+end
 
-"""
-function _search_approx_cut(
-	pp :: P, # parent plate
-	fcl :: S, # first child length
-	fcw :: S, # first child width
-	max_diff :: S, # how much smaller the approx dimension may be
-	approx_l :: Bool, # if true, length is approx, otherwise, w is approx
-	nnn :: Vector{NTuple{3, P}},
-	pli_lwb :: Vector{Tuple{S, S, P}},
+# Find a cut in `bp.cuts[cuts_by_pp[pp]]` with a FIRST_CHILD of size `cut_size`
+# in the dimension `dim`, `push!` it to `cuts_done`, and return its
+# `FIRST_CHILD` and `SECOND_CHILD` (a convenience, as we could use the last
+# element of `cuts_done` to index `bp.cuts` and get them).
+function _make_cut!(
+	cuts_done :: Vector{P},
+	pp :: P,
+	bp :: ByproductPPG2KP{D, S, P},
+	cuts_by_pp :: Vector{UnitRange{P}},
+	cut_size :: S,
+	dim :: Dimension
+) where {D, S, P}
+	idx_in_view = findfirst(
+		c -> bp.pli_lwb[c[FIRST_CHILD]][dim] == cut_size,
+		view(bp.cuts, cuts_by_pp[pp])
+	) :: Int
+	cut_idx = cuts_by_pp[pp].start + convert(P, idx_in_view) - one(P)
+	push!(cuts_done, cut_idx)
+	@assert bp.cuts[cut_idx][PARENT] == pp
+	return bp.cuts[cut_idx][FIRST_CHILD], bp.cuts[cut_idx][SECOND_CHILD]
+end
+
+# For `qt_trims` times, find a cut that reduces the current plate by
+# `trim_size` (the method errors if such cut does not exist) and update
+# the current plate, return the remaining plate after all those trim cuts,
+# saves the trim cuts done to cuts_done.
+function _successive_trims!(
+	cuts_done :: Vector{P},
+	plate_idx :: P,
+	bp :: ByproductPPG2KP{D, S, P},
+	cuts_by_pp :: Vector{UnitRange{P}},
+	qt_trims :: P,
+	trim_size :: S,
+	dim :: Dimension
 ) :: P where {D, S, P}
-	for i in one(P):convert(P, length(nnn))
-		(pp_, fc, _) = nnn[i]
-		pp_ != pp && continue
-		if approx_l
-			pli_lwb[fc][1] <= fcl && pli_lwb[fc][1] >= (fcl - max_diff) &&
-			pli_lwb[fc][2] == fcw && return i
-		else
-			pli_lwb[fc][2] <= fcw && pli_lwb[fc][2] >= (fcw - max_diff) &&
-			pli_lwb[fc][1] == fcl && return i
+	pp = plate_idx
+	for _ = 1:qt_trims
+		# We throw away the info about which was the first child (i.e., the trim
+		# plate) and update the parent plate to be the second child.
+		_, pp = _make_cut!(cuts_done, pp, bp, cuts_by_pp, trim_size, dim)
+		@assert !iszero(pp)
+	end
+	return pp
+end
+
+# Trim the dimension `dim` of plate `pp` to size `s` (if `faithful2furini`) or
+# close enough (if `!faithful2furini`, and by 'close enough' we mean that no
+# piece would fit in the trim of the 'close enough' plate to exactly size `s`).
+# The cuts needed are added to `cuts_done`. For a plate index `pli` the
+# `cuts_by_pp[pli]` has the range of cuts (that divide `dim`) with `pli` as
+# the PARENT plate of the cut.
+function _safe_trim_dim!(
+	cuts_done :: Vector{P},
+	pp :: P,
+	s :: S,
+	dim :: Dimension,
+	cuts_by_pp :: Vector{UnitRange{P}},
+	sllw :: SortedLinkedLW{D, S},
+	bp :: ByproductPPG2KP{D, S, P},
+	faithful2furini :: Bool
+) where {D, S, P}
+	# rS: size of `dim` in plate `pp`
+	rS = bp.pli_lwb[pp][dim]
+	@assert rS >= s
+	if s != rS # Check if trimming is actually necessary.
+		# If the cut is in the first half of the plate it is guaranteed to exist.
+		if s <= (rS+1)/2
+			# In the case of a 'clean' trim cut, the trim is the SECOND_CHILD that
+			# is thrown away, and the PARENT is updated to the FIRST_CHILD.
+			pp, _ = _make_cut!(cuts_done, pp, bp, cuts_by_pp, s, dim)
+		else # If a trim cut may be needed.
+			L, W = _get_LW(bp, pp)
+			if dim == LENGTH
+				min_s = _min_l_of_fit_piece(sllw, L, W)
+			else
+				min_s = _min_w_of_fit_piece(sllw, L, W)
+			end
+			# If the difference between the plate and the piece allows for copies of
+			# the smallest-dim-size piece-that-fits, reduce the difference by
+			# successive trim cuts.
+			if rS - s >= min_s
+				qt_trims = convert(P, div(rS - s, min_s))
+				pp = _successive_trims!(
+					cuts_done, pp, bp, cuts_by_pp, qt_trims, min_s, dim
+				)
+				rS = bp.pli_lwb[pp][dim]
+				# If !faithful2furini and the other dim has a difference smaller than
+				# the smallest-other-dim-size piece-that-fits, then it is guaranteed
+				# that the extraction will be in bp.np.
+			end
+			# Otherwise, if faithful2furini, the match of piece and plate need
+			# to be exact, so we may need a final trim cut. It was done here,
+			# after the successive trim cuts, because here it is guaranteed to
+			# exist. If it was done before, it could be the cut did not exist
+			# because the symmetry removal used by Furini2016 (i.e, if there was a
+			# cut of length exactly L - l, in the first half of the plate, then a
+			# cut of length l, in the second half of the plate, would not exist).
+			if faithful2furini && s != rS
+				pp, _ = _make_cut!(cuts_done, pp, bp, cuts_by_pp, s, dim)
+			end
 		end
 	end
-	@show pp
-	@show pli_lwb[pp]
-	@show fcl
-	@show fcw
-	@show max_diff
-	@assert false # this should not be reachable
+	return pp
 end
 
-"""
-    _search_cut_or_symmetry(pp, fcl, fcw, nnn, pli_lwb)
+function _sell_piece!(
+	pieces_sold :: Vector{P},
+	cuts_done :: Vector{P},
+	plate_idx :: P,
+	piece_idx :: D,
+	sllw :: SortedLinkedLW{D, S},
+	bp :: ByproductPPG2KP{D, S, P},
+	hcuts_by_pp :: Vector{UnitRange{P}},
+	vcuts_by_pp :: Vector{UnitRange{P}},
+	faithful2furini :: Bool
+) :: Nothing where {D, S, P}
+	# The piece-to-be-sold dimensions.
+	piece_l, piece_w = bp.l[piece_idx], bp.w[piece_idx]
+	# pp: the current parent plate that is updated as we trim the given plate
+	pp = plate_idx
+	pp = _safe_trim_dim!(
+		cuts_done, pp, piece_l, LENGTH, hcuts_by_pp, sllw, bp, faithful2furini
+	)
+	pp = _safe_trim_dim!(
+		cuts_done, pp, piece_w, WIDTH, vcuts_by_pp, sllw, bp, faithful2furini
+	)
+	# Now a extraction from the current plate to piece_idx MUST exist.
+	np_idx = findfirst(==((pp, piece_idx)), bp.np) :: Int
+	push!(pieces_sold, convert(P, np_idx))
+	return
+end
 
-!!! **Internal use.**
-
+# Given a 2-staged `pattern` and the preprocessed information of a PPG2KP model
+# (i.e., `bp` the byproduct), a vector of indexes of bp.cuts and a vector
+# of indexes of bp.np that together represent a valid solution of the PPG2KP
+# model representing the solution given by the 2-staged cut pattern. This is
+# used to be able to warm start the model from an heuristic solution.
 """
-function _search_cut_or_symmetry(
-	pp :: P, # parent plate
-	fcl :: S, # first child length
-	fcw :: S, # first child width
-	nnn :: Vector{NTuple{3, P}},
-	pli_lwb :: Vector{Tuple{S, S, P}},
-) :: P where {D, S, P}
-	pll, plw, _ = pli_lwb[pp]
-	@assert fcl == pll || fcw == plw
-	for i in one(P):convert(P, length(nnn))
-		(pp_, fc, _) = nnn[i]
-		pp_ != pp && continue
-		pli_lwb[fc][1] == fcl && pli_lwb[fc][2] == fcw && return i
+    cuts_and_extractions_from_2_staged_solution(pattern, bp, faithful2furini)
+
+Given a 2-staged `pattern` and a PPG2KP model `bp` (byproduct), returns the
+cuts (`bp.cuts` indexes) and extractions (`bp.np` indexes) that make up a
+valid solution representing such `pattern`.
+
+The `pattern` parameter has many restrictions:
+
+1) It is 2-staged, what is enforced by being a vector of vectors.
+2) Each inner vector is a vertical stripe with the width of the first piece
+   inside such inner vector. No horizontal stripes allowed. No piece inside
+   an inner vector has width larger than the first piece of the inner vector.
+3) The outer vector is sorted by non-increasing stripe width.
+4) No inner vectors should be empty. Every number is a valid piece type index.
+"""
+function cuts_and_extractions_from_2_staged_solution(
+	pattern :: Vector{Vector{D}},
+	bp :: ByproductPPG2KP{D, S, P},
+	faithful2furini :: Bool
+) :: Tuple{Vector{P}, Vector{P}} where {D, S, P}
+	cuts_done, pieces_sold = P[], P[]
+	isempty(pattern) && return cuts_done, pieces_sold
+	@assert all((!isempty).(pattern)) # No stripe should be empty.
+	# @assert explanation: the first stripe is the one of largest width.
+	@assert all(fp -> bp.w[fp] <= bp.w[pattern[1][1]], getindex.(pattern, 1))
+	# @assert explanation: each of the inner vectors has no piece with
+	# width greater than their width (i.e., the width of the first element).
+	@assert all(a -> all(p -> bp.w[p] <= bp.w[a[1]], a), pattern)
+	sllw = SortedLinkedLW(D, bp.l, bp.w)
+	highest_plate = length(bp.pli_lwb)
+	# Compute cut ranges that share the same orientation (vertical or horizontal)
+	# and the same parent plate (pp). This is O(n) and greatly reduces the effort
+	# spent finding the desired cuts in the rest of the algorithm.
+	hcuts_by_pp = _build_pp_ranges(
+		(@view bp.cuts[one(P):(bp.first_vertical_cut_idx - one(P))]), highest_plate
+	)
+	num_cuts = length(bp.cuts)
+	vcuts_by_pp = _build_pp_ranges(
+		(@view bp.cuts[bp.first_vertical_cut_idx:num_cuts]), highest_plate,
+		bp.first_vertical_cut_idx - one(P)
+	)
+	rp = one(P) # The initial `r`emaining `p`late is the original plate.
+	num_stripes = length(pattern)
+	# stripe_plates: store the plate for each stripe, used after but not updated.
+	stripe_plates = Vector{P}(undef, num_stripes)
+	# The order we make the cuts is not specially relevant, except that we only
+	# have the guarantee that the cuts really exist if they are in the first
+	# half of the plate, and this happens naturally if we left the largest
+	# width stripe for last.
+	for vstripe_idx in 2:num_stripes
+		# Cut a vertical (i.e., keep the length divides the width) stripe.
+		stripe_plates[vstripe_idx], rp = _make_cut!(
+			cuts_done, rp, bp, vcuts_by_pp, bp.w[pattern[vstripe_idx][1]], WIDTH
+		)
 	end
-	@assert false # this should not be reachable
-end
-
-"""
-    _search_cut(pp, fcl, fcw, nnn, pli_lwb)
-
-!!! **Internal use.**
-
-"""
-function _search_cut(
-	pp :: P, # parent plate
-	fcl :: S, # first child length
-	fcw :: S, # first child width
-	nnn :: Vector{NTuple{3, P}},
-	pli_lwb :: Vector{Tuple{S, S, P}},
-) :: P where {D, S, P}
-	for i in one(P):convert(P, length(nnn))
-		(pp_, fc, _) = nnn[i]
-		pp_ != pp && continue
-		pli_lwb[fc][1] == fcl && pli_lwb[fc][2] == fcw && return i
+	# If it exists a clean cut for the last stripe do it.
+	largest_w = bp.w[pattern[1][1]]
+	if largest_w <= (bp.pli_lwb[rp][WIDTH]+1)/2
+		stripe_plates[1], _ = _make_cut!(
+			cuts_done, rp, bp, vcuts_by_pp, largest_w, WIDTH
+		)
+	else # Otherwise, just use the remaining plate as last stripe.
+		stripe_plates[1] = rp
 	end
-	@assert false # this should not be reachable
-end
-
-# TODO: Check why this method is used if a structure like SortedLinkedLW
-# would answer this more efficiently and be aware of the type used for the
-# index.
-"""
-    _min_l_fitting_piece(l, w, L, W)
-
-!!! **Internal use.**
-
-Given a plate `L`x`W` and two pieces dimensions list (`l`, `w`),
-return the index of the piece of smallest length that fits the
-plate (the width dimension may preclude this from being just
-the piece of smallest length).
-"""
-function _min_l_fitting_piece(l, w, L, W)
-	@assert length(l) == length(w)
-	n = length(l)
-	min_i = zero(n)
-	min_l = zero(eltype(l))
-	for i = one(n):n
-		(l[i] > L || w[i] > W) && continue
-		if iszero(min_i) || l[i] < min_l
-			min_i = i
-			min_l = l[i]
+	# Now all the vertical stripes are cut. The stripes need to be cut
+	# horizontally creating a new plate for each piece inside the stripe,
+	# and then these plates may need a vertical trim (because they are smaller
+	# than the stripe width) before they are finally sold as pieces.
+	rp = zero(P) # From there on, only the `stripe_rp` is relevant.
+	for vstripe_idx in 1:num_stripes # the outer order is not relevant
+		stripe_rp = stripe_plates[vstripe_idx]
+		vstripe = pattern[vstripe_idx]
+		_, idx_largest_l_piece_in_vstripe = findmax(bp.l[vstripe])
+		# The inner order is not relevant, except the piece with the largest
+		# length should be specially treated after. For the same reason we
+		# treat the stripe of largest width specially above.
+		for (vstripe_idx, piece_idx) in pairs(vstripe)
+			vstripe_idx == idx_largest_l_piece_in_vstripe && continue
+			plate_idx, stripe_rp = _make_cut!(
+				cuts_done, stripe_rp, bp, hcuts_by_pp, bp.l[piece_idx], LENGTH
+			)
+			_sell_piece!(
+				pieces_sold, cuts_done, plate_idx, piece_idx, sllw, bp,
+				hcuts_by_pp, vcuts_by_pp, faithful2furini
+			)
 		end
+		# The largest length piece of the largest width stripe can now just be
+		# sold. It is cut after the loop because then there is guarantee that all
+		# `_make_cut!` calls inside the loop happen in the first half of the
+		# current stripe_rp and, therefore, are safe to make. For this last
+		# piece a `_make_cut!` call is not necessary and `_sell_piece!` will
+		# take care of the edge cases.
+		piece_idx = vstripe[idx_largest_l_piece_in_vstripe]
+		_sell_piece!(
+			pieces_sold, cuts_done, stripe_rp, piece_idx, sllw, bp,
+			hcuts_by_pp, vcuts_by_pp, faithful2furini
+		)
 	end
-	min_i
-end
 
-# TODO: check if this is used, and if it is, should be adapted to right
-# notation.
-function raw_warm_start(model, nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals)
+	return cuts_done, pieces_sold
+end
+export cuts_and_extractions_from_2_staged_solution
+
+# TODO: document this
+function raw_warm_start!(model, nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals)
 	@assert length(nzpe_idxs) == length(nzpe_vals)
 	@assert length(nzcm_idxs) == length(nzcm_vals)
 	pe = model[:picuts]
@@ -128,237 +325,5 @@ function raw_warm_start(model, nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals)
 	set_start_value.(pe[nzpe_idxs], nzpe_vals)
 	set_start_value.(cm[nzcm_idxs], nzcm_vals)
 end
+export raw_warm_start!
 
-# Warm start faithful2furini.
-function warm_start_f2f(
-	model, l, w, L, W,
-	pat :: Vector{Vector{D}},
-	bp :: ByproductPPG2KP{D, S, P}
-	#round2disc wait to see if this is needed
-	# which other model building options will need to be passed to this?
-) where {D, S, P}
-	# TODO: implement
-end
-
-# TODO: check if the piece will be immediatelly extracted or does it need
-# an extra cut to make a plate small enough to extract the piece?
-# TODO: if the piece needs an extra trim, the things are even worse than
-# I thought at first, there is no guarantee the trim will be obtained
-# in a single cut. It may be necessary to make many fake trim cuts to
-# get a plate of the right size to make an extraction. It is just much
-# simpler to add fake extraction variables for every plate that would need
-# fake trims than to add all cuts needed to arrive at it. On the other side,
-# this is something interesting to comment on the paper, the lack of guarantee
-# on the number of cuts needed to extract the pieces from the plates, a
-# 'downside' that seems not to be a problem for the solver, of have common
-# worst-cases.
-# TODO: comment all code this method is specially hard to follow
-# TODO: the warm-start for the flag faithful2furini enabled and disabled will
-# need to be different? the rules for which plates exist and which do not are
-# different from one to another.
-# NOTE: this method only work for simple patterns in which:
-# (1) the cuts are two-staged (i.e., the pattern is justa a vector of vector);
-# (1.5) by consequence, the cuts are restricted;
-# (2) the first stage cuts vertically (width strips);
-# (3) the first piece of each strip gives the width of the strip;
-# If you need to warm-start with a more complex pattern, create another
-# method with the same name, and another type for parameter `pat`.
-"""
-    warm_start(model, l, w, L, W, pat, pli_lwb, nnn, np; faithful2furini = false)
-
-!!! **Internal use.**
-"""
-function warm_start(
-	model, l, w, L, W,
-	pat :: Vector{Vector{D}},
-	pli_lwb :: Vector{Tuple{S, S, P}},
-	nnn :: Vector{NTuple{3, P}},
-	np :: Vector{Tuple{P, D}};
-	faithful2furini2016 = false
-	#round2disc wait to see if this is needed
-	# which other model building options will need to be passed to this?
-) where {D, S, P}
-	@assert !faithful2furini2016
-	# the initial residual plate is L, W
-	# visit the outer vector in reverse
-	# if the current head of stripe is smaller than half residual plate
-	# then search for a vertical cut on the residual plate, with the right width
-	#   for the first child and enable it, change the residual plate to
-	#   be the second child
-	# else assert this is the last stripe, just use the remaining plate (second
-	#   child of the last cut, or the whole root if there is just one stripe)
-	# after finishing the strip processing, for each plate that is a stripe:
-	#   do the same as the first stage, but for the subplate and the opposite cut
-	#   orientation (as the inner vectors are not sorted by length, we need to
-	#   sort them ourselves);
-	# finally, for every subplate that will become a piece, connect it to a piece
-	#   for faithful2furini2016 we need to trim the plate and have it with exact
-	#   plate size; for !faithful2furini2016 we just link directly to np
-	rw = W # remaining width, initialized with root plate width
-	rpli = 1 # NOTE: the root plate is guaranteed to have index 1
-	cut_var_vals = Dict{P, Int}() # the amount of times each cut was made
-	first_stage_plates = Vector{P}() # the plate index of all stripes
-	rpat = reverse(pat)
-	final = false
-	for stripe in rpat
-		@assert !final
-		@assert !isempty(stripe)
-		ws = w[first(stripe)]
-		if ws <= div(rw, 2)
-			cut = _search_cut(rpli, L, ws, nnn, pli_lwb)
-			cut_var_vals[cut] = 1 + get(cut_var_vals, cut, 0)
-			_, fc, rpli = nnn[cut]
-
-			rw -= ws
-			push!(first_stage_plates, fc)
-			fcl, fcw = pli_lwb[fc]
-			println("0\ti\t$(fcl)\t$(fcw)")
-		else
-			# If the stripe width is already more than half residual plate, then it
-			# is the last stripe (the stripes are ordered in increase-or-keep order,
-			# and cannot exist a larger width stripe in the remaining space).
-			push!(first_stage_plates, rpli)
-			scl, scw = pli_lwb[rpli]
-			println("0\tl\t$(scl)\t$(scw)")
-			final = true
-		end
-	end
-	# TODO: both loops need to be by index, and stop before the last element,
-	# the last element need to be checked against the min_piece_l/w and the
-	# remaining space in that dimension, there may be needed to make a cut
-	# that creates an unused first child and a used second child.
-	# The elements before the last do not have this problem because the
-	# ordering guarantee that they are smaller than half plate and therefore
-	# a cut for them exist.
-	# TODO: Consider: would it be simpler to just create missing variables?
-	# this would work for any model type, and would make this code unaffedcted
-	# by new variable reductions; the increase in the number of variables
-	# would be very small.
-
-	println("start of second stage")
-	pli2pii_qt = Dict{Tuple{P, D}, Int}()
-	for i in 1:length(first_stage_plates)
-		# For each stripe, reset the remaining info.
-		rpli = first_stage_plates[i] # get the index of the plate/stripe
-		rl = pli_lwb[rpli][1] # get the length of the plate/stripe
-		ws = pli_lwb[rpli][2] # stripe width (do not diminish)
-
-		pli2pii = Vector{Tuple{P, D}}()
-		for piece in sort(rpat[i], by = pii -> l[pii])
-			lp = l[piece]
-			wp = w[piece]
-			if lp <= div(rl, 2)
-				cut = _search_cut(rpli, lp, ws, nnn, pli_lwb)
-				cut_var_vals[cut] = 1 + get!(cut_var_vals, cut, 0)
-				_, fc, rpli = nnn[cut]
-
-				fcl, fcw, _ = pli_lwb[fc]
-				println("$(i)\ti\t$(fcl)\t$(fcw)")
-				println("$(piece)\tp\t$(lp)\t$(wp)")
-
-				min_w = _min_l_fitting_piece(w, l, fcw, fcl)
-				if faithful2furini2016
-				elseif fcw >= wp + min_w
-					# The piece may have a small width relative to the plate width
-					# (i.e., the piece of smallest width could fit there) if this is
-					# the case, we cannot extract it directly from tne plate.
-					# There are two options: (1) if the piece is smaller than half
-					# the plate, it can be cut as first child; (2) otherwise,
-					# we need to make an extra cut (a fake trim) in which
-					# the second child will be a plate "not too big" to allow a
-					# direct extraction of the piece from it.
-					if wp <= div(fcw, 2)
-						# Cut the fc again, at the piece width this time, use the
-						# first child to extract the piece.
-						cut2 = _search_cut(fc, lp, wp, nnn, pli_lwb)
-						cut_var_vals[cut2] = 1 + get!(cut_var_vals, cut2, 0)
-						_, fc2, _ = nnn[cut2]
-
-						fc2l, fc2w, _ = pli_lwb[fc2]
-						println("$(i)\ti\t$(scl)\t$(scw)")
-						println("$(piece)\tp\t$(lp)\t$(wp)")
-
-						pli2pii_qt[(fc2, piece)] = 1 + get(pli2pii_qt, (fc2, piece), 0)
-					else
-						trimw = fcw - wp
-						# There is no guarantee of existence of a cut in which the
-						# second child will have the exact size of the piece, however
-						# there is guarantee that a cut between the exact size and
-						# the exact size - (min_w - 1) exists. Note that cuts smaller
-						# than this lower bound do not interest us, as they would have
-						# the same problem again (the second child would need a fake
-						# trim cut again).
-						cut2 = _search_approx_cut(
-							rpli, lp, trimw, min_w - 1, false, nnn, pli_lwb
-						)
-						cut_var_vals[cut2] = 1 + get!(cut_var_vals, cut2, 0)
-						_, _, sc = nnn[cut2]
-
-						scl, scw, _ = pli_lwb[sc]
-						println("$(i)\ti\t$(scl)\t$(scw)")
-						println("$(piece)\tp\t$(lp)\t$(wp)")
-
-						pli2pii_qt[(sc, piece)] = 1 + get(pli2pii_qt, (sc, piece), 0)
-					end
-				else
-					pli2pii_qt[(fc, piece)] = 1 + get(pli2pii_qt, (fc, piece), 0)
-				end
-
-				rl -= lp
-			else # if it is the last piece of a strip
-				pll, plw, _ = pli_lwb[rpli]
-				@assert plw == ws
-				min_l_pii = _min_l_fitting_piece(l, w, pll, plw)
-				min_l = iszero(min_l_pii) ? pll : l[min_l_pii]
-				if pll >= lp + min_l
-					triml = pll - lp
-					cut = _search_approx_cut(
-						rpli, triml, ws, min_l - 1, true, nnn, pli_lwb
-					)
-					cut_var_vals[cut] = 1 + get!(cut_var_vals, cut, 0)
-					_, _, sc = nnn[cut]
-
-					scl, scw, _ = pli_lwb[sc]
-					println("$(i)\tl\t$(scl)\t$(scw)")
-					println("$(piece)\tp\t$(lp)\t$(wp)")
-					rpli = sc
-				end
-				pll, plw, _ = pli_lwb[rpli]
-				@assert plw == ws
-				min_w_pii = _min_l_fitting_piece(w, l, plw, pll)
-				min_w = iszero(min_w_pii) ? plw : l[min_w_pii]
-				if plw >= wp + min_w
-					trimw = plw - wp
-					cut = _search_approx_cut(
-						rpli, pll, trimw, min_w - 1, false, nnn, pli_lwb
-					)
-					cut_var_vals[cut] = 1 + get!(cut_var_vals, cut, 0)
-					_, _, sc = nnn[cut]
-
-					scl, scw, _ = pli_lwb[sc]
-					println("$(i)\tl\t$(scl)\t$(scw)")
-					println("$(piece)\tp\t$(lp)\t$(wp)")
-					rpli = sc
-				end
-
-				pli2pii_qt[(rpli, piece)] = 1 + get(pli2pii_qt, (rpli, piece), 0)
-			end
-		end
-	end
-	for (var_index, var_value) in cut_var_vals
-		set_start_value(model[:cuts_made][var_index], var_value)
-	end
-	if faithful2furini2016
-		# HERE WE NEED TO DO THE TRIM CUT IF FAITHFUL2FURINI IS ENABLED
-	else
-		for (pair, value) in pli2pii_qt
-			@show pli_lwb[pair[1]]
-			@show l[pair[2]], w[pair[2]]
-			picut_idx = findfirst(isequal(pair), np)
-			@show picut_idx
-			set_start_value(model[:picuts][picut_idx], value)
-		end
-	end
-
-	model
-end

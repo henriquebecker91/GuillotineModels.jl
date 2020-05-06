@@ -110,7 +110,7 @@ function __init__()
 			Meta.parse(p_args["raw-parameters"])
 		) :: Vector{Pair{String, Any}}
 		configuration = [configuration; raw_parameters]
-		model = JuMP.direct_model(Gurobi.Optimizer())
+		model = JuMP.direct_model(Gurobi.Optimizer(Gurobi.Env()))
 		JuMP.set_optimizer_attributes(model, configuration...)
 		model
 	end
