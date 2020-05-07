@@ -6,13 +6,22 @@ function _all_restricted_cuts_idxs(
 	bp :: ByproductPPG2KP{D, S, P}
 ) :: Vector{Int} where {D, S, P}
 	rc_idxs = Vector{Int}()
+	sizehint!(rc_idxs, length(bp.cuts))
 	usl = unique!(sort(bp.l))
 	usw = unique!(sort(bp.w))
-	for (idx, (_, fc, _)) in pairs(bp.cuts)
-		if idx < bp.first_vertical_cut_idx
-			!isempty(searchsorted(usl, bp.pli_lwb[fc][1])) && push!(rc_idxs, idx)
+	n = length(usl)
+	for (idx, cuts) in pairs(bp.cuts)
+		fc = cuts[FIRST_CHILD]
+		if idx >= bp.first_vertical_cut_idx
+			# If the cut is vertical it reduces the width.
+			if !isempty(searchsorted(usw, bp.pli_lwb[fc][WIDTH]))
+				push!(rc_idxs, idx)
+			end
 		else
-			!isempty(searchsorted(usw, bp.pli_lwb[fc][2])) && push!(rc_idxs, idx)
+			# If the cut is horizontal it reduces the length.
+			if !isempty(searchsorted(usl, bp.pli_lwb[fc][LENGTH]))
+				push!(rc_idxs, idx)
+			end
 		end
 	end
 	return rc_idxs
@@ -53,7 +62,7 @@ function _reduced_profit(
 	pp, fc, sc = cut
 	pp_dual = dual(constraints[pp])
 	fc_dual = dual(constraints[fc])
-	sc_dual = iszero(sc) ? 0.0 : dual(constraints[sc])
+	sc_dual :: Float64 = iszero(sc) ? 0.0 : dual(constraints[sc])
 	# The reduced profit computation shown in the paper is done here.
 	rp = -fc_dual + -sc_dual - -pp_dual
 	#=if rp < zero(rp)
@@ -66,15 +75,10 @@ function _reduced_profit(
 	return rp
 end
 
-# TODO: the call to the heuristic and solving the restricted MIP model
-# probably should not be here, but on no_arg_check_build_model.
 @timeit TIMER function _restricted_final_pricing!(
 	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, rng, debug :: Bool = false
 ) where {D, S, P}
-	# First we save all the variables bounds and types and relax all of them.
-	#all_vars = all_variables(model)
-	#n = length(all_vars)
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
 	cm = model[:cuts_made] # Cuts Made
@@ -82,9 +86,10 @@ end
 	# will need to be reworked. Now it only relax/fix variables in those sets
 	# so it will need to be sensibly extended to new sets of variables.
 	@assert n == length(cm) + length(pe)
+	# First we save all the variables bounds and types and relax all of them.
 	@timeit TIMER "relax_cm" cm_svcs = relax!(cm)
 	@timeit TIMER "relax_pe" pe_svcs = relax!(pe)
-	#@assert length(cm) == length(bp.cuts)
+	@assert length(cm) == length(bp.cuts)
 	rc_vars = cm[rc_idxs]
 	rc_svcs = cm_svcs[rc_idxs]
 	# Every variable that is not a restricted cut is a unrestricted cut.
@@ -92,14 +97,15 @@ end
 	# Fix all unrestricted cuts (pool vars).
 	uc_vars = cm[uc_idxs]
 	@timeit TIMER "fix_uc" fix.(uc_vars, 0.0; force = true)
-	# Get the solution of the heuristic.
+	# Get the solution of the heuristic. Use the 'best known value'/
+	# 'primal bound' of the heuristic to do the pricing, and the solution itself
+	# to warm-start the restricted model.
 	bkv, _, shelves = @timeit TIMER "primal_heuristic" fast_iterated_greedy(
 		d, p, bp.l, bp.w, bp.L, bp.W, rng
 	)
-	# TODO: use shelves to warmstart the model
-	sol = @timeit TIMER "shelves2cutpatterns" Heuristic.shelves2cutpattern(
+	#=sol = @timeit TIMER "shelves2cutpatterns" Heuristic.shelves2cutpattern(
 		shelves, bp.l, bp.w, bp.L, bp.W
-	)
+	)=#
 	LB = convert(Float64, bkv)
 	# Solve the relaxed restricted model.
 	flush_all_output()
@@ -117,7 +123,7 @@ end
 		# restricted upper bound.
 		restricted_LB = LB
 		restricted_LP = LP
-		debug && begin
+		if debug
 			@show restricted_LB
 			@show restricted_LP
 		end
@@ -131,12 +137,11 @@ end
 		)
 		exit(1)
 	end
-	# TODO: if the assert below fails, then the solver used reaches an optimal
-	# point of a LP but do not has duals for it, what should not be possible,
-	# some problem has happened (for an example, the solver does not recognize
-	# the model as a LP but think it is a MIP for example, CPLEX does this).
+	# If the assert below fails, then the solver used reaches an optimal point of
+	# a LP but do not has duals for it, what should not be possible, some problem
+	# has happened (for an example, the solver does not recognize the model as a
+	# LP but think it is a MIP for example, CPLEX sometimes does this).
 	@assert has_duals(model)
-	#all_vars_values = value.(all_vars) # needs to be done before any changes
 	rc_cuts = bp.cuts[rc_idxs]
 	plate_cons = model[:plate_cons]
 	# This is a little costy, and not necessary anymore.
@@ -171,35 +176,44 @@ end
 	)
 	# All piece extractions also need to be restored.
 	@timeit TIMER "restore_pe" restore!(pe, pe_svcs)
-	#@timeit TIMER "raw_ws" set_start_value.(all_vars, all_vars_values)
+	# Just before solving the restricted MIP, it is warm-started with the
+	# heuristic value.
+	@timeit TIMER "heuristic_ws" begin
+		cuts, extractions = cuts_and_extractions_from_2_staged_solution(
+			shelves, bp, true
+		)
+		qt_cuts = unify!(D, cuts)
+		qt_extractions = unify!(D, extractions)
+		raw_warm_start!(model, extractions, qt_extractions, cuts, qt_cuts)
+	end
 	flush_all_output()
 	@timeit TIMER "mip_solve" optimize!(model) # restricted MIP solved
 	flush_all_output()
-	# NOTE: the below was disabled because get_cut_pattern is slow and
-	# we decided to keep the pricing as a '<=' (not '<'), so the variables
-	# necessary for the solution in the heuristic are present.
-	# If some primal solution was obtained, compare its value with the
-	# heuristic and keep the best one (the model can give a worse value
-	# as any variables that cannot contribute to a better solution are
-	# disabled, and the heuristic may be already optimal).
-	if primal_status(model) == MOI.FEASIBLE_POINT
-		model_obj = objective_value(model)
-		model_obj = round(model_obj, RoundNearest)
-		#@show model_obj
-		if model_obj > LB
-			bkv = convert(P, model_obj)
-			# Disabled because get_cut_pattern is not optimized nor necessary.
-			#sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
-		end
+	# We warm start the model with a feasible solution, so it should be
+	# impossible to get a different status here.
+	@assert primal_status(model) == MOI.FEASIBLE_POINT
+	model_obj = round(P, objective_value(model), RoundNearest)
+	if model_obj > LB
+		bkv = model_obj
+		# Disabled because get_cut_pattern is not optimized nor necessary.
+		#sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
 	end
+	# Save the value of the restricted model to warm start the unrestricted
+	# model in the future. The changes we do to the model may discard the
+	# start if we do it now.
+	raw_ws = @timeit TIMER "save_raw_ws" begin
+		nz_pe_idxs, nz_pe_vals = gather_nonzero(pe, D)
+		nz_cm_idxs, nz_cm_vals = gather_nonzero(cm, D)
+		(nz_pe_idxs, nz_pe_vals, nz_cm_idxs, nz_cm_vals)
+	end
+	@timeit TIMER "apply_raw_ws" raw_warm_start!(model, raw_ws...)
+
 	# The variables are left all relaxed but with only the variables used
 	# in the restricted priced model unfixed, the rest are fixed to zero.
 	@timeit TIMER "relax_ss_rc" relax!(rc_vars[rc_discrete_bitstr])
 	@timeit TIMER "relax_pe" relax!(pe)
-	#@assert all(v -> !is_integer(v) && !is_binary(v), all_variables(model))
-	#set_start_value.(all_vars, all_vars_values) # using the values of the LP
 
-	return bkv, #=sol,=# pe_svcs, cm_svcs
+	return bkv, pe_svcs, cm_svcs
 end
 
 # Arguments:
@@ -332,7 +346,7 @@ end
 	qt_vars_added_back_to_LP_by_iterated = zero(P)
 	qt_iters = zero(P)
 	while !isempty(to_unfix)
-		debug && begin
+		if debug
 			qt_iters += one(P)
 			println("qt_positive_rp_vars_iter_$(qt_iters) = $(num_positive_rp_vars)")
 			println("above_threshold_iter_$(qt_iters) = $(was_above_threshold)")
@@ -370,29 +384,23 @@ end
 	return
 end
 
-# TODO: check if the kept variables are chosen from the unfixed variables
-# of from all variables.
 @timeit TIMER function _final_pricing!(
 	model, bp :: ByproductPPG2KP{D, S, P}, LB :: Float64, LP :: Float64,
 	debug :: Bool = false
 ) where {D, S, P}
 	plate_cons = model[:plate_cons]
 	vars = model[:cuts_made]
-	#unfixed_bits = !is_fixed(vars)
-	#unfixed_vars, fixed_vars = _partition_by_bits(unfixed_bits, vars)
-	#unfixed_cuts = bp.cuts[unfixed_bits]
 	debug && @show LP
 	debug && @show LB
-	# Many optional small adjusts may clean the model duals, if they are not
-	# available we re-solve the LP one more time to make them available again.
-	!has_duals(model) && optimize!(model)
-	if debug
+	# If this assert fails is because some change was done to a solved model
+	# and its state was reset to unoptimized.
+	@assert has_duals(model)
+	rps = _reduced_profit.(bp.cuts, (plate_cons,))
+	#=if debug
 		println("stats on reduced profit values of final pricing")
-		rps = _reduced_profit.(bp.cuts, (plate_cons,))
 		vector_summary(rps) # defined in GuillotineModels.Utilities
-	end
-	to_keep_bits = # the final pricing (get which variables should remain)
-		@. floor(_reduced_profit(bp.cuts, (plate_cons,)) + LP) >= LB
+	end=#
+	to_keep_bits = @. floor(rps + LP) >= LB # the final pricing
 	return _delete_vars!(bp, model, to_keep_bits, :cuts_made), to_keep_bits
 end
 
@@ -410,7 +418,6 @@ end
 		# Change the LP-solving method to dual simplex, this allows for better
 		# reuse of the partial solution.
 		set_optimizer_attribute(model, "Method", 1)
-		#set_optimizer_attribute(model, "Presolve", 0)
 	end
 
 	rng = Xoroshiro128Plus(seed)
@@ -423,12 +430,10 @@ end
 	# because the use of max_profit seems to assume no negative profit items.
 	@assert all(e -> e >= zero(e), d)
 	@assert all(e -> e >= zero(e), p)
-	# TODO: check if is needed to pass the whole bp structure
 	_iterative_pricing!(
 		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug
 	)
 	LP = objective_value(model)
-	# TODO: change the name of the methods to include the exclamation mark
 	byproduct, to_keep_bits = _final_pricing!(
 		model, byproduct, LB, LP, debug
 	)
@@ -449,7 +454,7 @@ end
 # TODO: for now it takes the seed and use it with the same heuristic as
 # the furini pricing, but in the future we need to allow it to receive
 # an arbitrary LB value, and let it call the heuristic if it is not passed
-# NOTE: the d and p are necessary exactly because of the heuristic
+# NOTE: the d and p are necessary exactly because of the heuristic.
 @timeit TIMER function _becker_pricing!(
 	bp :: ByproductPPG2KP{D, S, P}, model, d, p, seed, debug
 ) where {D, S, P}
@@ -470,23 +475,24 @@ end
 			@show LB
 		end
 	end
-	@timeit TIMER "warm_start" begin
+	raw_ws = @timeit TIMER "create_raw_ws_from_heuristic" begin
 		cuts, extractions = cuts_and_extractions_from_2_staged_solution(
 			pattern, bp, false
 		)
 		qt_cuts = unify!(D, cuts)
 		qt_extractions = unify!(D, extractions)
-		raw_warm_start!(model, extractions, qt_extractions, cuts, qt_cuts)
+		(extractions, qt_extractions, cuts, qt_cuts)
 	end
+	@timeit TIMER "apply_raw_ws" raw_warm_start!(model, raw_ws...)
 	flush_all_output()
 	@timeit TIMER "lp_solve" optimize!(model)
 	flush_all_output()
-	# Check if the variables are relaxed.
-	@assert all(v -> !is_integer(v) & !is_binary(v), all_vars)
 	# Check if the model is solved.
 	@assert has_duals(model)
+	# Check if the variables are relaxed.
+	#@assert all(v -> !is_integer(v) & !is_binary(v), all_vars)
 	# Assert no variable considered is fixed but have lower bounds.
-	@assert all(v -> has_lower_bound(v) & !is_fixed(v), cm_vars)
+	#@assert all(v -> has_lower_bound(v) & !is_fixed(v), cm_vars)
 	LP = objective_value(model) # the model should be relaxed and solved now
 	LB = 0.0
 	@timeit TIMER "sel_del_res" begin

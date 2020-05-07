@@ -15,30 +15,6 @@ function _extraction_pattern(
 	return CutPattern(L, W, false, CutPattern{D, S}[piece])
 end
 
-# INTERNAL METHOD USED ONLY IN get_cut_pattern
-# Given a list of variables, returns two lists. The two lists have the same
-# length (that is itself smaller than the given list). The first list is
-# of indexes of the first list that have non-zero values (after aplying
-# RoundNearest to them) and the second is the rounded (to nearest) values.
-function _gather_nonzero(vars, ::Type{D}, sol_idx = 1) where {D}
-	idxs = Vector{eltype(keys(vars))}()
-	vals = Vector{D}()
-	diff = 0.0
-	for (idx, var) in pairs(vars)
-		float_val = value(var; result = sol_idx)
-		val = round(D, float_val, RoundNearest)
-		abs(float_val - val) > diff && (diff = abs(float_val - val))
-		if abs(float_val - val) > 1e-4 || !iszero(val)
-			push!(idxs, idx)
-			push!(vals, val)
-		end
-	end
-	diff > 1e-4 && @warn "At least one variable of a solved PPG2KP model had" *
-		" a difference of $diff from the nearest integer. Maybe the tolerances" *
-		" are too lax, or some variable that should not be relaxed is relaxed."
-	idxs, vals
-end
-
 # INTERNAL USE.
 # Check if a single piece is extracted from the original plate.
 # TODO: fix the types, as we are using Julia 1.4
@@ -177,7 +153,7 @@ function _bottom_up_tree_build!(
 end
 
 import ..get_cut_pattern
-function get_cut_pattern(
+@timeit TIMER function get_cut_pattern(
 	model_type :: Val{:PPG2KP}, model :: JuMP.Model, ::Type{D}, ::Type{S},
 	build_model_return :: ByproductPPG2KP{D, S}
 ) :: CutPattern{D, S} where {D, S}
@@ -202,8 +178,8 @@ function get_cut_pattern(
 	cm = model[:cuts_made] # Cuts Made
 
 	# non-zero {piece extractions, cuts made} {indexes,values}
-	nzpe_idxs, nzpe_vals = _gather_nonzero(pe, D)
-	nzcm_idxs, nzcm_vals = _gather_nonzero(cm, D)
+	nzpe_idxs, nzpe_vals = gather_nonzero(pe, D)
+	nzcm_idxs, nzcm_vals = gather_nonzero(cm, D)
 	if debug
 		@show nzpe_idxs
 		@show nzpe_vals

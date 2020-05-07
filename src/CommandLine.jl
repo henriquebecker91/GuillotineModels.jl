@@ -60,7 +60,7 @@ If a copy is returned, the type of the scalars and the element type of
 the arrays is converted to typeof(L).
 """
 @timeit TIMER function div_and_round_instance(L, W, l, w, p_args)
-	# assert explanation: at least two of the three flags are disabled (i.e., 
+	# assert explanation: at least two of the three flags are disabled (i.e.,
 	# have value one)
 	@assert sum(isone.((
 		p_args["div-and-round-nearest"],
@@ -132,31 +132,18 @@ specific and are extracted and passed to their specific methods.
 	!isempty(pp["save-model"]) && !pp["no-csv-output"] &&
 		@timeit TIMER "save_model" JuMP.write_to_file(m, pp["save-model"])
 
+	p_ = max(L/minimum(l), W/minimum(w))
+	num_vars = num_variables(m)
+	num_constrs = num_all_constraints(m)
 	if !pp["no-csv-output"]
 		#@show time_to_build_model
 		n = length(d)
 		@show n
 		n_ = sum(d)
 		@show n_
-		p_ = max(L/minimum(l), W/minimum(w))
 		@show p_
-		num_vars = num_variables(m)
 		@show num_vars
-		num_constrs = num_all_constraints(m)
 		@show num_constrs
-		#= TODO: make specific prints for each model inside their module and
-		# call them there?
-		if !pp["flow-model"] && !pp["break-hvcut-symmetry"]
-			num_plates = length(pli_lwb)
-			@show num_plates
-			ps = m[:picuts]
-			num_picuts = length(ps)
-			@show num_picuts
-			cm = m[:cuts_made]
-			num_cuts_made = length(cm)
-			@show num_cuts_made
-		end
-		=#
 	end
 
 	pp["do-not-solve"] && return nothing
@@ -167,23 +154,29 @@ specific and are extracted and passed to their specific methods.
 	#See comment above about TimerOutputs.
 	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 
+	# This needs to be done even if it is not printed to warm-start the JIT.
+	obj_value = 0.0
+	if primal_status(m) == MOI.FEASIBLE_POINT
+		@timeit TIMER "stringfy_solutions" begin
+			obj_value = objective_value(m)
+			solution = get_cut_pattern(model_id, m, eltype(d), eltype(l), bmr)
+			sol_str = "solution = $solution\n"
+			sol_pretty_str = "PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
+				"\nPRETTY_STR_SOLUTION_END\n"
+			sol_simple_pretty_sol = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
+				to_pretty_str(simplify!(deepcopy(solution))) *
+				"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
+		end
+	end
 	if !pp["no-csv-output"]
 		#@show time_to_solve_model
-		obj_value = 0.0
 		if primal_status(m) == MOI.FEASIBLE_POINT
-			@timeit TIMER "print_solution" begin
-				obj_value = objective_value(m)
-				solution = get_cut_pattern(model_id, m, eltype(d), eltype(l), bmr)
-				@show solution
-				println(
-					"PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
-					"\nPRETTY_STR_SOLUTION_END\n"
-				)
-				println(
-					"SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
-					to_pretty_str(simplify!(deepcopy(solution))) *
-					"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
-				)
+			@timeit TIMER "print_solutions" begin
+				iob = IOBuffer()
+				write(iob, sol_str)
+				write(iob, sol_pretty_str)
+				write(iob, sol_simple_pretty_sol)
+				print(read(seekstart(iob), String))
 			end
 		end
 		@show obj_value
@@ -275,8 +268,8 @@ function generic_args() :: Vector{Arg}
 			"Save the model of the passed instance to the given filename (use the extension to define the format, allowed formats are described by the enumeration MathOptInterface.FileFormats.FileFormat)."
 		),
 		Arg(
-			"do-not-mock-for-compilation", false,
-			"To avoid counting the compilation time, a small hardcoded mock instance is solved before (to warm the JIT), this flag disables this mock solve."
+			"warm-jit", "toy",
+			"There are three valid options: 'no', 'with-toy', and 'yes'. If 'yes', the instance is solved two times, but the first time the arguments are changed to disable output (i.e., '--no-csv-output' and '--SOLVER-no-output' are passed, and if supported, '--MODEL-quiet' is passed too; in the GuillotineModels.TIMER the timings of this first run are under 'warm-jit'). If 'with-toy', it behaves similarly to 'yes' but instead of using the instance itself it uses a very small hardcoded instance (this helps a lot, but many procedures only called when the model has specific properties are not called). If 'no', the code is just run a single time."
 		),
 		Arg(
 			"no-csv-output", false,
@@ -449,6 +442,7 @@ function throw_if_incompatible_options(p_args)
 		Val(Symbol(p_args["solver"])),
 		create_unprefixed_subset(p_args["solver"], p_args)
 	)
+	@assert p_args["warm-jit"] in ("no", "with-toy", "yes")
 end
 
 # Definition of the command line arguments.
@@ -472,12 +466,12 @@ exceptions may be thrown.
 end
 
 """
-    mock_instance() :: String
+    toy_instance() :: String
 
-Just return a string of a small instance to be used by `mock_for_compilation`
-if `--do-not-mock-for-compilation` is not specified.
+Just return a string representing a small instance to be used by `warm_jit`
+if `--warm-jit with-toy`.
 """
-function mock_instance() :: String
+function toy_instance() :: String
 	"""
 	100	200
 	2
@@ -487,22 +481,27 @@ function mock_instance() :: String
 end
 
 """
-    mock_for_compilation(p_args)
+    warm_jit(p_args)
 
 !!! **Internal use.**
 
-Creates a temporary file with the content returned by `mock_instance` and pass
-to `read_build_solve_and_print` a copy of `p_args` pointing to this instance
-with `no-csv-output` and `USED_SOLVER_NAME-no-output` as true.
+Looks at `p_args["warm-jit"]` and implements what is said in the flag
+description.
 
-See also: [`mock_instance`](@ref), [`read_build_solve_and_print`](@ref)
+See also: [`toy_instance`](@ref), [`read_build_solve_and_print`](@ref)
 """
-@timeit TIMER function mock_for_compilation(p_args)
+@timeit TIMER function warm_jit(p_args)
+	p_args["warm-jit"] == "no" && return
+	copyed_args = copy(p_args)
+	# The temporary file is only needed if p_args["warm-jit"] == "with-toy",
+	# however, if it is needed, then it needs to be valid for the rest of
+	# this method scope.
 	mktemp() do path, io
-		copyed_args = copy(p_args)
-		write(io, mock_instance())
-		close(io) # it will be opened again inside read_build_solve_and_print
-		copyed_args["instfname"] = path
+		if p_args["warm-jit"] == "with-toy"
+				write(io, toy_instance())
+				close(io)
+				copyed_args["instfname"] = path
+		end
 		copyed_args["no-csv-output"] = true
 		copyed_args[p_args["solver"] * "-" * "no-output"] = true
 		valid_model_args = accepted_arg_list(Val(Symbol(p_args["model"])))
@@ -511,6 +510,7 @@ See also: [`mock_instance`](@ref), [`read_build_solve_and_print`](@ref)
 		end
 		read_build_solve_and_print(copyed_args)
 	end
+	return
 end
 
 """
@@ -550,9 +550,9 @@ you just need to remove the `["--help"]` from the call.
 	!p_args["no-csv-output"] && @show p_args
 	date_now = Dates.format(Dates.now(), dateformat"yyyy-mm-ddTHH:MM:SS")
 	!p_args["no-csv-output"] && @show date_now
-	!p_args["do-not-mock-for-compilation"] && mock_for_compilation(p_args)
+	warm_jit(p_args) # It checks `p_args["warm-jit"]` to check if it will run.
 	# remaining code should not depend on this option
-	delete!(p_args, "do-not-mock-for-compilation")
+	delete!(p_args, "warm-jit")
 	total_instance_time = @elapsed read_build_solve_and_print(p_args)
 	!p_args["no-csv-output"] && @show total_instance_time
 end

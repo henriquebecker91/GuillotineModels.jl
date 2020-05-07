@@ -1,5 +1,3 @@
-#import InteractiveUtils.@which
-
 # highest_plate_idx should be greater-than-or-equal-to the largest
 # value found in any field of any element of `cuts`.
 @timeit TIMER function _reachable_plate_types(
@@ -54,10 +52,13 @@ end
 	return qt_re, re, qt_rc, rc, qt_rp, rp
 end
 
-@timeit TIMER function _print_unreachable_plates(num_reached, reachable, pli_lwb)
+@timeit TIMER function _print_unreachable_plates(
+	num_reached, reachable, pli_lwb, debug
+)
 	total_num_plates = length(pli_lwb)
 	@assert num_reached <= total_num_plates
 	@assert length(reachable) == total_num_plates
+	!debug && return
 	qt_unreachable_plate_types = total_num_plates - num_reached
 	@show qt_unreachable_plate_types
 	iob = IOBuffer()
@@ -143,14 +144,13 @@ end
 end
 
 @timeit TIMER function _handle_unreachable!(bp, model, debug, purge)
-	!debug && !purge && return bp
 	qt_re, re, qt_rc, rc, qt_rp, rp = _reachable(
 		bp.np, bp.cuts, lastindex(bp.pli_lwb)
 	)
-	# The unreachable variables are not printed because they can be derived from
-	# the set of unreachable plates. Every unreachable variable is just a
+	# The unreachable variables are not printed because they can be derived
+	# from the set of unreachable plates. Every unreachable variable is just a
 	# variable/cut in which the parent plate is an unreachable plate.
-	debug && _print_unreachable_plates(qt_rp, rp, bp.pli_lwb)
+	_print_unreachable_plates(qt_rp, rp, bp.pli_lwb, debug)
 	@assert qt_re <= length(bp.np) && qt_re >= zero(qt_re)
 	@assert qt_rc <= length(bp.cuts) && qt_rc >= zero(qt_rc)
 	@assert qt_rp <= length(bp.pli_lwb) && qt_rp >= zero(qt_rp)

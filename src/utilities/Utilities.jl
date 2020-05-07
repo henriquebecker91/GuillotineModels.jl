@@ -3,6 +3,69 @@ module Utilities
 using DocStringExtensions # for TYPEDFIELDS
 
 """
+    bits2idxs(bits, idx_type = Int) :: Vector{idx_type}
+
+Given a `BitArray` or a `Vector{Bool}` return a vector of the indexes storing
+true values.
+"""
+function bits2idxs(bits) :: Vector{Int}
+	return bits2idxs(bits, Int) :: Vector{Int}
+end
+function bits2idxs(bits, ::Type{I}) :: Vector{I} where {I}
+	n = count(bits)
+	iszero(n) && return I[]
+	idxs = Vector{I}(undef, n)
+	i = 1
+	for (j, v) in pairs(bits)
+		if v
+			idxs[i] = convert(I, j)
+			i += 1
+			i > n && break
+		end
+	end
+	return idxs
+end
+export bits2idxs
+
+"""
+    gather_nonzero(vars, ::Type{D}, threshold = 1e-5, sol_idx = 1)
+
+Given some valid JuMP.Model `vars`, return a list of all indexes in `vars`
+in which the variable value rounded to nearest integer is non-zero, and
+a list of the rounded values themselves.
+
+The `::Type{D}` is the integer type for the rounded values. The `threshold`
+parameter is used to give a warning if the difference between the extracted
+value (Float64) and the rounded value is larger than it. The `sol_idx` is
+passed to `JuMP.value(...; result = sol_idx)` to allow choosing which solution
+of the model is to be queried.
+"""
+function gather_nonzero(
+	vars, ::Type{D}, threshold = 1e-5, sol_idx = 1
+) where {D}
+	@assert threshold <= 0.5
+	values = value.(vars; result = sol_idx)
+	rounded_values = round.(D, values, RoundNearest)
+	if !isone(threshold)
+		diffs = abs.(values .- rounded_values)
+		large_diffs = filter(>(threshold), diffs)
+		if !isempty(large_diffs)
+			@warn "The value of $(length(large_diffs)) model variables is" *
+				" different from their nearest integer by at least $(threshold)," *
+				" the largest difference is $(maximum(large_diffs)). This may mean:" *
+				" the tolerances are too lax; the model was an LP model (in this" *
+				" case set `threshold` to 0.5); there is some numerical error;" *
+				" or some variables are not integers as they should."
+		end
+	end
+	nz_bits = (!iszero).(rounded_values)
+	idxs = bits2idxs(nz_bits)
+	vals = deleteat!(rounded_values, .!nz_bits)
+	return idxs, vals
+end
+export gather_nonzero
+
+"""
     unify!(::Type{QT_TYPE}, a)
 
 Apply `sort!` and `unique!` to array `a` and then returns a `Vector{QT_TYPE}`

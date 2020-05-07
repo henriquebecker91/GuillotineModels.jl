@@ -316,14 +316,13 @@ function cuts_and_extractions_from_2_staged_solution(
 end
 export cuts_and_extractions_from_2_staged_solution
 
-# TODO: document this
-function raw_warm_start!(model, nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals)
-	@assert length(nzpe_idxs) == length(nzpe_vals)
-	@assert length(nzcm_idxs) == length(nzcm_vals)
+function raw_warm_start!(model, nz_pe_idxs, nz_pe_vals, nz_cm_idxs, nz_cm_vals)
+	@assert length(nz_pe_idxs) == length(nz_pe_vals)
+	@assert length(nz_cm_idxs) == length(nz_cm_vals)
 	pe = model[:picuts]
 	cm = model[:cuts_made]
-	set_start_value.(pe[nzpe_idxs], nzpe_vals)
-	set_start_value.(cm[nzcm_idxs], nzcm_vals)
+	set_start_value.(pe[nz_pe_idxs], nz_pe_vals)
+	set_start_value.(cm[nz_cm_idxs], nz_cm_vals)
 end
 export raw_warm_start!
 
