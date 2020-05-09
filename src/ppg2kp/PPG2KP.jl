@@ -32,12 +32,14 @@ Base.getindex(tuple :: Tuple, s :: Dimension) = tuple[Int(s)]
 end
 Base.getindex(tuple :: Tuple, s :: Relation) = tuple[Int(s)]
 
+@enum BaseModel BECKER FURINI
+
 # Include code that is focused on implementing a specific feature, but does
 # not merit a module of their own. Non-exported methods of these files are not
 # expected to be used in this module, but exported methods are exports from
 # this module (ou specialization of parent modules).
 include("./get_cut_pattern.jl")
-include("./warm_start.jl")
+include("./MIP_start.jl")
 
 function _partition_by_bits(bits, list)
 	@assert length(bits) == length(list) # yes, it is length, not axes, what we want
@@ -312,24 +314,44 @@ function _no_arg_check_build_model(
 	bp = build_complete_model(model, d, p, l, w, L, W, options)
 	debug = options["verbose"] && !options["quiet"]
 	pricing = options["pricing"]
+	mip_start = options["MIP-start"]
+	heuristic_seed = options["heuristic-seed"]
+	bm = (options["faithful2furini2016"] ? FURINI : BECKER) :: BaseModel
+	@assert mip_start in ("expected", "guaranteed", "none")
 	if debug
 		println("length_pe_before_pricing = $(length(model[:picuts]))")
 		println("length_cm_before_pricing = $(length(model[:cuts_made]))")
 		println("length_pc_before_pricing = $(length(model[:plate_cons]))")
 	end
 	if pricing != "none"
+		ws_bool = (mip_start != "none")
+		# It is important to note that the pricing and the bm (BaseModel) have the
+		# same two values ("becker"/BECKER and "furini"/FURINI) but they are
+		# orthogonal/independent. You can have a FURINI model with "becker"
+		# pricing and vice-versa. It is just because each author has defined
+		# both a model and an optional pricing method (to be executed over it)
+		# but both pricings are compatible with both models, and we allow them
+		# to be mixed. The pricing methods just need to know the underlying base
+		# model to be able to MIP-start it corretly (initially at least, this
+		# comment may be out of date).
 		if pricing == "expected"
 			pricing = (options["faithful2furini2016"] ? "furini" : "becker")
 		end
 		if pricing == "furini"
 			bp = _furini_pricing!(
-				model, bp, d, p, options["pricing-heuristic-seed"],
-				options["pricing-alpha"], options["pricing-beta"], debug
+				model, bp, d, p, heuristic_seed, options["pricing-alpha"],
+				options["pricing-beta"], debug, ws_bool, bm
 			)
 		else
 			@assert pricing == "becker"
 			bp = _becker_pricing!(
-				bp, model, d, p, options["pricing-heuristic-seed"], debug
+				model, bp, d, p, heuristic_seed, debug, ws_bool, bm
+			)
+		end
+	else # in the case there is no pricing phase
+		if mip_start == "guaranteed" # we have to do the MIP-start ourselves
+			mip_start_by_heuristic!(
+				model, bp, d, p, heuristic_seed, bm
 			)
 		end
 	end

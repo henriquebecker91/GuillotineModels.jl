@@ -46,10 +46,6 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"pricing", "expected",
 			"Define if a pricing procedure will be used, and which one. The default value is 'expected', which will apply a different pricing procedure depending on other flags (mostly, 'furini' if 'faithful2furini2016' is passed and 'becker' otherwise). The accepted values are: 'expected', 'furini', 'becker', and 'none'. Combining 'pricing none' with 'faithful2furini2016' will give the Complete PP-G2KP Model with Cut-Position and Redundant-Cut reductions (pass no-redundant-cut and no-cut-position to have the pure Complete PP-G2KP Model)."
 		),
-		#=Arg(
-			"warm-start", false,
-			"(For now conflict with --faithful2furini2016) Uses the heuristic described in Furini2016 to generate a initial primal feasible solution, warm-start the model with unrestricted cuts fixed to zero, and then unfix the unrestricted cuts to solve the complete model."
-		),=#
 		Arg(
 			"ignore-d", false,
 			"Ignore the demand information during discretization, used to measure impact."
@@ -63,8 +59,8 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"Ignore the dimension not being discretized during discretization, used to measure impact."
 		),
 		Arg(
-			"pricing-heuristic-seed", 1,
-			"Used only if furini pricing is in use (see the pricing flag). Defines the seed used to start the RNG object passed to the `GuillotineModels.PPG2KP.iterated_greedy` method, which result is used in the final pricing of the restricted model."
+			"heuristic-seed", 1,
+			"Used only if the value of the 'MIP-start' option implies the use of `GuillotineModels.PPG2KP.Heuristic.fast_iterated_greedy` (the seed is used to initialize a RNG, more specifically a `RandomNumbers.Xoroshiro128Plus`)."
 		),
 		Arg(
 			"verbose", false,
@@ -85,6 +81,9 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			" if the 'verbose' flag is enabled then the unreachable variables" *
 			" and constraints will be searched and printed, even if they are" *
 			" not removed from the model after."
+		),
+		Arg("MIP-start", "expected",
+			"Three values are allowed: \"expected\", \"none\", and \"guaranteed\". If \"expected\" is passed, then the model will not be MIP-started unless some sort of pricing (that already generates a complete feasible solution in the process) is used. If it is Becker's pricing, then the model is just MIP-started with the simple iterated greedy 2-staged heuristic; if it is Furini's pricing, then two MIP-starts occur: the first one using the same heuristic in a restricted model; the second one using the solution of the restricted model in the returned non-restricted model. If \"none\" is passed, then the model is never MIP-started, even temporarily (as the first MIP-start that can occur in the middle of Furini's pricing). If \"guaranteed\" is passed, it behaves as \"expected\" if pricing is enabled, but if pricing is disabled, it calls the iterated greedy 2-staged heuristic just to MIP-start the model before returning it. The MIP-start is done by means of `MOI.set(model, VariablePrimalStart(), var_index, value)`."
 		)
 	]
 end
@@ -102,14 +101,14 @@ function Utilities.Args.throw_if_incompatible_options(::Val{:PPG2KP}, p_args)
 		"There is little sense in having a value above one in option" *
 		" pricing-beta (it was $(beta)), are you sure you intended this?"
 	)
-	pricing = p_args["pricing"]
-	allowed_pricing_values = ["expected", "furini", "becker", "none"]
-	if !(pricing in allowed_pricing_values)
-		throw(ArgumentError(
-			"The argument of flag 'pricing' was the string '$pricing', but the" *
-			" only allowed arguments are $(allowed_pricing_values)."
-		))
-	end
+	name = "pricing"
+	Utilities.throw_if_unrecognized(
+		name, p_args[name], ["expected", "furini", "becker", "none"]
+	)
+	name = "MIP-start"
+	Utilities.throw_if_unrecognized(
+		name, p_args[name], ["expected", "guaranteed", "none"]
+	)
 end
 
 end # module

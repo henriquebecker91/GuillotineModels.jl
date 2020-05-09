@@ -77,7 +77,8 @@ end
 
 @timeit TIMER function _restricted_final_pricing!(
 	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
-	bp :: ByproductPPG2KP{D, S, P}, rng, debug :: Bool = false
+	bp :: ByproductPPG2KP{D, S, P}, seed, debug :: Bool, mip_start :: Bool,
+	bm :: BaseModel
 ) where {D, S, P}
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
@@ -97,15 +98,19 @@ end
 	# Fix all unrestricted cuts (pool vars).
 	uc_vars = cm[uc_idxs]
 	@timeit TIMER "fix_uc" fix.(uc_vars, 0.0; force = true)
-	# Get the solution of the heuristic. Use the 'best known value'/
-	# 'primal bound' of the heuristic to do the pricing, and the solution itself
-	# to warm-start the restricted model.
-	bkv, _, shelves = @timeit TIMER "primal_heuristic" fast_iterated_greedy(
-		d, p, bp.l, bp.w, bp.L, bp.W, rng
-	)
-	#=sol = @timeit TIMER "shelves2cutpatterns" Heuristic.shelves2cutpattern(
-		shelves, bp.l, bp.w, bp.L, bp.W
-	)=#
+	# The 'best known value'/'primal bound' of the heuristic is needed to do
+	# the pricing. If we can MIP-start the model, we can just call
+	# `mip_start_by_heuristic!` and get the `bkv` returned, otherwise we need
+	# to call just the heuristic to get the bkv (and throw away the rest).
+	if mip_start
+		(bkv, _, _), heuristic_raw_ws = mip_start_by_heuristic!(
+			model, bp, d, p, seed, bm
+		)
+	else
+		bkv :: P, _, _ = fast_iterated_greedy(
+			d, p, bp.l, bp.w, bp.L, bp.W, Xoroshiro128Plus(seed)
+		)
+	end
 	LB = convert(Float64, bkv)
 	# Solve the relaxed restricted model.
 	flush_all_output()
@@ -168,7 +173,7 @@ end
 	# state (rc_svcs) not this intermediary one.
 	@timeit TIMER "fix_rc_subset" fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
 	# The discrete variables are the restricted cuts that were not removed
-	# by the final pricing of the restricted model and will be in the MIP
+	# by the final pricing of the restricted model and will be in the mip
 	# of the restricted model.
 	discrete_vars = rc_vars[rc_discrete_bitstr]
 	@timeit TIMER "restore_ss_cm" restore!(
@@ -176,37 +181,29 @@ end
 	)
 	# All piece extractions also need to be restored.
 	@timeit TIMER "restore_pe" restore!(pe, pe_svcs)
-	# Just before solving the restricted MIP, it is warm-started with the
-	# heuristic value.
-	@timeit TIMER "heuristic_ws" begin
-		cuts, extractions = cuts_and_extractions_from_2_staged_solution(
-			shelves, bp, true
-		)
-		qt_cuts = unify!(D, cuts)
-		qt_extractions = unify!(D, extractions)
-		raw_warm_start!(model, extractions, qt_extractions, cuts, qt_cuts)
-	end
 	flush_all_output()
 	@timeit TIMER "mip_solve" optimize!(model) # restricted MIP solved
 	flush_all_output()
-	# We warm start the model with a feasible solution, so it should be
+	# We MIP start the restricted model with a feasible solution, so it should be
 	# impossible to get a different status here.
 	@assert primal_status(model) == MOI.FEASIBLE_POINT
 	model_obj = round(P, objective_value(model), RoundNearest)
-	if model_obj > LB
-		bkv = model_obj
-		# Disabled because get_cut_pattern is not optimized nor necessary.
-		#sol = get_cut_pattern(Val(:PPG2KP), model, D, S, bp)
+	if mip_start && model_obj > bkv
+		# Clean the old MIP start (that comes from the heuristic) and replace it
+		# with the solution of the restricted model (yes, take the solution and
+		# re-input it as warm-start just to have an extra guarantee it will be
+		# used). The ideal would be saving it and passing it along to just be
+		# applied before returning the model. This because some solvers can discard
+		# the start value of all variables if some variables are deleted (even if
+		# the deleted ones are not in the mip start). However, this would need us
+		# to either: save JuMP variables instead of indexes; or update the indexes
+		# every time a variable is deleted. For now this is too much effort
+		# because Gurobi log shows that the MIP start is being recognized even with
+		# variables being deleted after.
+		unset_mip_start!(model, heuristic_raw_ws[1], heuristic_raw_ws[3])
+		raw_mip_start!(model, save_mip_start(model)...)
 	end
-	# Save the value of the restricted model to warm start the unrestricted
-	# model in the future. The changes we do to the model may discard the
-	# start if we do it now.
-	raw_ws = @timeit TIMER "save_raw_ws" begin
-		nz_pe_idxs, nz_pe_vals = gather_nonzero(pe, D)
-		nz_cm_idxs, nz_cm_vals = gather_nonzero(cm, D)
-		(nz_pe_idxs, nz_pe_vals, nz_cm_idxs, nz_cm_vals)
-	end
-	@timeit TIMER "apply_raw_ws" raw_warm_start!(model, raw_ws...)
+	model_obj > bkv && (bkv = model_obj)
 
 	# The variables are left all relaxed but with only the variables used
 	# in the restricted priced model unfixed, the rest are fixed to zero.
@@ -411,7 +408,8 @@ end
 # limit (the best solution found in the middle of this process is used for the
 # true final pricing).
 @timeit TIMER function _furini_pricing!(
-	model, byproduct, d, p, seed, alpha, beta, debug
+	model, byproduct, d, p, seed, alpha, beta, debug, mip_start :: Bool,
+	bm :: BaseModel
 ) where {D, S, P}
 	if JuMP.solver_name(model) == "Gurobi"
 		old_method = get_optimizer_attribute(model, "Method")
@@ -420,10 +418,10 @@ end
 		set_optimizer_attribute(model, "Method", 1)
 	end
 
-	rng = Xoroshiro128Plus(seed)
 	rc_idxs = _all_restricted_cuts_idxs(byproduct)
+	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
 	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
-		model, rc_idxs, d, p, byproduct, rng, debug
+		model, rc_idxs, d, p, byproduct, seed, debug, mip_start, bm
 	)
 	LB = convert(Float64, bkv)
 	# If those fail, we need may need to rethink the iterative pricing,
@@ -455,35 +453,26 @@ end
 # the furini pricing, but in the future we need to allow it to receive
 # an arbitrary LB value, and let it call the heuristic if it is not passed
 # NOTE: the d and p are necessary exactly because of the heuristic.
+# NOTE: the _becker_pricing! can be called over both a FURINI or a BECKER
+# model, this is the parameter bm.
 @timeit TIMER function _becker_pricing!(
-	bp :: ByproductPPG2KP{D, S, P}, model, d, p, seed, debug
+	model, bp :: ByproductPPG2KP{D, S, P}, d, p, seed,
+	debug :: Bool, mip_start :: Bool, bm :: BaseModel
 ) where {D, S, P}
 	pe_vars = model[:picuts]
 	cm_vars = model[:cuts_made]
 	all_vars = [pe_vars; cm_vars]
 	@timeit TIMER "relax!" all_scvs = relax!(all_vars)
-	@timeit TIMER "primal_heuristic" begin
-		rng = Xoroshiro128Plus(seed)
-		bkv, _, pattern = fast_iterated_greedy(
-			d, p, bp.l, bp.w, bp.L, bp.W, rng
+	if mip_start
+		(bkv, _, _), _ = mip_start_by_heuristic!(
+			model, bp, d, p, seed, bm
 		)
-		LB = convert(Float64, bkv)
-		if debug
-			# too costly, need to think about a --extra-verbose flag
-			#cp = Heuristic.shelves2cutpattern(pattern, bp.l, bp.w, bp.L, bp.W)
-			#println(to_pretty_str(cp))
-			@show LB
-		end
-	end
-	raw_ws = @timeit TIMER "create_raw_ws_from_heuristic" begin
-		cuts, extractions = cuts_and_extractions_from_2_staged_solution(
-			pattern, bp, false
+	else
+		bkv, _, _ = fast_iterated_greedy(
+			d, p, bp.l, bp.w, bp.L, bp.W, Xoroshiro128Plus(seed)
 		)
-		qt_cuts = unify!(D, cuts)
-		qt_extractions = unify!(D, extractions)
-		(extractions, qt_extractions, cuts, qt_cuts)
 	end
-	@timeit TIMER "apply_raw_ws" raw_warm_start!(model, raw_ws...)
+	LB = convert(Float64, bkv)
 	flush_all_output()
 	@timeit TIMER "lp_solve" optimize!(model)
 	flush_all_output()

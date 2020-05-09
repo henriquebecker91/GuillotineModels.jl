@@ -120,8 +120,8 @@ function _successive_trims!(
 	return pp
 end
 
-# Trim the dimension `dim` of plate `pp` to size `s` (if `faithful2furini`) or
-# close enough (if `!faithful2furini`, and by 'close enough' we mean that no
+# Trim the dimension `dim` of plate `pp` to size `s` (if `bm == FURINI`) or
+# close enough (if `bm == BECKER`, and by 'close enough' we mean that no
 # piece would fit in the trim of the 'close enough' plate to exactly size `s`).
 # The cuts needed are added to `cuts_done`. For a plate index `pli` the
 # `cuts_by_pp[pli]` has the range of cuts (that divide `dim`) with `pli` as
@@ -134,7 +134,7 @@ function _safe_trim_dim!(
 	cuts_by_pp :: Vector{UnitRange{P}},
 	sllw :: SortedLinkedLW{D, S},
 	bp :: ByproductPPG2KP{D, S, P},
-	faithful2furini :: Bool
+	bm :: BaseModel
 ) where {D, S, P}
 	# rS: size of `dim` in plate `pp`
 	rS = bp.pli_lwb[pp][dim]
@@ -161,18 +161,18 @@ function _safe_trim_dim!(
 					cuts_done, pp, bp, cuts_by_pp, qt_trims, min_s, dim
 				)
 				rS = bp.pli_lwb[pp][dim]
-				# If !faithful2furini and the other dim has a difference smaller than
+				# If bm == BECKER and the other dim has a difference smaller than
 				# the smallest-other-dim-size piece-that-fits, then it is guaranteed
 				# that the extraction will be in bp.np.
 			end
-			# Otherwise, if faithful2furini, the match of piece and plate need
+			# Otherwise, if bm == FURINI, the match of piece and plate need
 			# to be exact, so we may need a final trim cut. It was done here,
 			# after the successive trim cuts, because here it is guaranteed to
 			# exist. If it was done before, it could be the cut did not exist
 			# because the symmetry removal used by Furini2016 (i.e, if there was a
 			# cut of length exactly L - l, in the first half of the plate, then a
 			# cut of length l, in the second half of the plate, would not exist).
-			if faithful2furini && s != rS
+			if bm == FURINI && s != rS
 				pp, _ = _make_cut!(cuts_done, pp, bp, cuts_by_pp, s, dim)
 			end
 		end
@@ -189,17 +189,17 @@ function _sell_piece!(
 	bp :: ByproductPPG2KP{D, S, P},
 	hcuts_by_pp :: Vector{UnitRange{P}},
 	vcuts_by_pp :: Vector{UnitRange{P}},
-	faithful2furini :: Bool
+	bm :: BaseModel
 ) :: Nothing where {D, S, P}
 	# The piece-to-be-sold dimensions.
 	piece_l, piece_w = bp.l[piece_idx], bp.w[piece_idx]
 	# pp: the current parent plate that is updated as we trim the given plate
 	pp = plate_idx
 	pp = _safe_trim_dim!(
-		cuts_done, pp, piece_l, LENGTH, hcuts_by_pp, sllw, bp, faithful2furini
+		cuts_done, pp, piece_l, LENGTH, hcuts_by_pp, sllw, bp, bm
 	)
 	pp = _safe_trim_dim!(
-		cuts_done, pp, piece_w, WIDTH, vcuts_by_pp, sllw, bp, faithful2furini
+		cuts_done, pp, piece_w, WIDTH, vcuts_by_pp, sllw, bp, bm
 	)
 	# Now a extraction from the current plate to piece_idx MUST exist.
 	np_idx = findfirst(==((pp, piece_idx)), bp.np) :: Int
@@ -207,17 +207,15 @@ function _sell_piece!(
 	return
 end
 
-# Given a 2-staged `pattern` and the preprocessed information of a PPG2KP model
-# (i.e., `bp` the byproduct), a vector of indexes of bp.cuts and a vector
-# of indexes of bp.np that together represent a valid solution of the PPG2KP
-# model representing the solution given by the 2-staged cut pattern. This is
-# used to be able to warm start the model from an heuristic solution.
 """
-    cuts_and_extractions_from_2_staged_solution(pattern, bp, faithful2furini)
+    cuts_and_extractions_from_2_staged_solution(pattern, bp, bm)
 
 Given a 2-staged `pattern` and a PPG2KP model `bp` (byproduct), returns the
 cuts (`bp.cuts` indexes) and extractions (`bp.np` indexes) that make up a
-valid solution representing such `pattern`.
+valid solution representing such `pattern`. Note: this is intended to be
+called over non-priced PPG2KP models; if the model is priced the variables
+assumed to exist in this code may not exit anymore (especially if Furini's
+multistep pricing is used).
 
 The `pattern` parameter has many restrictions:
 
@@ -225,13 +223,13 @@ The `pattern` parameter has many restrictions:
 2) Each inner vector is a vertical stripe with the width of the first piece
    inside such inner vector. No horizontal stripes allowed. No piece inside
    an inner vector has width larger than the first piece of the inner vector.
-3) The outer vector is sorted by non-increasing stripe width.
+3) The first inner vector has the largest stripe width.
 4) No inner vectors should be empty. Every number is a valid piece type index.
 """
 function cuts_and_extractions_from_2_staged_solution(
 	pattern :: Vector{Vector{D}},
 	bp :: ByproductPPG2KP{D, S, P},
-	faithful2furini :: Bool
+	bm :: BaseModel
 ) :: Tuple{Vector{P}, Vector{P}} where {D, S, P}
 	cuts_done, pieces_sold = P[], P[]
 	isempty(pattern) && return cuts_done, pieces_sold
@@ -296,7 +294,7 @@ function cuts_and_extractions_from_2_staged_solution(
 			)
 			_sell_piece!(
 				pieces_sold, cuts_done, plate_idx, piece_idx, sllw, bp,
-				hcuts_by_pp, vcuts_by_pp, faithful2furini
+				hcuts_by_pp, vcuts_by_pp, bm
 			)
 		end
 		# The largest length piece of the largest width stripe can now just be
@@ -308,7 +306,7 @@ function cuts_and_extractions_from_2_staged_solution(
 		piece_idx = vstripe[idx_largest_l_piece_in_vstripe]
 		_sell_piece!(
 			pieces_sold, cuts_done, stripe_rp, piece_idx, sllw, bp,
-			hcuts_by_pp, vcuts_by_pp, faithful2furini
+			hcuts_by_pp, vcuts_by_pp, bm
 		)
 	end
 
@@ -316,13 +314,84 @@ function cuts_and_extractions_from_2_staged_solution(
 end
 export cuts_and_extractions_from_2_staged_solution
 
-function raw_warm_start!(model, nz_pe_idxs, nz_pe_vals, nz_cm_idxs, nz_cm_vals)
+"""
+    save_mip_start(model)
+
+TODO: document. Returns the four last arguments of raw_mip_start!
+"""
+@timeit TIMER function save_mip_start(model)
+	nz_pe_idxs, nz_pe_vals = gather_nonzero(model[:picuts], Int)
+	nz_cm_idxs, nz_cm_vals = gather_nonzero(model[:cuts_made], Int)
+	return (nz_pe_idxs, nz_pe_vals, nz_cm_idxs, nz_cm_vals)
+end
+
+"""
+    unset_mip_start!(model, nz_pe_idxs, nz_cm_idxs)
+
+TODO: document. Just take the first and third returned values from
+`save_mip_start!` (or the first and third parameters of `raw_mip_start!`
+because the specific values of the old start are irrelevant).
+"""
+@timeit TIMER function unset_mip_start!(model, nz_pe_idxs, nz_cm_idxs)
+	pe_nothings = Iterators.repeated(nothing, length(nz_pe_idxs))
+	cm_nothings = Iterators.repeated(nothing, length(nz_cm_idxs))
+	raw_mip_start!(model, nz_pe_idxs, pe_nothings, nz_cm_idxs, cm_nothings)
+	return
+end
+
+"""
+    raw_mip_start!(model, nz_pe_idxs, nz_pe_vals, nz_cm_idxs, nz_cm_vals)
+
+TODO: document.
+"""
+@timeit TIMER function raw_mip_start!(
+	model, nz_pe_idxs, nz_pe_vals, nz_cm_idxs, nz_cm_vals
+)
 	@assert length(nz_pe_idxs) == length(nz_pe_vals)
 	@assert length(nz_cm_idxs) == length(nz_cm_vals)
 	pe = model[:picuts]
 	cm = model[:cuts_made]
-	set_start_value.(pe[nz_pe_idxs], nz_pe_vals)
-	set_start_value.(cm[nz_cm_idxs], nz_cm_vals)
+	# The MOI.set is used instead of JuMP.set_start_value because the last do
+	# not accept nothing as a value (to unset the MIP start).
+	MOI.set.(
+		backend(model), MOI.VariablePrimalStart(), JuMP.index.(pe[nz_pe_idxs]),
+		((eltype(nz_pe_vals) <: Number) ? Float64.(nz_pe_vals) : nz_pe_vals)
+	)
+	MOI.set.(
+		backend(model), MOI.VariablePrimalStart(), JuMP.index.(cm[nz_cm_idxs]),
+		((eltype(nz_cm_vals) <: Number) ? Float64.(nz_cm_vals) : nz_cm_vals)
+	)
+	#set_start_value.(pe[nz_pe_idxs], nz_pe_vals)
+	#set_start_value.(cm[nz_cm_idxs], nz_cm_vals)
+	return
 end
-export raw_warm_start!
+export raw_mip_start!
+
+"""
+    mip_start_by_heuristic!(model, seed, d, p, bp, bm)
+
+TODO: document. Returns two tuples, the first is the result of internal
+`fast_iterated_greedy` the second tuple contain the last four arguments
+of the raw_mip_start! used to MIP-start the model (this way
+unset_mip_start! can be easily called over the model).
+"""
+function mip_start_by_heuristic!(
+	model, bp :: ByproductPPG2KP{D, S, P}, d, p, seed, bm :: BaseModel
+) where {D, S, P}
+	rng = Xoroshiro128Plus(seed)
+	bkv, selected, shelves = fast_iterated_greedy(
+		d, p, bp.l, bp.w, bp.L, bp.W, rng
+	)
+	raw_ws = @timeit TIMER "create_raw_ws_from_heuristic" begin
+		cuts, extractions = cuts_and_extractions_from_2_staged_solution(
+			shelves, bp, bm
+		)
+		qt_cuts = unify!(D, cuts)
+		qt_extractions = unify!(D, extractions)
+		(extractions, qt_extractions, cuts, qt_cuts)
+	end
+	raw_mip_start!(model, raw_ws...)
+	return (bkv, selected, shelves), raw_ws
+end
+export mip_start_by_heuristic!
 

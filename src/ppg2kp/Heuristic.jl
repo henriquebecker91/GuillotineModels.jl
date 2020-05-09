@@ -17,6 +17,8 @@ module Heuristic
 
 using Random#: shuffle!
 import ...CutPattern
+import ...TIMER # Global module timer for use with TimerOutputs.@timeit.
+import TimerOutputs.@timeit
 
 export first_fit_decr, iterated_greedy
 export Levels, fast_first_fit_decr, fast_iterated_greedy
@@ -140,7 +142,7 @@ the first fit width-decreasing were made without improving the BKV.
 The same of the [`first_fit_decr`](@ref) method (the iterated greedy just
 returns the best solution found by it).
 """
-function iterated_greedy(
+@timeit TIMER function iterated_greedy(
 	d :: AbstractVector{D},
 	p :: AbstractVector{P},
 	l :: AbstractVector{S},
@@ -275,7 +277,7 @@ function _sort_range_rev_by_insertion!(
 	return v
 end
 
-function fast_iterated_greedy(
+@timeit TIMER function fast_iterated_greedy(
 	d :: AbstractVector{D},
 	p :: AbstractVector{P},
 	l :: AbstractVector{S},

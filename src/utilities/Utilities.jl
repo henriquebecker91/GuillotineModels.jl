@@ -3,6 +3,23 @@ module Utilities
 using DocStringExtensions # for TYPEDFIELDS
 
 """
+    throw_if_unrecognized(name, value, list)
+
+If `value` is NOT in `list`, then throw an argument error explaining that
+because `value` is not in `list` so it is a valid value for parameter `name`.
+"""
+function throw_if_unrecognized(name, value, list)
+	if value ∉ list
+		throw(ArgumentError(
+			"The value of parameter \"$name\" was \"$value\"," *
+			" but the only allowed values are $(list)."
+		))
+	end
+	return
+end
+export throw_if_unrecognized
+
+"""
     bits2idxs(bits, idx_type = Int) :: Vector{idx_type}
 
 Given a `BitArray` or a `Vector{Bool}` return a vector of the indexes storing
