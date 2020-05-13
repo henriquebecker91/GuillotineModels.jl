@@ -110,7 +110,7 @@ include("./unreachable.jl")
 		no_redundant_cut = options["no-redundant-cut"],
 		no_furini_symmbreak = options["no-furini-symmbreak"],
 		faithful2furini2016 = options["faithful2furini2016"],
-		quiet = options["quiet"]
+		quiet = options["quiet"], verbose = options["verbose"]
 	)
 	hvcuts, np = byproduct.cuts, byproduct.np
 	num_plate_types = length(byproduct.pli_lwb)
