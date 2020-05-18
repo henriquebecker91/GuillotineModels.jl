@@ -1,4 +1,5 @@
 import .Heuristic.fast_iterated_greedy
+#import Serialization
 
 # Gives the indexes of all elements of bp.cuts that refer to a restricted cut.
 # NOTE: no extraction in bp.np can be seen as an unrestricted cut.
@@ -72,6 +73,18 @@ function _reduced_profit(
 		@show sc_dual
 		@show rp
 	end=#
+	return rp
+end
+
+function _reduced_profit(
+	cut :: Tuple{P, P, P}, con_duals :: Vector{Float64}
+) :: Float64 where {P}
+	pp, fc, sc = cut
+	pp_dual = con_duals[pp]
+	fc_dual = con_duals[fc]
+	sc_dual :: Float64 = iszero(sc) ? 0.0 : con_duals[sc]
+	# The reduced profit computation shown in the paper is done here.
+	rp = -fc_dual + -sc_dual - -pp_dual
 	return rp
 end
 
@@ -149,16 +162,21 @@ end
 	@assert has_duals(model)
 	rc_cuts = bp.cuts[rc_idxs]
 	plate_cons = model[:plate_cons]
+	#plate_cons_duals = Serialization.deserialize("./plate_cons_duals_gcut9_simplex")
+	plate_cons_duals = dual.(plate_cons)
+	#println("plate_cons_duals stats")
+	#vector_summary(plate_cons_duals)
+	#Serialization.serialize("./plate_cons_duals_gcut9_simplex", plate_cons_duals)
 	# This is a little costy, and not necessary anymore.
-	#=if debug
-		println("stats on reduced profit values of restricted final pricing")
-		rps = _reduced_profit.(rc_cuts, (plate_cons,))
-		vector_summary(rps) # defined in GuillotineModels.Utilities
-	end=#
+	#println("stats on reduced profit values of restricted final pricing")
+	#rps = _reduced_profit.(rc_cuts, (plate_cons,))
+	rps = _reduced_profit.(rc_cuts, (plate_cons_duals,))
+	#vector_summary(rps) # defined in GuillotineModels.Utilities
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
 	rc_discrete_bitstr = # the final pricing (get which variables should remain)
-		@. floor(_reduced_profit(rc_cuts, (plate_cons,)) + LP) >= LB
+		#@. floor(_reduced_profit(rc_cuts, (plate_cons,)) + LP) >= LB
+		@. floor(rps + LP) >= LB
 	rc_fix_bitstr = .!rc_discrete_bitstr
 	debug && begin
 		restricted_vars_removed = sum(rc_fix_bitstr)
@@ -186,7 +204,7 @@ end
 	flush_all_output()
 	# We MIP start the restricted model with a feasible solution, so it should be
 	# impossible to get a different status here.
-	@assert primal_status(model) == MOI.FEASIBLE_POINT
+	@assert !mip_start || primal_status(model) == MOI.FEASIBLE_POINT
 	model_obj = round(P, objective_value(model), RoundNearest)
 	if mip_start && model_obj > bkv
 		# Clean the old MIP start (that comes from the heuristic) and replace it
@@ -234,10 +252,11 @@ end
 	# TODO: consider if the optimization of using the pool_idxs_to_add as a
 	# buffer and deciding between overwrite and push! is worth.
 	empty!(pool_idxs_to_add)
-
+	#positive_rps = Float64[]
 	for (pool_idx, cut) in pairs(pool)
 		rp = _reduced_profit(cut, plate_cons)
 		rp <= 0.0 && continue # non-positive reduced profit is irrelevant to us
+		#push!(positive_rps, rp)
 		num_positive_rp_vars += one(P)
 		if rp > threshold
 			!found_above_threshold && empty!(pool_idxs_to_add)
@@ -252,6 +271,7 @@ end
 			length(pool_idxs_to_add) < n_max && push!(pool_idxs_to_add, pool_idx)
 		end
 	end
+	#vector_summary(positive_rps)
 
 	# Only n_max variables are added/unfixed in a single iteration.
 	#n_max <= length(pool_idxs_to_add) && resize!(pool_idxs_to_add, n_max)
@@ -320,6 +340,9 @@ end
 	flush_all_output()
 	# the last solve before this was MIP and has no duals
 	@timeit TIMER "solve_lp" optimize!(model)
+	#plate_cons_dual = dual.(plate_cons)
+	#println("plate_con_duals stats")
+	#vector_summary(plate_cons_dual)
 	flush_all_output()
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
@@ -409,15 +432,8 @@ end
 # true final pricing).
 @timeit TIMER function _furini_pricing!(
 	model, byproduct, d, p, seed, alpha, beta, debug, mip_start :: Bool,
-	bm :: BaseModel
+	bm :: BaseModel, switch_method :: Int
 ) where {D, S, P}
-	if JuMP.solver_name(model) == "Gurobi"
-		old_method = get_optimizer_attribute(model, "Method")
-		# Change the LP-solving method to dual simplex, this allows for better
-		# reuse of the partial solution.
-		set_optimizer_attribute(model, "Method", 1)
-	end
-
 	rc_idxs = _all_restricted_cuts_idxs(byproduct)
 	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
 	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
@@ -428,6 +444,13 @@ end
 	# because the use of max_profit seems to assume no negative profit items.
 	@assert all(e -> e >= zero(e), d)
 	@assert all(e -> e >= zero(e), p)
+
+	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
+		old_method = get_optimizer_attribute(model, "Method")
+		# Change the LP-solving method to dual simplex, this allows for better
+		# reuse of the partial solution.
+		set_optimizer_attribute(model, "Method", switch_method)
+	end
 	_iterative_pricing!(
 		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug
 	)
@@ -435,16 +458,23 @@ end
 	byproduct, to_keep_bits = _final_pricing!(
 		model, byproduct, LB, LP, debug
 	)
+	# NOTE: the flag description says that Gurobi's Method is changed just for
+	# _iterative_pricing! but here we change it back only after _final_pricing!,
+	# the reasoning follows: _final_pricing! does not call optimize! and is not
+	# affected by the LP-solving Method selected, so it is not a problem changing
+	# the parameter only after it; changing the parameter before _final_pricing!
+	# discards the duals of the last solve inside _iterative_pricing! and would
+	# force _final_pricing! to solve the relaxation again from scratch.
+	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
+		# Undo the change done before (look at where old_method is defined).
+		set_optimizer_attribute(model, "Method", old_method)
+		#set_optimizer_attribute(model, "Presolve", -1)
+	end
 	# Restore the piece extractions and the kept variables to their original
 	# configuration. Note that cuts_made is now a subset of what it was before.
 	@timeit TIMER "last_restore" @views restore!(
 		[model[:picuts]; model[:cuts_made]], [pe_svcs; cm_svcs[to_keep_bits]]
 	)
-	if JuMP.solver_name(model) == "Gurobi"
-		# Undo the change done before (look at where old_method is defined).
-		set_optimizer_attribute(model, "Method", old_method)
-		#set_optimizer_attribute(model, "Presolve", -1)
-	end
 
 	return byproduct
 end

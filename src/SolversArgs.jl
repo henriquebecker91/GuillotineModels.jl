@@ -96,8 +96,7 @@ function __init__()
 		# Note: without the type prefix below some values are casted and Gurobi.jl
 		# fails to find the correct method to call (it differs from Int and Float).
 		configuration = Pair{String, Any}[
-			"Method" => 2, # use barrier for LP models and MIP root node
-			#"Method" => 1, # use dual simplex for LP models and MIP root node
+			"Method" => p_args["LP-method"],
 			# "NodeMethod" => 2, # use barrier for MIP non-root nodes
 			"Threads" => p_args["threads"],
 			"OutputFlag" => p_args["no-output"] ? 0 : 1,
@@ -199,6 +198,10 @@ end
 
 function Utilities.Args.accepted_arg_list(::Val{:Gurobi}) :: Vector{Arg}
 	return [
+		Arg(
+			"LP-method", -1,
+			"Gurobi has a parameter called 'Method' that defines the algorithm used to solve continuous models (including MIP root node continuous relaxations). The options (described in Gurobi 9.0 reference) are: automatic (-1), primal simplex (0), dual simplex (1), barrier (2), concurrent (3), deterministic concurrent (4), deterministic concurrent simplex (5)."
+		),
 		Arg(
 			"threads", 1,
 			"Number of threads for all Gurobi parallelizable algorithms. Zero is automatic, probably the number of cores but may be fewer. If a positive number, is that number of cores."

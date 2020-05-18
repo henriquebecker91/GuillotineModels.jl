@@ -7,6 +7,10 @@ export accepted_arg_list, throw_if_incompatible_options
 function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 	return [
 		Arg(
+			"Gurobi-LP-method-inside-iterated-pricing", -2,
+			"Allows to switch the algorithm used to solve continuous models inside the Furini's iterated pricing if Gurobi is the solver used. Will have no effect but print warnings if either Furini's pricing is not called or Gurobi is not the solver in use. The default value of -2 will not touch Gurobi's Method parameter, values -1 to 5 will set Gurobi's Method to the corresponding value during the subprocedure mentioned, and restore the previous value after it."
+		),
+		Arg(
 			"pricing-alpha", 0.20,
 			"Used to compute the number of variables added in each iteration of the iterated pricing (only used if furini pricing is selected, see pricing flag). Must be above zero and at most one. Explained in 10.1287/ijoc.2016.0710, p. 13 (747) (last paragraph before section 4.3). Default value is the one used in the experiments of the original paper."
 		),

@@ -313,7 +313,26 @@ function _no_arg_check_build_model(
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	bp = build_complete_model(model, d, p, l, w, L, W, options)
 	debug = options["verbose"] && !options["quiet"]
+	switch_method = options["Gurobi-LP-method-inside-iterated-pricing"]
 	pricing = options["pricing"]
+	if pricing == "expected"
+		pricing = (options["faithful2furini2016"] ? "furini" : "becker")
+	end
+	# The warnings are done here to avoid putting them inside a method
+	# that will not be called anyway.
+	current_solver_name = solver_name(model)
+	if !options["quiet"] && switch_method > -2
+		if pricing != "furini"
+			@warn "The flag Gurobi-LP-method-inside-iterated-pricing has a" *
+				" non-default value, but the pricing is '$pricing'. This flag" *
+				" will have no effect besides warnings."
+		end
+		if current_solver_name != "Gurobi"
+			@warn "The flag Gurobi-LP-method-inside-iterated-pricing has a" *
+				" non-default value, but the solver is '$current_solver_name'." *
+				" This flag will have no effect besides warnings."
+		end
+	end
 	mip_start = options["MIP-start"]
 	heuristic_seed = options["heuristic-seed"]
 	bm = (options["faithful2furini2016"] ? FURINI : BECKER) :: BaseModel
@@ -334,13 +353,10 @@ function _no_arg_check_build_model(
 		# to be mixed. The pricing methods just need to know the underlying base
 		# model to be able to MIP-start it corretly (initially at least, this
 		# comment may be out of date).
-		if pricing == "expected"
-			pricing = (options["faithful2furini2016"] ? "furini" : "becker")
-		end
 		if pricing == "furini"
 			bp = _furini_pricing!(
 				model, bp, d, p, heuristic_seed, options["pricing-alpha"],
-				options["pricing-beta"], debug, ws_bool, bm
+				options["pricing-beta"], debug, ws_bool, bm, switch_method
 			)
 		else
 			@assert pricing == "becker"
