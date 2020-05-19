@@ -91,7 +91,8 @@ end
 @timeit TIMER function _restricted_final_pricing!(
 	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, seed, debug :: Bool, mip_start :: Bool,
-	bm :: BaseModel
+	bm :: BaseModel, start :: Float64 = time(),
+	limit :: Float64 = float(60*60*24*365)
 ) where {D, S, P}
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
@@ -124,11 +125,10 @@ end
 			d, p, bp.l, bp.w, bp.L, bp.W, Xoroshiro128Plus(seed)
 		)
 	end
+	throw_if_timeout_now(start, limit)
 	LB = convert(Float64, bkv)
 	# Solve the relaxed restricted model.
-	flush_all_output()
-	@timeit TIMER "lp_solve" optimize!(model)
-	flush_all_output()
+	@timeit TIMER "lp_solve" optimize_within_time_limit!(model, start, limit)
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
 		#@show objective_bound(model)
@@ -199,9 +199,8 @@ end
 	)
 	# All piece extractions also need to be restored.
 	@timeit TIMER "restore_pe" restore!(pe, pe_svcs)
-	flush_all_output()
-	@timeit TIMER "mip_solve" optimize!(model) # restricted MIP solved
-	flush_all_output()
+	# restricted MIP solved
+	@timeit TIMER "mip_solve" optimize_within_time_limit!(model, start, limit)
 	# We MIP start the restricted model with a feasible solution, so it should be
 	# impossible to get a different status here.
 	@assert !mip_start || primal_status(model) == MOI.FEASIBLE_POINT
@@ -291,7 +290,8 @@ end
 # n-max)?
 @timeit TIMER function _iterative_pricing!(
 	model, cuts :: Vector{NTuple{3, P}}, cm_svcs :: Vector{SavedVarConf},
-	max_profit :: P, alpha :: Float64, beta :: Float64, debug :: Bool = false
+	max_profit :: P, alpha :: Float64, beta :: Float64, debug :: Bool = false,
+	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
 ) :: Nothing where {P}
 	# Summary of the method:
 	# The variables themselves are not iterated, bp.cuts is iterated. The indexes
@@ -339,7 +339,7 @@ end
 	debug && @show size_var_pool_before_iterative
 	flush_all_output()
 	# the last solve before this was MIP and has no duals
-	@timeit TIMER "solve_lp" optimize!(model)
+	@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
 	#plate_cons_dual = dual.(plate_cons)
 	#println("plate_con_duals stats")
 	#vector_summary(plate_cons_dual)
@@ -388,7 +388,7 @@ end
 		@assert allsame(length.((unused_vars, unused_cuts, unused_lbs, unused_ubs)))
 		#set_start_value.(all_vars, value.(all_vars))
 		flush_all_output()
-		@timeit TIMER "solve_lp" optimize!(model)
+		@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
 		flush_all_output()
 		num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
 			to_unfix, unused_cuts, plate_cons, threshold, n_max
@@ -432,12 +432,13 @@ end
 # true final pricing).
 @timeit TIMER function _furini_pricing!(
 	model, byproduct, d, p, seed, alpha, beta, debug, mip_start :: Bool,
-	bm :: BaseModel, switch_method :: Int
+	bm :: BaseModel, switch_method :: Int,
+	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
 ) where {D, S, P}
 	rc_idxs = _all_restricted_cuts_idxs(byproduct)
 	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
 	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
-		model, rc_idxs, d, p, byproduct, seed, debug, mip_start, bm
+		model, rc_idxs, d, p, byproduct, seed, debug, mip_start, bm, start, limit
 	)
 	LB = convert(Float64, bkv)
 	# If those fail, we need may need to rethink the iterative pricing,
@@ -452,12 +453,14 @@ end
 		set_optimizer_attribute(model, "Method", switch_method)
 	end
 	_iterative_pricing!(
-		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug
+		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug,
+		start, limit
 	)
 	LP = objective_value(model)
 	byproduct, to_keep_bits = _final_pricing!(
 		model, byproduct, LB, LP, debug
 	)
+	throw_if_timeout_now(start, limit)
 	# NOTE: the flag description says that Gurobi's Method is changed just for
 	# _iterative_pricing! but here we change it back only after _final_pricing!,
 	# the reasoning follows: _final_pricing! does not call optimize! and is not
@@ -487,7 +490,8 @@ end
 # model, this is the parameter bm.
 @timeit TIMER function _becker_pricing!(
 	model, bp :: ByproductPPG2KP{D, S, P}, d, p, seed,
-	debug :: Bool, mip_start :: Bool, bm :: BaseModel
+	debug :: Bool, mip_start :: Bool, bm :: BaseModel,
+	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
 ) where {D, S, P}
 	pe_vars = model[:picuts]
 	cm_vars = model[:cuts_made]
@@ -503,9 +507,7 @@ end
 		)
 	end
 	LB = convert(Float64, bkv)
-	flush_all_output()
-	@timeit TIMER "lp_solve" optimize!(model)
-	flush_all_output()
+	@timeit TIMER "lp_solve" optimize_within_time_limit!(model, start, limit)
 	# Check if the model is solved.
 	@assert has_duals(model)
 	# Check if the variables are relaxed.

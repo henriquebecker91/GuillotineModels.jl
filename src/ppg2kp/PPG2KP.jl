@@ -6,6 +6,7 @@ include("./Args.jl")
 include("./Enumeration.jl")
 
 import ..TIMER # Global module timer for use with TimerOutputs.@timeit.
+import ..throw_if_timeout_now
 using .Enumeration # Where all the plate enumeration logic is defined.
 export ByproductPPG2KP # re-export ByproductPPG2KP from Enumeration
 
@@ -278,7 +279,7 @@ end
 # d[pii] and the number of subplates pli that fit in the original plate.
 #   sum(picuts[n, pii]) <= min(d[pii], max_fits[n])
 """
-    build_complete_model(model, d, p, l, w, L, W; options)
+    build_complete_model(model, d, p, l, w, L, W[, start]; options)
 
 TODO: describe method.
 Note: `model[:plate_cons]` is a container of constraints of type and set
@@ -289,11 +290,14 @@ described in the same position of `ByproductPPG2KP.pli_lwb`).
 """
 function build_complete_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
-	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
+	L :: S, W :: S, start :: Float64 = time(),
+	options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	byproduct, pli2pair, pii2pair, child2cut, parent2cut = _preprocess(
 		P, d, l, w, L, W, options
 	)
+	limit :: Float64 = options["building-time-limit"]
+	throw_if_timeout_now(start, limit)
 	bp = byproduct
 	@assert issorted(@view bp.cuts[1:(bp.first_vertical_cut_idx-1)]; by = c -> c[PARENT])
 	@assert	issorted(@view bp.cuts[bp.first_vertical_cut_idx:end]; by = c -> c[PARENT])
@@ -311,7 +315,10 @@ function _no_arg_check_build_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
-	bp = build_complete_model(model, d, p, l, w, L, W, options)
+	start :: Float64 = time()
+	limit :: Float64 = options["building-time-limit"]
+	bp = build_complete_model(model, d, p, l, w, L, W, start, options)
+	throw_if_timeout_now(start, limit)
 	debug = options["verbose"] && !options["quiet"]
 	switch_method = options["Gurobi-LP-method-inside-iterated-pricing"]
 	pricing = options["pricing"]
@@ -356,12 +363,13 @@ function _no_arg_check_build_model(
 		if pricing == "furini"
 			bp = _furini_pricing!(
 				model, bp, d, p, heuristic_seed, options["pricing-alpha"],
-				options["pricing-beta"], debug, ws_bool, bm, switch_method
+				options["pricing-beta"], debug, ws_bool, bm, switch_method,
+				start, limit
 			)
 		else
 			@assert pricing == "becker"
 			bp = _becker_pricing!(
-				model, bp, d, p, heuristic_seed, debug, ws_bool, bm
+				model, bp, d, p, heuristic_seed, debug, ws_bool, bm, start, limit
 			)
 		end
 	else # in the case there is no pricing phase
@@ -376,6 +384,7 @@ function _no_arg_check_build_model(
 		println("length_cm_after_pricing = $(length(model[:cuts_made]))")
 		println("length_pc_after_pricing = $(length(model[:plate_cons]))")
 	end
+	throw_if_timeout_now(start, limit) # after the pricings or warm-starts
 	purge = !options["do-not-purge-unreachable"]
 	bp = _handle_unreachable!(bp, model, debug, purge)
 	if debug && purge
@@ -383,6 +392,7 @@ function _no_arg_check_build_model(
 		println("length_cm_after_purge = $(length(model[:cuts_made]))")
 		println("length_pc_after_purge = $(length(model[:plate_cons]))")
 	end
+	throw_if_timeout_now(start, limit) # after handle_unreachable
 
 	return bp
 end

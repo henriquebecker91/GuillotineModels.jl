@@ -5,6 +5,8 @@ module CommandLine
 # External packages used.
 import TimerOutputs.@timeit
 using JuMP
+import MathOptInterface
+const MOI = MathOptInterface
 import Dates
 import Dates.@dateformat_str
 import ArgParse
@@ -23,6 +25,8 @@ using ..PPG2KP, ..PPG2KP.Args
 using ..Flow, ..Flow.Args
 #using ..KnapsackPlates, ..KnapsackPlates.Args
 import ..get_cut_pattern, ..to_pretty_str, ..simplify!
+# Used inside read_build_solve_and_print in tandem with generic-time-limit.
+import ..throw_if_timeout_now, ..TimeoutError
 
 """
     create_unprefixed_subset(prefix, p_args :: T) :: T
@@ -105,20 +109,25 @@ in `core_argparse_settings()`). The other arguments are solver or model
 specific and are extracted and passed to their specific methods.
 """
 @timeit TIMER function read_build_solve_and_print(pp) # pp stands for parsed parameters
+	start :: Float64 = time() # seconds since epoch
+	limit :: Float64 = pp["generic-time-limit"]
 	instfname = pp["instfname"]
 	!pp["no-csv-output"] && @show instfname
 
 	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(instfname)
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
+	throw_if_timeout_now(start, limit)
 
 	solver_pp = create_unprefixed_subset(pp["solver"], pp)
 	m = empty_configured_model(Val(Symbol(pp["solver"])), solver_pp)
+	throw_if_timeout_now(start, limit)
 
 	model_pp = create_unprefixed_subset(pp["model"], pp)
 	model_id = Val(Symbol(pp["model"]))
 	bmr = build_model(
 		model_id, m, d, p, l, w, L, W, model_pp
 	)
+	throw_if_timeout_now(start, limit)
 	#@show build_model_return
 	#= This does not work unless we give the full path, what is a load of shit.
 	# Needs to be fixed either by: (1) PR to the package solving the problem;
@@ -131,6 +140,7 @@ specific and are extracted and passed to their specific methods.
 
 	!isempty(pp["save-model"]) && !pp["no-csv-output"] &&
 		@timeit TIMER "save_model" JuMP.write_to_file(m, pp["save-model"])
+	throw_if_timeout_now(start, limit)
 
 	p_ = max(L/minimum(l), W/minimum(w))
 	num_vars = num_variables(m)
@@ -148,9 +158,9 @@ specific and are extracted and passed to their specific methods.
 
 	pp["do-not-solve"] && return nothing
 
-	flush_all_output()
-	@timeit TIMER "optimize!" optimize!(m)
-	flush_all_output()
+	throw_if_timeout_now(start, limit)
+	@timeit TIMER "optimize!" optimize_within_time_limit!(m, start, limit)
+	@assert termination_status(m) == MOI.OPTIMAL
 	#See comment above about TimerOutputs.
 	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 
@@ -261,15 +271,19 @@ function generic_args() :: Vector{Arg}
 	return [
 		Arg(
 			"do-not-solve", false,
-			"The model is build but not solved. A solver has yet to be specified. Note that just building a model may depend on using a solver over subproblems. Such uses of the solver are not disabled by this flag."
+			"The model is built but not solved. A solver has yet to be specified. Note that just building a model may depend on using a solver over subproblems. Such uses of the solver are not disabled by this flag."
 		),
-		Arg( # TODO: check if it can be implemented generically
+		Arg(
+			"generic-time-limit", 60.0 * 60.0 * 24.0 * 365.0,
+			"Defines a time limit (in seconds) to be observed in the context of the model-agnostic proccess of reading, building, solving, and printing. Each model has to define its own flag to control the time inside the model building process (to be set independently, it is does not interact with this flag). `JuMP.set_time_limit_sec` is called over the model before starting to solve it, with the remaining time after reading instance and building the model (not the total time). If `--warm-jit` defines that there will be a mock run to warm the jit, the time limit applies to this mock run (i.e., if the mock run breaks the limit it an exception is raised) but the timer is reset after the mock, so the mock time is not counted for the 'real' run time limit. A `GuillotineModels.TimeoutError` is raised if the time limit is violated."
+		),
+		Arg(
 			"save-model", "",
 			"Save the model of the passed instance to the given filename (use the extension to define the format, allowed formats are described by the enumeration MathOptInterface.FileFormats.FileFormat)."
 		),
 		Arg(
-			"warm-jit", "toy",
-			"There are three valid options: 'no', 'with-toy', and 'yes'. If 'yes', the instance is solved two times, but the first time the arguments are changed to disable output (i.e., '--no-csv-output' and '--SOLVER-no-output' are passed, and if supported, '--MODEL-quiet' is passed too; in the GuillotineModels.TIMER the timings of this first run are under 'warm-jit'). If 'with-toy', it behaves similarly to 'yes' but instead of using the instance itself it uses a very small hardcoded instance (this helps a lot, but many procedures only called when the model has specific properties are not called). If 'no', the code is just run a single time."
+			"warm-jit", "with-toy",
+			"There are three valid options: 'no', 'with-toy', and 'yes'. If 'yes', the instance is solved two times, but the first time the arguments are changed to disable output (i.e., '--no-csv-output' and '--SOLVER-no-output' are passed, and if supported, '--MODEL-quiet' is passed too; in the GuillotineModels.TIMER the timings of this first run are under 'warm-jit'). If 'with-toy', it behaves similarly to 'yes' but instead of using the instance itself it uses a very small hardcoded instance (this helps a lot, but many procedures only called when the model has specific properties are not called, and therefore, not compiled). If 'no', the code is just run a single time."
 		),
 		Arg(
 			"no-csv-output", false,
@@ -442,7 +456,14 @@ function throw_if_incompatible_options(p_args)
 		Val(Symbol(p_args["solver"])),
 		create_unprefixed_subset(p_args["solver"], p_args)
 	)
-	@assert p_args["warm-jit"] in ("no", "with-toy", "yes")
+	throw_if_unrecognized(
+		"warm-jit", p_args["warm-jit"], ("no", "with-toy", "yes")
+	)
+	option_name = "generic-time-limit"
+	p_args[option_name] > 0.0 || throw(ArgumentError(
+		"Option $(option_name) must be positive, but it is" *
+		" $(p_args[option_name])."
+	))
 end
 
 # Definition of the command line arguments.

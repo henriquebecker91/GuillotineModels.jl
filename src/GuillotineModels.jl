@@ -14,6 +14,7 @@ The main features are:
 """
 module GuillotineModels
 
+import Dates
 import TimerOutputs
 const TIMER = TimerOutputs.TimerOutput()
 
@@ -22,8 +23,56 @@ const TIMER = TimerOutputs.TimerOutput()
 
 export build_model, get_cut_pattern, CutPattern, to_pretty_str, simplify!
 export cut_pattern_profit
+export TimeoutError
 using DocStringExtensions # for TYPEDFIELDS
 using JuMP # for JuMP.Model parameter reference
+
+"""
+    TimeoutError <: Exception
+
+An exception subtype representing a time limit not respected.
+"""
+struct TimeoutError <: Exception
+	"The moment the timing started (in seconds since epoch)."
+	start :: Float64
+	"The amount of seconds the procedure had to finish."
+	limit :: Float64
+	"The moment the code noticed the timeout (in seconds since epoch)"
+	now :: Float64
+end
+
+function Base.showerror(io :: IO, e :: TimeoutError)
+	start, limit, now = round.((e.start, e.limit, e.now); digits = 3)
+	since_start = round(now - start; digits = 3)
+	since_limit = round(since_start - limit; digits = 3)
+	print(io,
+		"TimeoutError: A timer started at $(Dates.unix2datetime(start)) with" *
+		" limit of $limit seconds (i.e., until $(Dates.unix2datetime(start +
+		limit))) was discovered running at $(Dates.unix2datetime(now)), this is," *
+		" $(since_start) seconds since start or $(since_limit) seconds" *
+		" since it should have stopped."
+	)
+end
+
+"""
+    throw_if_timeout(start, limit, now)
+
+Throws a TimeoutError if `start - now > limit`.
+"""
+function throw_if_timeout(start, limit, now)
+	(now - start) > limit && throw(TimeoutError(start, limit, now))
+	return
+end
+
+"""
+    throw_if_timeout_now(start, limit)
+
+Throws a TimeoutError if `start - time() > limit`.
+"""
+function throw_if_timeout_now(start, limit)
+	throw_if_timeout(start, limit, time())
+	return
+end
 
 """
     build_model(::Val{T}, model, d, p, l, w, L, W[, options])

@@ -197,7 +197,55 @@ function flush_all_output()
 end
 export flush_all_output
 
+import ..throw_if_timeout, ..throw_if_timeout_now, ..TimeoutError
 using JuMP
+
+"""
+    optimize_within_time_limit!(model, secs)
+
+Set the solver time limit to `secs` seconds and call `optimize!`. Change the
+solver time limit to the old value before returning.
+"""
+function optimize_within_time_limit!(model, secs :: Float64)
+	old_time_limit = JuMP.time_limit_sec(model)
+	JuMP.set_time_limit_sec(model, secs)
+	flush_all_output()
+	optimize!(model)
+	JuMP.set_time_limit_sec(model, old_time_limit)
+	flush_all_output()
+	return model
+end
+export optimize_within_time_limit!
+
+
+"""
+    optimize_within_time_limit!(model, start, limit[, now = time()])
+
+Throws a `TimeoutError` if the time limit has been violated before
+calling the `JuMP.optimize!`, change the solver to respect a time limit of the
+remaining time, throws a `TimeoutError` if the solver termination status is
+`MOI.TIME_LIMIT` OR calling `time()` shows a time limit violation.
+"""
+function optimize_within_time_limit!(
+	model,
+	start :: Float64,
+	limit :: Float64,
+	now :: Float64 = time()
+)
+	throw_if_timeout(start, limit, now)
+	# If the solver thinks it has exceeded the time, then throw a timeout error,
+	# otherwise verify yourself. This is the last check, after this we will not
+	# be pedantic to the point of throwing a TimeoutError in middle of solution
+	# printing (that is considerably fast).
+	optimize_within_time_limit!(model, limit - (now - start))
+	if termination_status(model) == MOI.TIME_LIMIT
+		throw(TimeoutError(start, limit, time()))
+	else
+		throw_if_timeout_now(start, limit)
+	end
+	return model
+end
+export optimize_within_time_limit!
 
 """
     num_all_constraints(m) :: Int64
