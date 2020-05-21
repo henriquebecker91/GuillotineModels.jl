@@ -440,6 +440,7 @@ end
 	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
 		model, rc_idxs, d, p, byproduct, seed, debug, mip_start, bm, start, limit
 	)
+	debug && print_past_section_seconds(TIMER, "_restricted_final_pricing!")
 	LB = convert(Float64, bkv)
 	# If those fail, we need may need to rethink the iterative pricing,
 	# because the use of max_profit seems to assume no negative profit items.
@@ -456,10 +457,12 @@ end
 		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug,
 		start, limit
 	)
+	debug && print_past_section_seconds(TIMER, "_iterative_pricing!")
 	LP = objective_value(model)
 	byproduct, to_keep_bits = _final_pricing!(
 		model, byproduct, LB, LP, debug
 	)
+	debug && print_past_section_seconds(TIMER, "_final_pricing!")
 	throw_if_timeout_now(start, limit)
 	# NOTE: the flag description says that Gurobi's Method is changed just for
 	# _iterative_pricing! but here we change it back only after _final_pricing!,

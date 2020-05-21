@@ -50,7 +50,7 @@ function Base.showerror(io :: IO, e :: TimeoutError)
 		" limit of $limit seconds (i.e., until $(Dates.unix2datetime(start +
 		limit))) was discovered running at $(Dates.unix2datetime(now)), this is," *
 		" $(since_start) seconds since start or $(since_limit) seconds" *
-		" since it should have stopped."
+		" since it should have stopped.\n"
 	)
 end
 

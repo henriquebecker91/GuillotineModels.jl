@@ -115,6 +115,7 @@ specific and are extracted and passed to their specific methods.
 	!pp["no-csv-output"] && @show instfname
 
 	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(instfname)
+	before_build_time = time()
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 	throw_if_timeout_now(start, limit)
 
@@ -128,15 +129,6 @@ specific and are extracted and passed to their specific methods.
 		model_id, m, d, p, l, w, L, W, model_pp
 	)
 	throw_if_timeout_now(start, limit)
-	#@show build_model_return
-	#= This does not work unless we give the full path, what is a load of shit.
-	# Needs to be fixed either by: (1) PR to the package solving the problem;
-	# (2) using an @elapsed inside the block (or outside it); (3) hacking the
-	# package internals to know the already existing stack of sections.
-	time_to_build_model = TimerOutputs.time(
-		TimerOutputs.get_defaulttimer()["build_model"]
-	)
-	=#
 
 	!isempty(pp["save-model"]) && !pp["no-csv-output"] &&
 		@timeit TIMER "save_model" JuMP.write_to_file(m, pp["save-model"])
@@ -159,8 +151,13 @@ specific and are extracted and passed to their specific methods.
 	pp["do-not-solve"] && return nothing
 
 	throw_if_timeout_now(start, limit)
-	@timeit TIMER "optimize!" optimize_within_time_limit!(m, start, limit)
+	last_solve_section :: String = "finished_model_solve"
+	@timeit TIMER last_solve_section optimize_within_time_limit!(m, start, limit)
 	@assert termination_status(m) == MOI.OPTIMAL
+	!pp["no-csv-output"] && print_past_section_seconds(TIMER, last_solve_section)
+	after_solve_time = time()
+	build_and_solve_time = after_solve_time - before_build_time
+	@show build_and_solve_time
 	#See comment above about TimerOutputs.
 	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 
