@@ -11,8 +11,8 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"Defines a time limit (in seconds) to be observed in the context of the model building proccess. If the solver is called during the building procedure then `JuMP.set_time_limit_sec` is called over the model before starting to solve it, with the remaining time (not the total time). A `GuillotineModels.TimeoutError` is raised if the time limit is violated."
 		),
 		Arg(
-			"Gurobi-LP-method-inside-iterated-pricing", -2,
-			"Allows to switch the algorithm used to solve continuous models inside the Furini's iterated pricing if Gurobi is the solver used. Will have no effect but print warnings if either Furini's pricing is not called or Gurobi is not the solver in use. The default value of -2 will not touch Gurobi's Method parameter, values -1 to 5 will set Gurobi's Method to the corresponding value during the subprocedure mentioned, and restore the previous value after it."
+			"Gurobi-LP-method-inside-furini-pricing", -2,
+			"Allows to switch the algorithm used to solve continuous models and root node relaxations inside the Furini's iterated pricing when Gurobi is the solver used. Will have no effect but print warnings if either Furini's pricing is not called or Gurobi is not the solver in use. The default value of -2 will not touch Gurobi's Method parameter, values -1 to 5 will set Gurobi's Method to the corresponding value during the subprocedure mentioned, and restore the previous value after it."
 		),
 		Arg(
 			"pricing-alpha", 0.20,

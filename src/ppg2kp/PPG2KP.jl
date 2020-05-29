@@ -320,7 +320,7 @@ function _no_arg_check_build_model(
 	bp = build_complete_model(model, d, p, l, w, L, W, start, options)
 	throw_if_timeout_now(start, limit)
 	debug = options["verbose"] && !options["quiet"]
-	switch_method = options["Gurobi-LP-method-inside-iterated-pricing"]
+	switch_method = options["Gurobi-LP-method-inside-furini-pricing"]
 	pricing = options["pricing"]
 	if pricing == "expected"
 		pricing = (options["faithful2furini2016"] ? "furini" : "becker")
@@ -330,12 +330,12 @@ function _no_arg_check_build_model(
 	current_solver_name = solver_name(model)
 	if !options["quiet"] && switch_method > -2
 		if pricing != "furini"
-			@warn "The flag Gurobi-LP-method-inside-iterated-pricing has a" *
+			@warn "The flag Gurobi-LP-method-inside-furini-pricing has a" *
 				" non-default value, but the pricing is '$pricing'. This flag" *
 				" will have no effect besides warnings."
 		end
 		if current_solver_name != "Gurobi"
-			@warn "The flag Gurobi-LP-method-inside-iterated-pricing has a" *
+			@warn "The flag Gurobi-LP-method-inside-furini-pricing has a" *
 				" non-default value, but the solver is '$current_solver_name'." *
 				" This flag will have no effect besides warnings."
 		end
@@ -366,12 +366,15 @@ function _no_arg_check_build_model(
 				options["pricing-beta"], debug, ws_bool, bm, switch_method,
 				start, limit
 			)
+			debug && (pricing_time = past_section_seconds(TIMER, "_furini_pricing!"))
 		else
 			@assert pricing == "becker"
 			bp = _becker_pricing!(
 				model, bp, d, p, heuristic_seed, debug, ws_bool, bm, start, limit
 			)
+			debug && (pricing_time = past_section_seconds(TIMER, "_becker_pricing!"))
 		end
+		debug && @show pricing_time
 	else # in the case there is no pricing phase
 		if mip_start == "guaranteed" # we have to do the MIP-start ourselves
 			mip_start_by_heuristic!(

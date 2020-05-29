@@ -152,12 +152,13 @@ specific and are extracted and passed to their specific methods.
 
 	throw_if_timeout_now(start, limit)
 	last_solve_section :: String = "finished_model_solve"
+	pp["no-csv-output"] || println("MARK_FINAL_GENERIC_SOLVE")
 	@timeit TIMER last_solve_section optimize_within_time_limit!(m, start, limit)
 	@assert termination_status(m) == MOI.OPTIMAL
 	!pp["no-csv-output"] && print_past_section_seconds(TIMER, last_solve_section)
 	after_solve_time = time()
 	build_and_solve_time = after_solve_time - before_build_time
-	@show build_and_solve_time
+	!pp["no-csv-output"] && @show build_and_solve_time
 	#See comment above about TimerOutputs.
 	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 

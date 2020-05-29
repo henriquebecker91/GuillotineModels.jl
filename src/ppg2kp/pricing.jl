@@ -128,6 +128,7 @@ end
 	throw_if_timeout_now(start, limit)
 	LB = convert(Float64, bkv)
 	# Solve the relaxed restricted model.
+	debug && println("MARK_FURINI_PRICING_RESTRICTED_LP_SOLVE")
 	@timeit TIMER "lp_solve" optimize_within_time_limit!(model, start, limit)
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
@@ -200,6 +201,7 @@ end
 	# All piece extractions also need to be restored.
 	@timeit TIMER "restore_pe" restore!(pe, pe_svcs)
 	# restricted MIP solved
+	debug && println("MARK_FURINI_PRICING_RESTRICTED_MIP_SOLVE")
 	@timeit TIMER "mip_solve" optimize_within_time_limit!(model, start, limit)
 	# We MIP start the restricted model with a feasible solution, so it should be
 	# impossible to get a different status here.
@@ -339,6 +341,7 @@ end
 	debug && @show size_var_pool_before_iterative
 	flush_all_output()
 	# the last solve before this was MIP and has no duals
+	debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_0")
 	@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
 	#plate_cons_dual = dual.(plate_cons)
 	#println("plate_con_duals stats")
@@ -388,6 +391,7 @@ end
 		@assert allsame(length.((unused_vars, unused_cuts, unused_lbs, unused_ubs)))
 		#set_start_value.(all_vars, value.(all_vars))
 		flush_all_output()
+		debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_$(qt_iters)")
 		@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
 		flush_all_output()
 		num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
@@ -436,6 +440,13 @@ end
 	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
 ) where {D, S, P}
 	rc_idxs = _all_restricted_cuts_idxs(byproduct)
+	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
+		old_method = get_optimizer_attribute(model, "Method")
+		# Change the LP-solving method to dual simplex, this allows for better
+		# reuse of the partial solution. Could only be set after
+		# `_restricted_final_pricing!` but this just cause a new set of problems.
+		set_optimizer_attribute(model, "Method", switch_method)
+	end
 	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
 	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
 		model, rc_idxs, d, p, byproduct, seed, debug, mip_start, bm, start, limit
@@ -447,12 +458,6 @@ end
 	@assert all(e -> e >= zero(e), d)
 	@assert all(e -> e >= zero(e), p)
 
-	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
-		old_method = get_optimizer_attribute(model, "Method")
-		# Change the LP-solving method to dual simplex, this allows for better
-		# reuse of the partial solution.
-		set_optimizer_attribute(model, "Method", switch_method)
-	end
 	_iterative_pricing!(
 		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug,
 		start, limit
@@ -510,6 +515,7 @@ end
 		)
 	end
 	LB = convert(Float64, bkv)
+	debug && println("MARK_BECKER_PRICING_LP_SOLVE")
 	@timeit TIMER "lp_solve" optimize_within_time_limit!(model, start, limit)
 	# Check if the model is solved.
 	@assert has_duals(model)
