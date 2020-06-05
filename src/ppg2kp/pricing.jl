@@ -206,7 +206,17 @@ end
 	# We MIP start the restricted model with a feasible solution, so it should be
 	# impossible to get a different status here.
 	@assert !mip_start || primal_status(model) == MOI.FEASIBLE_POINT
+	# The assert above is valid, but this does not mean we actually deal
+	# with the possibility of not having a primal solution below.
 	model_obj = round(P, objective_value(model), RoundNearest)
+	if debug
+		restricted_stop_reason = termination_status(model)
+		restricted_stop_code = Int(restricted_stop_reason)
+		println("restricted_obj_value = $model_obj")
+		println("restricted_obj_bound = $(objective_bound(model))")
+		@show restricted_stop_reason
+		@show restricted_stop_code
+	end
 	if mip_start && model_obj > bkv
 		# Clean the old MIP start (that comes from the heuristic) and replace it
 		# with the solution of the restricted model (yes, take the solution and
@@ -318,6 +328,9 @@ end
 	# changed (i.e., are immutable).
 	unused_cuts = copy(cuts)
 	unfixed_at_start = (!is_fixed).(model[:cuts_made])
+	if debug
+		println("qt_cmvars_before_iterated = $(length(unfixed_at_start))")
+	end
 	unused_vars = copy(model[:cuts_made])
 	# We just need the unused vars/cuts in the pricing process, once a variable
 	# is "added" (in truth, unfixed) it is always kept, so it does not need to be
@@ -440,6 +453,14 @@ end
 	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
 ) where {D, S, P}
 	rc_idxs = _all_restricted_cuts_idxs(byproduct)
+	# Out of the `if` below to be compiled in mock runs (with debug disabled).
+	qt_plates_restricted = length(_reachable_plate_types(
+		byproduct.cuts[rc_idxs], lastindex(byproduct.pli_lwb)
+	))
+	if debug
+		println("qt_cmvars_restricted = $(length(rc_idxs))")
+		@show qt_plates_restricted
+	end
 	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
 		old_method = get_optimizer_attribute(model, "Method")
 		# Change the LP-solving method to dual simplex, this allows for better
