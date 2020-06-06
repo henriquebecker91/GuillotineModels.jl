@@ -454,9 +454,9 @@ end
 ) where {D, S, P}
 	rc_idxs = _all_restricted_cuts_idxs(byproduct)
 	# Out of the `if` below to be compiled in mock runs (with debug disabled).
-	qt_plates_restricted = length(_reachable_plate_types(
+	qt_plates_restricted = _reachable_plate_types(
 		byproduct.cuts[rc_idxs], lastindex(byproduct.pli_lwb)
-	))
+	)[1] # the method returns tuple, the first element is the number
 	if debug
 		println("qt_cmvars_restricted = $(length(rc_idxs))")
 		@show qt_plates_restricted
