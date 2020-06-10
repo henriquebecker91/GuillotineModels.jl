@@ -1,5 +1,6 @@
 import .Heuristic.fast_iterated_greedy
 #import Serialization
+#import Gurobi
 
 # Gives the indexes of all elements of bp.cuts that refer to a restricted cut.
 # NOTE: no extraction in bp.np can be seen as an unrestricted cut.
@@ -89,7 +90,7 @@ function _reduced_profit(
 end
 
 @timeit TIMER function _restricted_final_pricing!(
-	model, rc_idxs :: Vector{Int}, d :: Vector{D}, p :: Vector{P},
+	model, d :: Vector{D}, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, seed, debug :: Bool, mip_start :: Bool,
 	bm :: BaseModel, start :: Float64 = time(),
 	limit :: Float64 = float(60*60*24*365)
@@ -102,14 +103,55 @@ end
 	# so it will need to be sensibly extended to new sets of variables.
 	@assert n == length(cm) + length(pe)
 	# First we save all the variables bounds and types and relax all of them.
+	# We cannot relax just the unfixed ones, otherwise the solver will try to
+	# solve a MIP instead of an LP.
 	@timeit TIMER "relax_cm" cm_svcs = relax!(cm)
 	@timeit TIMER "relax_pe" pe_svcs = relax!(pe)
 	@assert length(cm) == length(bp.cuts)
+	# Get the indexes of restricted cuts in bp.cuts (bp.np variables are neither
+	# exactly "cuts", nor could be unrestricted if considered this way).
+	rc_idxs = _all_restricted_cuts_idxs(bp)
+	rc_cuts = bp.cuts[rc_idxs]
+	# Some variables (now including the extraction ones, not just cuts)
+	# are also fixed to zero, because they operate over plates that does not
+	# exist if we limit ourselves to the restricted cuts. Many of those variables
+	# are "restricted cuts over never-generated plates".
+	# {quantitity,bitarray} of reachable {extractions,cuts,plates}
+	qt_re, re, qt_rc, rc, qt_rp, rp = _reachable(
+		bp.np, rc_cuts, lastindex(bp.pli_lwb)
+	)
+	# Update rc_* to not consider such variables.
+	deleteat!(rc_idxs, .!rc)
+	deleteat!(rc_cuts, .!rc)
+
+	# The piece extractions (specially in the enhanced model) can represent an
+	# extraction from a plate that is never generated (in the restricted model),
+	# so we fix those unreachable/unused extractions to zero for now.
+	@timeit TIMER "fix_ue" fix.(pe[.!re], 0.0; force = true)
+
+	# NOTE: we do nothing about the unreachable plates/contrainsts, because we
+	# believe that a constraint with all variables fixed to zero will surely
+	# be removed by any solver presolve.
+
+	# Debug necessary for experiments.
+	qt_cmvars_restricted = length(rc_cuts)
+	qt_pevars_restricted = qt_re
+	qt_plates_restricted = qt_rp
+	if debug
+		@show qt_cmvars_restricted
+		@show qt_pevars_restricted
+		@show qt_plates_restricted
+	end
+
+	# Get `rc` subsets of VariableRef's and SavedVarConf's.
 	rc_vars = cm[rc_idxs]
 	rc_svcs = cm_svcs[rc_idxs]
-	# Every variable that is not a restricted cut is a unrestricted cut.
+	# Every cut index that is not in rc_idxs is either an unrestricted cut,
+	# or a "restricted cut over never-generated plate", eitheir way, it should
+	# be fixed to zero.
 	uc_idxs = _setdiff_sorted(keys(cm), rc_idxs)
-	# Fix all unrestricted cuts (pool vars).
+	debug && println("qt_cmvars_fixed_before_restricted = $(length(uc_idxs))")
+	# Fix all unreachable/unused cuts (pool vars of the iterated pricing).
 	uc_vars = cm[uc_idxs]
 	@timeit TIMER "fix_uc" fix.(uc_vars, 0.0; force = true)
 	# The 'best known value'/'primal bound' of the heuristic is needed to do
@@ -125,67 +167,53 @@ end
 			d, p, bp.l, bp.w, bp.L, bp.W, Xoroshiro128Plus(seed)
 		)
 	end
+	restricted_LB = LB = convert(Float64, bkv)
+	debug && @show restricted_LB
+
+	# Check if the heuristic did not blow the time limit, but only after
+	# the information output that happens after it.
 	throw_if_timeout_now(start, limit)
-	LB = convert(Float64, bkv)
+
 	# Solve the relaxed restricted model.
 	debug && println("MARK_FURINI_PRICING_RESTRICTED_LP_SOLVE")
 	@timeit TIMER "lp_solve" optimize_within_time_limit!(model, start, limit)
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
-		#@show objective_bound(model)
-		#@show objective_value(model)
-		LP = UB = objective_value(model)
-		#@show value.(rc_vars)
-		!isinf(UB) && (UB = floor(UB + eps(UB))) # theoretically sane UB
+		restricted_LP = LP = objective_value(model)
 		# Note: the iterated_greedy solve the shelf version of the problem,
 		# that is restricted, so it cannot return a better known value than the
-		# restricted upper bound.
-		restricted_LB = LB
-		restricted_LP = LP
-		if debug
-			@show restricted_LB
-			@show restricted_LP
-		end
+		# restricted "upper bound"/"linear(ized) problem".
+		debug && @show restricted_LP
 		@assert restricted_LB <= restricted_LP
 	else
-		@error(
+		error(
 			"For some reason, solving the relaxed restricted model did not" *
 			" terminate with optimal status (the status was" *
 			" $(termination_status(model))). The code is not prepared to deal" *
 			" with this possibility and will abort."
 		)
-		exit(1)
 	end
+
 	# If the assert below fails, then the solver used reaches an optimal point of
 	# a LP but do not has duals for it, what should not be possible, some problem
 	# has happened (for an example, the solver does not recognize the model as a
 	# LP but think it is a MIP for example, CPLEX sometimes does this).
 	@assert has_duals(model)
-	rc_cuts = bp.cuts[rc_idxs]
+
+	# Now let us do the restricted pricing, using the heuristic as LB and
+	# the continuous relaxation as UB.
 	plate_cons = model[:plate_cons]
-	#plate_cons_duals = Serialization.deserialize("./plate_cons_duals_gcut9_simplex")
-	plate_cons_duals = dual.(plate_cons)
-	#println("plate_cons_duals stats")
-	#vector_summary(plate_cons_duals)
-	#Serialization.serialize("./plate_cons_duals_gcut9_simplex", plate_cons_duals)
-	# This is a little costy, and not necessary anymore.
-	#println("stats on reduced profit values of restricted final pricing")
-	#rps = _reduced_profit.(rc_cuts, (plate_cons,))
-	rps = _reduced_profit.(rc_cuts, (plate_cons_duals,))
-	#vector_summary(rps) # defined in GuillotineModels.Utilities
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
 	rc_discrete_bitstr = # the final pricing (get which variables should remain)
-		#@. floor(_reduced_profit(rc_cuts, (plate_cons,)) + LP) >= LB
-		@. floor(rps + LP) >= LB
+		@. floor(_reduced_profit(rc_cuts, (dual(plate_cons),)) + LP) >= LB
+	# ... and which ones should be fixed to zero.
 	rc_fix_bitstr = .!rc_discrete_bitstr
 	debug && begin
-		restricted_vars_removed = sum(rc_fix_bitstr)
-		restricted_vars_remaining = length(rc_cuts) - restricted_vars_removed
-		@show restricted_vars_removed
-		@show restricted_vars_remaining
-		unrestricted_vars_fixed = length(uc_idxs)
-		@show unrestricted_vars_fixed
+		qt_rc_vars_fixed_by_pricing = sum(rc_fix_bitstr)
+		qt_rc_vars_kept_after_pricing = length(rc_cuts)-qt_rc_vars_fixed_by_pricing
+		@show qt_rc_vars_fixed_by_pricing
+		@show qt_rc_vars_kept_after_pricing
 	end
 	# Below the SavedVarConf is not stored because they will be kept fixed
 	# for now, and when restored, they will be restored to their original
@@ -329,7 +357,7 @@ end
 	unused_cuts = copy(cuts)
 	unfixed_at_start = (!is_fixed).(model[:cuts_made])
 	if debug
-		println("qt_cmvars_before_iterated = $(length(unfixed_at_start))")
+		println("qt_cmvars_before_iterated = $(sum(unfixed_at_start))")
 	end
 	unused_vars = copy(model[:cuts_made])
 	# We just need the unused vars/cuts in the pricing process, once a variable
@@ -405,6 +433,7 @@ end
 		#set_start_value.(all_vars, value.(all_vars))
 		flush_all_output()
 		debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_$(qt_iters)")
+		#Gurobi.reset_model!(backend(model).inner)
 		@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
 		flush_all_output()
 		num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
@@ -452,15 +481,6 @@ end
 	bm :: BaseModel, switch_method :: Int,
 	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
 ) where {D, S, P}
-	rc_idxs = _all_restricted_cuts_idxs(byproduct)
-	# Out of the `if` below to be compiled in mock runs (with debug disabled).
-	qt_plates_restricted = _reachable_plate_types(
-		byproduct.cuts[rc_idxs], lastindex(byproduct.pli_lwb)
-	)[1] # the method returns tuple, the first element is the number
-	if debug
-		println("qt_cmvars_restricted = $(length(rc_idxs))")
-		@show qt_plates_restricted
-	end
 	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
 		old_method = get_optimizer_attribute(model, "Method")
 		# Change the LP-solving method to dual simplex, this allows for better
@@ -470,7 +490,7 @@ end
 	end
 	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
 	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
-		model, rc_idxs, d, p, byproduct, seed, debug, mip_start, bm, start, limit
+		model, d, p, byproduct, seed, debug, mip_start, bm, start, limit
 	)
 	debug && print_past_section_seconds(TIMER, "_restricted_final_pricing!")
 	LB = convert(Float64, bkv)

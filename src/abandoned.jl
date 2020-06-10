@@ -870,3 +870,19 @@ function gen_cuts_sb(
 end
 =#
 
+# CODE USED TO SERIALIZE AND UNSERIALIZE THE CONSTRAINT DUALS
+# USED IN FILE src/ppg2kp/pricing.jl and METHOD _restricted_final_pricing!
+#=
+	@assert has_duals(model)
+	plate_cons = model[:plate_cons]
+	#plate_cons_duals = Serialization.deserialize("./plate_cons_duals_gcut9_simplex")
+	plate_cons_duals = dual.(plate_cons)
+	#println("plate_cons_duals stats")
+	#vector_summary(plate_cons_duals)
+	#Serialization.serialize("./plate_cons_duals_gcut9_simplex", plate_cons_duals)
+	# This is a little costy, and not necessary anymore.
+	#println("stats on reduced profit values of restricted final pricing")
+	#rps = _reduced_profit.(rc_cuts, (plate_cons,))
+	rps = _reduced_profit.(rc_cuts, (plate_cons_duals,))
+=#
+
