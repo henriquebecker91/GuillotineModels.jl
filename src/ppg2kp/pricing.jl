@@ -318,6 +318,47 @@ end
 	return num_positive_rp_vars, found_above_threshold
 end
 
+@timeit TIMER function _recompute_idxs_to_add_REVISED!(
+	pool_idxs_to_add, pool, plate_cons, threshold, n_max :: P,
+) :: Tuple{P, Bool} where {P}
+	found_above_threshold = false
+	num_positive_rp_vars = zero(P)
+	# TODO: consider if the optimization of using the pool_idxs_to_add as a
+	# buffer and deciding between overwrite and push! is worth.
+	empty!(pool_idxs_to_add)
+	rps = Vector{Float64}(undef, length(pool))
+	for (pool_idx, cut) in pairs(pool)
+		rps[pool_idx] = rp = _reduced_profit(cut, plate_cons)
+		rp <= 0.0 && continue # non-positive reduced profit is irrelevant to us
+		num_positive_rp_vars += one(P)
+		if rp > threshold
+			!found_above_threshold && empty!(pool_idxs_to_add)
+			found_above_threshold = true
+			push!(pool_idxs_to_add, pool_idx)
+			# If n_max variables above the threshold exist, only them are used.
+			length(pool_idxs_to_add) >= n_max && break
+		elseif !found_above_threshold
+			# Unfortunately we cannot stop here if we find n_max variables because
+			# we can find one above the threshold later yet. At least, we can stop
+			# pushing new variables to the pool.
+			#length(pool_idxs_to_add) < n_max &&
+			push!(pool_idxs_to_add, pool_idx)
+		end
+	end
+	#vector_summary(positive_rps)
+
+	# The condition below can only happen if no rps above the threshold were
+	# found.
+	if n_max <= length(pool_idxs_to_add)
+		partialsort!(pool_idxs_to_add, 1:n_max; rev = true, by = i -> rps[i])
+		resize!(pool_idxs_to_add, n_max)
+		# deleteat! needs that the indexes are unique and sorted
+		sort!(pool_idxs_to_add)
+	end
+
+	return num_positive_rp_vars, found_above_threshold
+end
+
 # NOTE: expect the model to already be relaxed, and with only the restricted
 # cut variables not fixed to zero (while the rest is fixed to zero).
 # NOTE: the description of this method (Explained in 10.1287/ijoc.2016.0710,
@@ -390,7 +431,7 @@ end
 	flush_all_output()
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
-	initial_num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
+	initial_num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add_REVISED!(
 		to_unfix, unused_cuts, plate_cons, threshold, typemax(P)
 	)
 	pricing_threshold_hits = was_above_threshold ? 1 : 0
@@ -436,7 +477,7 @@ end
 		#Gurobi.reset_model!(backend(model).inner)
 		@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
 		flush_all_output()
-		num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
+		num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add_REVISED!(
 			to_unfix, unused_cuts, plate_cons, threshold, n_max
 		)
 		was_above_threshold && (pricing_threshold_hits += 1)
