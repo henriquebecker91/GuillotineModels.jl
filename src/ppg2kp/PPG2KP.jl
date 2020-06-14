@@ -364,7 +364,7 @@ function _no_arg_check_build_model(
 			bp = _furini_pricing!(
 				model, bp, d, p, heuristic_seed, options["pricing-alpha"],
 				options["pricing-beta"], debug, ws_bool, bm, switch_method,
-				start, limit
+				!options["no-sort-in-iterative-pricing"], start, limit
 			)
 			debug && (pricing_time = past_section_seconds(TIMER, "_furini_pricing!"))
 		else

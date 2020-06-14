@@ -285,76 +285,59 @@ end
 # and a boolean indicating if some variable above the threshold was found.
 @timeit TIMER function _recompute_idxs_to_add!(
 	pool_idxs_to_add, pool, plate_cons, threshold, n_max :: P,
+	sort_by_rp :: Bool, rps_buffer = Vector{Float64}(undef, length(pool))
 ) :: Tuple{P, Bool} where {P}
+	pool_size = length(pool)
+	if sort_by_rp && length(rps_buffer) < pool_size
+		resize!(rps_buffer, pool_size)
+	end
+	# Variables used in the loop.
 	found_above_threshold = false
 	num_positive_rp_vars = zero(P)
-	# TODO: consider if the optimization of using the pool_idxs_to_add as a
-	# buffer and deciding between overwrite and push! is worth.
-	empty!(pool_idxs_to_add)
-	#positive_rps = Float64[]
+	qt_selected_vars = zero(P)
 	for (pool_idx, cut) in pairs(pool)
-		rp = _reduced_profit(cut, plate_cons)
-		rp <= 0.0 && continue # non-positive reduced profit is irrelevant to us
-		#push!(positive_rps, rp)
+		rps_buffer[pool_idx] = _reduced_profit(cut, plate_cons)
+		# non-positive reduced profit is irrelevant to us
+		rps_buffer[pool_idx] <= 0.0 && continue
 		num_positive_rp_vars += one(P)
-		if rp > threshold
-			!found_above_threshold && empty!(pool_idxs_to_add)
-			found_above_threshold = true
-			push!(pool_idxs_to_add, pool_idx)
-			# If n_max variables above the threshold exist, only them are used.
-			length(pool_idxs_to_add) >= n_max && break
+		if rps_buffer[pool_idx] > threshold
+			if !found_above_threshold
+				qt_selected_vars = zero(P)
+				found_above_threshold = true
+			end
+			qt_selected_vars += one(P)
+			if qt_selected_vars > length(pool_idxs_to_add)
+				push!(pool_idxs_to_add, pool_idx)
+			else
+				pool_idxs_to_add[qt_selected_vars] = pool_idx
+			end
+			# If n_max variables above the threshold exist, and we do not
+			# sort by reduced profit, only them are used.
+			qt_selected_vars >= n_max && !sort_by_rp && break
 		elseif !found_above_threshold
-			# Unfortunately we cannot stop here if we find n_max variables because
+			# Unfortunately we cannot break here if we find n_max variables because
 			# we can find one above the threshold later yet. At least, we can stop
 			# pushing new variables to the pool.
-			length(pool_idxs_to_add) < n_max && push!(pool_idxs_to_add, pool_idx)
+			qt_selected_vars >= n_max && !sort_by_rp && continue
+			qt_selected_vars += one(P)
+			if qt_selected_vars > length(pool_idxs_to_add)
+				push!(pool_idxs_to_add, pool_idx)
+			else
+				pool_idxs_to_add[qt_selected_vars] = pool_idx
+			end
 		end
 	end
 	#vector_summary(positive_rps)
 
+	return_size = min(qt_selected_vars, n_max)
+	sort_by_rp && partialsort!(
+		(@view pool_idxs_to_add[1:qt_selected_vars]), 1:return_size;
+		rev = true, by = i -> rps_buffer[i]
+	)
 	# Only n_max variables are added/unfixed in a single iteration.
-	#n_max <= length(pool_idxs_to_add) && resize!(pool_idxs_to_add, n_max)
-
-	return num_positive_rp_vars, found_above_threshold
-end
-
-@timeit TIMER function _recompute_idxs_to_add_REVISED!(
-	pool_idxs_to_add, pool, plate_cons, threshold, n_max :: P,
-) :: Tuple{P, Bool} where {P}
-	found_above_threshold = false
-	num_positive_rp_vars = zero(P)
-	# TODO: consider if the optimization of using the pool_idxs_to_add as a
-	# buffer and deciding between overwrite and push! is worth.
-	empty!(pool_idxs_to_add)
-	rps = Vector{Float64}(undef, length(pool))
-	for (pool_idx, cut) in pairs(pool)
-		rps[pool_idx] = rp = _reduced_profit(cut, plate_cons)
-		rp <= 0.0 && continue # non-positive reduced profit is irrelevant to us
-		num_positive_rp_vars += one(P)
-		if rp > threshold
-			!found_above_threshold && empty!(pool_idxs_to_add)
-			found_above_threshold = true
-			push!(pool_idxs_to_add, pool_idx)
-			# If n_max variables above the threshold exist, only them are used.
-			length(pool_idxs_to_add) >= n_max && break
-		elseif !found_above_threshold
-			# Unfortunately we cannot stop here if we find n_max variables because
-			# we can find one above the threshold later yet. At least, we can stop
-			# pushing new variables to the pool.
-			#length(pool_idxs_to_add) < n_max &&
-			push!(pool_idxs_to_add, pool_idx)
-		end
-	end
-	#vector_summary(positive_rps)
-
-	# The condition below can only happen if no rps above the threshold were
-	# found.
-	if n_max <= length(pool_idxs_to_add)
-		partialsort!(pool_idxs_to_add, 1:n_max; rev = true, by = i -> rps[i])
-		resize!(pool_idxs_to_add, n_max)
-		# deleteat! needs that the indexes are unique and sorted
-		sort!(pool_idxs_to_add)
-	end
+	resize!(pool_idxs_to_add, return_size)
+	# deleteat! needs the indexes to be sorted
+	sort_by_rp && sort!(pool_idxs_to_add)
 
 	return num_positive_rp_vars, found_above_threshold
 end
@@ -371,8 +354,9 @@ end
 # n-max)?
 @timeit TIMER function _iterative_pricing!(
 	model, cuts :: Vector{NTuple{3, P}}, cm_svcs :: Vector{SavedVarConf},
-	max_profit :: P, alpha :: Float64, beta :: Float64, debug :: Bool = false,
-	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
+	max_profit :: P, alpha :: Float64, beta :: Float64, sort_by_rp :: Bool,
+	debug :: Bool = false, start :: Float64 = time(),
+	limit :: Float64 = float(60*60*24*365)
 ) :: Nothing where {P}
 	# Summary of the method:
 	# The variables themselves are not iterated, bp.cuts is iterated. The indexes
@@ -424,15 +408,28 @@ end
 	flush_all_output()
 	# the last solve before this was MIP and has no duals
 	debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_0")
-	@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
+	#@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
+	@timeit TIMER "solve_lp" optimize!(model)
+	#v_attr_pstart = Gurobi.VariableAttribute("PStart")
+	#c_attr_dstart = Gurobi.ConstraintAttribute("DStart")
+	#all_vars = all_variables(model)
+	#relevant_constraints = vcat(plate_cons, model[:demand_con])
+	#pstart = MOI.get.((backend(model),), (v_attr_pstart,), index.(all_vars))
+	#dstart = MOI.get.((backend(model),), (c_attr_dstart,), index.(relevant_constraints))
+	#pstart = value.(all_vars)
+	#dstart = value.(relevant_constraints)
+	#vector_summary(pstart)
+	#vector_summary(dstart)
 	#plate_cons_dual = dual.(plate_cons)
 	#println("plate_con_duals stats")
 	#vector_summary(plate_cons_dual)
 	flush_all_output()
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
-	initial_num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add_REVISED!(
-		to_unfix, unused_cuts, plate_cons, threshold, typemax(P)
+	rps_buffer = Vector{Float64}(undef, length(unused_cuts))
+	initial_num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
+		to_unfix, unused_cuts, plate_cons, threshold, typemax(P), sort_by_rp,
+		rps_buffer
 	)
 	pricing_threshold_hits = was_above_threshold ? 1 : 0
 	debug && @show initial_num_positive_rp_vars
@@ -474,11 +471,20 @@ end
 		#set_start_value.(all_vars, value.(all_vars))
 		flush_all_output()
 		debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_$(qt_iters)")
+		#println("USING Gurobi.reset_model!(backend(model).inner)")
 		#Gurobi.reset_model!(backend(model).inner)
-		@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
+		#@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
+		#MOI.set.((backend(model),), (v_attr_pstart,), index.(all_vars), pstart)
+		#MOI.set.((backend(model),), (c_attr_dstart,), index.(relevant_constraints), dstart)
+		@timeit TIMER "solve_lp" optimize!(model)
+		#pstart .= value.(all_vars)
+		#dstart .= value.(relevant_constraints)
+		#pstart .= MOI.get.((backend(model),), (v_attr_pstart,), all_vars)
+		#dstart .= MOI.get.((backend(model),), (c_attr_dstart,), relevant_constraints)
 		flush_all_output()
-		num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add_REVISED!(
-			to_unfix, unused_cuts, plate_cons, threshold, n_max
+		num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
+			to_unfix, unused_cuts, plate_cons, threshold, n_max, sort_by_rp,
+			rps_buffer
 		)
 		was_above_threshold && (pricing_threshold_hits += 1)
 	end
@@ -502,7 +508,8 @@ end
 	# If this assert fails is because some change was done to a solved model
 	# and its state was reset to unoptimized.
 	@assert has_duals(model)
-	rps = _reduced_profit.(bp.cuts, (plate_cons,))
+	plate_duals = dual.(plate_cons)
+	rps = _reduced_profit.(bp.cuts, (plate_duals,))
 	#=if debug
 		println("stats on reduced profit values of final pricing")
 		vector_summary(rps) # defined in GuillotineModels.Utilities
@@ -519,7 +526,7 @@ end
 # true final pricing).
 @timeit TIMER function _furini_pricing!(
 	model, byproduct, d, p, seed, alpha, beta, debug, mip_start :: Bool,
-	bm :: BaseModel, switch_method :: Int,
+	bm :: BaseModel, switch_method :: Int, sort_by_rp :: Bool,
 	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
 ) where {D, S, P}
 	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
@@ -541,8 +548,8 @@ end
 	@assert all(e -> e >= zero(e), p)
 
 	_iterative_pricing!(
-		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, debug,
-		start, limit
+		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, sort_by_rp,
+		debug, start, limit
 	)
 	debug && print_past_section_seconds(TIMER, "_iterative_pricing!")
 	LP = objective_value(model)

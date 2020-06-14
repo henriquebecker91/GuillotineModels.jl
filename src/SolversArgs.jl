@@ -33,15 +33,51 @@ import ...Utilities
 import ...Utilities.Args: Arg
 import ...Utilities.Args: accepted_arg_list, throw_if_incompatible_options
 
+# CPLEX is not define in this scope, so we return a symbol with the
+# name of the constant and use `getfield` inside the scope CPLEX
+# is defined.
+const CPLEX_NAME2CODE_LP_ALG = Dict{String, Symbol}(
+	"CPX_ALG_AUTOMATIC" => :CPX_ALG_AUTOMATIC,
+	"auto" => :CPX_ALG_AUTOMATIC,
+	"automatic" => :CPX_ALG_AUTOMATIC,
+	"0" => :CPX_ALG_AUTOMATIC,
+	"CPX_ALG_PRIMAL" => :CPX_ALG_PRIMAL,
+	"primal" => :CPX_ALG_PRIMAL,
+	"1" => :CPX_ALG_PRIMAL,
+	"CPX_ALG_DUAL" => :CPX_ALG_DUAL,
+	"dual" => :CPX_ALG_DUAL,
+	"2" => :CPX_ALG_DUAL,
+	"CPX_ALG_NET" => :CPX_ALG_NET,
+	"net" => :CPX_ALG_NET,
+	"network" => :CPX_ALG_NET,
+	"3" => :CPX_ALG_NET,
+	"CPX_ALG_BARRIER" => :CPX_ALG_BARRIER,
+	"barrier" => :CPX_ALG_BARRIER,
+	"4" => :CPX_ALG_BARRIER,
+	"CPX_ALG_SIFTING" => :CPX_ALG_SIFTING,
+	"sifting" => :CPX_ALG_SIFTING,
+	"5" => :CPX_ALG_SIFTING,
+	"CPX_ALG_CONCURRENT" => :CPX_ALG_CONCURRENT,
+	"concurrent" => :CPX_ALG_CONCURRENT,
+	"6" => :CPX_ALG_CONCURRENT,
+	"CPX_ALG_CONCURRENT" => :CPX_ALG_CONCURRENT,
+	"parallel" => :CPX_ALG_CONCURRENT,
+	"7" => :CPX_ALG_CONCURRENT
+)
 function __init__()
+
 	#function cplex_empty_configured_model(p_args)
 	@require CPLEX="a076750e-1247-5638-91d2-ce28b192dca0" begin
 	@timeit TIMER function empty_configured_model(::Val{:CPLEX}, p_args)
 		scrind_value = p_args["no-output"] ? CPLEX.CPX_OFF : CPLEX.CPX_ON
+		root_relax_method = CPLEX_NAME2CODE_LP_ALG[p_args["root-relax-method"]]
+		lp_method = CPLEX_NAME2CODE_LP_ALG[p_args["LP-method"]]
 		# https://www.ibm.com/support/pages/cplex-performance-tuning-linear-programs
 		configuration = Pair{String, Any}[
 			"CPX_PARAM_EPGAP" => 1e-6,
 			"CPX_PARAM_TILIM" => p_args["time-limit"],
+			"CPX_PARAM_STARTALG" => getfield(CPLEX, root_relax_method),
+			"CPX_PARAM_LPMETHOD" => getfield(CPLEX, lp_method),
 			# "Sifting is a simple form of column generation well suited for models
 			# where the number of variables dramatically exceeds the number of
 			# constraints."
@@ -51,8 +87,8 @@ function __init__()
 			# of the constraint matrix multiplied by its transpose is sparse. "
 			#"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_BARRIER,
 			#"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_BARRIER,
-			"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_NET,
-			"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_NET,
+			#"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_NET,
+			#"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_NET,
 			#"CPX_PARAM_BARDISPLAY" => 2, # 2 == diagnostic information level
 			#"CPX_PARAM_SIMDISPLAY" => 2, # 2 == diagnostic information level
 			# For the LPs of the iterative pricing of PPG2KP we need to avoid
@@ -63,6 +99,9 @@ function __init__()
 			# And the dual is the opposite (CPLEX.CPX_ALG_DUAL).
 			#"CPX_PARAM_STARTALG" => CPLEX.CPX_ALG_PRIMAL,
 			#"CPX_PARAM_LPMETHOD" => CPLEX.CPX_ALG_PRIMAL,
+			#"CPX_PARAM_PPRIIND" => CPLEX.CPX_PPRIIND_FULL, # pricing inside simplex
+			#"CPX_PARAM_PERIND" => CPLEX.CPX_ON, # start using perturbations
+			#"CPX_PARAM_PERLIM" => 1000000, # num degenerate iters until perturbation
 			# Group parameter to help with numerical instability without the need
 			# of fine-tuning.
 			#"CPX_PARAM_NUMERICALEMPHASIS" => CPLEX.CPX_ON,
@@ -166,6 +205,14 @@ end
 function Utilities.Args.accepted_arg_list(::Val{:CPLEX}) :: Vector{Arg}
 	return [
 		Arg(
+			"root-relax-method", "automatic",
+			"Changes CPX_PARAM_LPMETHOD. Accept simplified single-word names (primal, dual, etc...), CPLEX names (CPX_ALG_PRIMAL, CPX_ALG_DUAL, ...), and codes (1, 2, ...)."
+		),
+		Arg(
+			"LP-method", "automatic",
+			"Changes CPX_PARAM_STARTALG/CPXPARAM_MIP_Strategy_StartAlgorithm. Accept simplified single-word names (primal, dual, etc...), CPLEX names (CPX_ALG_PRIMAL, CPX_ALG_DUAL, ...), and codes (1, 2, ...)."
+		),
+		Arg(
 			"threads", 1,
 			"The value of CPXPARAM_Threads. If zero and no callbacks is the number os cores, if zero and callbacks is one. If a positive number, is that number of cores."
 		),
@@ -193,7 +240,11 @@ function Utilities.Args.accepted_arg_list(::Val{:CPLEX}) :: Vector{Arg}
 end
 
 function Utilities.Args.throw_if_incompatible_options(::Val{:CPLEX}, p_args)
-	# TODO: should we throw if the option does not exist?
+	valid_lp_alg_names = sort!(collect(keys(CPLEX_NAME2CODE_LP_ALG)))
+	lpm = "LP-method"
+	rrm = "root-relax-method"
+	Utilities.throw_if_unrecognized(lpm, p_args[lpm], valid_lp_alg_names)
+	Utilities.throw_if_unrecognized(rrm, p_args[rrm], valid_lp_alg_names)
 end
 
 function Utilities.Args.accepted_arg_list(::Val{:Gurobi}) :: Vector{Arg}

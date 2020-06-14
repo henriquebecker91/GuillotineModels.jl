@@ -7,20 +7,24 @@ export accepted_arg_list, throw_if_incompatible_options
 function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 	return [
 		Arg(
+			"no-sort-in-iterative-pricing", false,
+			"Only used if the value of the 'pricing' option is 'furini'. The explanation of the pricing algorithm in 10.1287/ijoc.2016.0710 does not make very clear if the variables with positive reduced profit added each iteration are the ones with highest reduced profit or an arbitrary subset. The default is to sort because: the extra effort is minimal compared to solving the LP; the time solving the LP can be drastically reduced by the adding the variables with highest reduced profit first."
+		),
+		Arg(
 			"building-time-limit", 60.0 * 60.0 * 24.0 * 365.0,
 			"Defines a time limit (in seconds) to be observed in the context of the model building proccess. If the solver is called during the building procedure then `JuMP.set_time_limit_sec` is called over the model before starting to solve it, with the remaining time (not the total time). A `GuillotineModels.TimeoutError` is raised if the time limit is violated."
 		),
 		Arg(
 			"Gurobi-LP-method-inside-furini-pricing", -2,
-			"Allows to switch the algorithm used to solve continuous models and root node relaxations inside the Furini's iterated pricing when Gurobi is the solver used. Will have no effect but print warnings if either Furini's pricing is not called or Gurobi is not the solver in use. The default value of -2 will not touch Gurobi's Method parameter, values -1 to 5 will set Gurobi's Method to the corresponding value during the subprocedure mentioned, and restore the previous value after it."
+			"Allows to switch the algorithm used to solve continuous models and root node relaxations inside the Furini's iterative pricing when Gurobi is the solver used. Will have no effect but print warnings if either Furini's pricing is not called or Gurobi is not the solver in use. The default value of -2 will not touch Gurobi's Method parameter, values -1 to 5 will set Gurobi's Method to the corresponding value during the subprocedure mentioned, and restore the previous value after it."
 		),
 		Arg(
 			"pricing-alpha", 0.20,
-			"Used to compute the number of variables added in each iteration of the iterated pricing (only used if furini pricing is selected, see pricing flag). Must be above zero and at most one. Explained in 10.1287/ijoc.2016.0710, p. 13 (747) (last paragraph before section 4.3). Default value is the one used in the experiments of the original paper."
+			"Used to compute the number of variables added in each iteration of the iterative pricing (only used if furini pricing is selected, see pricing flag). Must be above zero and at most one. Explained in 10.1287/ijoc.2016.0710, p. 13 (747) (last paragraph before section 4.3). Default value is the one used in the experiments of the original paper."
 		),
 		Arg(
 			"pricing-beta", 0.25,
-			"Used to compute the number of variables addded in each iteration of the iterated pricing (only used if furini pricing is selected, see pricing flag). Must be non-negative, and makes most sense to be at most one. Explained in 10.1287/ijoc.2016.0710, p. 13 (747) (last paragraph before section 4.3). Default value is the one used in the experiments of the original paper."
+			"Used to compute the number of variables addded in each iteration of the iterative pricing (only used if furini pricing is selected, see pricing flag). Must be non-negative, and makes most sense to be at most one. Explained in 10.1287/ijoc.2016.0710, p. 13 (747) (last paragraph before section 4.3). Default value is the one used in the experiments of the original paper."
 		),
 		Arg(
 			"lower-bound", 0.0,

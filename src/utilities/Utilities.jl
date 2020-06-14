@@ -298,6 +298,19 @@ function num_all_constraints(m) :: Int64
 end
 export num_all_constraints
 
+"""
+    all_constraints(m)
+
+JuMP only allow to query the number of constraints of some specific type;
+this method queries all constraint used in the model.
+"""
+function all_constraints(m :: Model)
+	Iterators.flatten(map(list_of_constraint_types(m)) do (ftype, stype)
+		all_constraints(m, ftype, stype)
+	end)
+end
+export all_constraints
+
 # see https://github.com/JuliaOpt/MathOptInterface.jl/issues/776
 #=
 function reduced_cost(var) :: Float64
