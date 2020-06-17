@@ -51,6 +51,78 @@ function _setdiff_sorted(u, s)
 	t
 end
 
+#=
+struct BPLinkage{P}
+	part2full
+	full2part
+end
+=#
+
+@timeit TIMER function _create_restricted_byproduct(
+   bp :: ByproductPPG2KP{D, S, P}
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	# The cuts/plates/extractions of a restricted model are obtained by a
+	# two-step process: (1) get only the cuts in which the cut length/width
+	# match the corresponding dimension of a piece; (2) detect which plates,
+	# extractions, and restricted cuts are reachable from those cuts.
+	# Note that the cuts obtained in (1) can occur in plates that cannot be
+	# obtained from the cuts in (1), consequently, the number of restricted cuts
+	# often drastically reduces in (2) (and the values become similar to the ones
+	# obtained by Furini).
+	fvc = if bp.first_vertical_cut_idx > length(bp.cuts)
+		nothing
+	else
+		bp.cuts[bp.first_vertical_cut_idx]
+	end
+	rc_idxs = _all_restricted_cuts_idxs(bp)
+	rc_fvci = searchsortedfirst(rc_idxs, bp.first_vertical_cut_idx)
+	rc = bp.cuts[rc_idxs]
+	qt_re, re_bits, qt_rc, rc_bits, qt_rp, rp_bits = _reachable(
+		bp.np, rc, lastindex(bp.pli_lwb)
+	)
+	re = deleteat!(copy(bp.np), .!re_bits)
+	rp = deleteat!(copy(bp.pli_lwb), .!rp_bits)
+	deleteat!(rc, .!rc_bits) # rc is already a copy of a subset
+	rc_fvci = rc_fvci > length(rc_idxs) ? length(rc) + 1 : sum(rc_bits[1:rc_fvci])
+	# If this assert fails, it means our index tricks using searchsortedfirst
+	# and sum have failed us.
+	@assert rc_fvci > length(rc) || rc[rc_fvci] == fvc
+	# After the assert, we can update the values of the cuts and extractions to
+	# refer to the new plates.
+	qt_old_pl = length(bp.pli_lwb)
+	oldpli2newpli = zeros(qt_old_pl)
+	setindex!.((oldpli2newpli,), 1:length(rp), (1:qt_old_pl)[rp_bits])
+	# TODO: put these loops inside a internal method of their own, I have
+	# the feeling I have already written them many times.
+	for (i, (pp, fc, sc)) in pairs(rc)
+		new_pp, new_fc = oldpli2newpli[pp], oldpli2newpli[fc]
+		new_sc = iszero(sc) ? sc : oldpli2newpli[sc]
+		@assert new_pp > 0 && new_pp <= length(rp)
+		if !(new_fc > 0 && new_fc <= length(rp))
+			@show i
+			@show pp
+			@show fc
+			@show sc
+			@show oldpli2newpli[fc]
+			@show length(rp)
+		end
+		@assert new_sc >= 0 && new_fc <= length(rp)
+		rc[i] = (new_pp, new_fc, new_sc)
+	end
+	for (i, (plate, piece)) in pairs(re)
+		@assert !iszero(oldpli2newpli[plate])
+		re[i] = (oldpli2newpli[plate], piece)
+		@assert re[i][1] > 0 && re[i][1] <= length(rp)
+	end
+
+	# FUTURE PLAN: if we start returning the bitmasks to keep the link
+	# between original and restricted byproducts, then we can use
+	# broadcasted getindex and setindex! to create a bitmask for cuts using
+	# rc_idxs and rc_bits.
+
+	return ByproductPPG2KP{D, S, P}(rc, rc_fvci, re, rp, bp.l, bp.w, bp.L, bp.W)
+end
+
 # Arguments:
 # * `cut`: a triple of `pp`, `fc`, and `sc`.
 #   + `pp`: parent plate id/index.
@@ -93,8 +165,12 @@ end
 	model, d :: Vector{D}, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, seed, debug :: Bool, mip_start :: Bool,
 	bm :: BaseModel, start :: Float64 = time(),
-	limit :: Float64 = float(60*60*24*365)
+	limit :: Float64 = float(60*60*24*365), options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
+	empty!(model)
+	bp = _create_restricted_byproduct(bp)
+	r_inv_idxs = VarInvIndexes(bp)
+	_build_base_model!(model, d, p, bp, r_inv_idxs, options)
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
 	cm = model[:cuts_made] # Cuts Made
@@ -102,58 +178,18 @@ end
 	# will need to be reworked. Now it only relax/fix variables in those sets
 	# so it will need to be sensibly extended to new sets of variables.
 	@assert n == length(cm) + length(pe)
-	# First we save all the variables bounds and types and relax all of them.
-	# We cannot relax just the unfixed ones, otherwise the solver will try to
-	# solve a MIP instead of an LP.
+	# Relax all variables.
 	@timeit TIMER "relax_cm" cm_svcs = relax!(cm)
 	@timeit TIMER "relax_pe" pe_svcs = relax!(pe)
 	@assert length(cm) == length(bp.cuts)
-	# Get the indexes of restricted cuts in bp.cuts (bp.np variables are neither
-	# exactly "cuts", nor could be unrestricted if considered this way).
-	rc_idxs = _all_restricted_cuts_idxs(bp)
-	rc_cuts = bp.cuts[rc_idxs]
-	# Some variables (now including the extraction ones, not just cuts)
-	# are also fixed to zero, because they operate over plates that does not
-	# exist if we limit ourselves to the restricted cuts. Many of those variables
-	# are "restricted cuts over never-generated plates".
-	# {quantitity,bitarray} of reachable {extractions,cuts,plates}
-	qt_re, re, qt_rc, rc, qt_rp, rp = _reachable(
-		bp.np, rc_cuts, lastindex(bp.pli_lwb)
-	)
-	# Update rc_* to not consider such variables.
-	deleteat!(rc_idxs, .!rc)
-	deleteat!(rc_cuts, .!rc)
-
-	# The piece extractions (specially in the enhanced model) can represent an
-	# extraction from a plate that is never generated (in the restricted model),
-	# so we fix those unreachable/unused extractions to zero for now.
-	@timeit TIMER "fix_ue" fix.(pe[.!re], 0.0; force = true)
-
-	# NOTE: we do nothing about the unreachable plates/contrainsts, because we
-	# believe that a constraint with all variables fixed to zero will surely
-	# be removed by any solver presolve.
 
 	# Debug necessary for experiments.
-	qt_cmvars_restricted = length(rc_cuts)
-	qt_pevars_restricted = qt_re
-	qt_plates_restricted = qt_rp
 	if debug
-		@show qt_cmvars_restricted
-		@show qt_pevars_restricted
-		@show qt_plates_restricted
+		println("qt_cmvars_restricted = $(length(bp.cuts))")
+		println("qt_pevars_restricted = $(length(bp.np))")
+		println("qt_plates_restricted = $(length(bp.pli_lwb))")
 	end
 
-	# Get `rc` subsets of VariableRef's and SavedVarConf's.
-	rc_vars = cm[rc_idxs]
-	rc_svcs = cm_svcs[rc_idxs]
-	# Every cut index that is not in rc_idxs is either an unrestricted cut,
-	# or a "restricted cut over never-generated plate", eitheir way, it should
-	# be fixed to zero.
-	uc_idxs = _setdiff_sorted(keys(cm), rc_idxs)
-	debug && println("qt_cmvars_fixed_before_restricted = $(length(uc_idxs))")
-	# Fix all unreachable/unused cuts (pool vars of the iterated pricing).
-	uc_vars = cm[uc_idxs]
-	@timeit TIMER "fix_uc" fix.(uc_vars, 0.0; force = true)
 	# The 'best known value'/'primal bound' of the heuristic is needed to do
 	# the pricing. If we can MIP-start the model, we can just call
 	# `mip_start_by_heuristic!` and get the `bkv` returned, otherwise we need
@@ -206,33 +242,26 @@ end
 	# TODO: check if a tolerance is needed in the comparison. Query it from the
 	# solver/model if possible (or use eps?).
 	rc_discrete_bitstr = # the final pricing (get which variables should remain)
-		@. floor(_reduced_profit(rc_cuts, (dual(plate_cons),)) + LP) >= LB
+		@. floor(_reduced_profit(bp.cuts, (dual(plate_cons),)) + LP) >= LB
 	# ... and which ones should be fixed to zero.
 	rc_fix_bitstr = .!rc_discrete_bitstr
-	debug && begin
-		qt_rc_vars_fixed_by_pricing = sum(rc_fix_bitstr)
-		qt_rc_vars_kept_after_pricing = length(rc_cuts)-qt_rc_vars_fixed_by_pricing
-		@show qt_rc_vars_fixed_by_pricing
-		@show qt_rc_vars_kept_after_pricing
+	if debug
+		qt_cmvars_priced_restricted = sum(rc_discrete_bitstr)
+		qt_cmvars_deleted_by_heuristic_pricing = length(rc_fix_bitstr) -
+			qt_cmvars_priced_restricted
+		@show qt_cmvars_priced_restricted
+		@show qt_cmvars_deleted_by_heuristic_pricing
 	end
-	# Below the SavedVarConf is not stored because they will be kept fixed
-	# for now, and when restored, they will be restored to their original
-	# state (rc_svcs) not this intermediary one.
-	@timeit TIMER "fix_rc_subset" fix.(rc_vars[rc_fix_bitstr], 0.0; force = true)
-	# The discrete variables are the restricted cuts that were not removed
-	# by the final pricing of the restricted model and will be in the mip
-	# of the restricted model.
-	discrete_vars = rc_vars[rc_discrete_bitstr]
-	@timeit TIMER "restore_ss_cm" restore!(
-		discrete_vars, rc_svcs[rc_discrete_bitstr]
-	)
-	# All piece extractions also need to be restored.
-	@timeit TIMER "restore_pe" restore!(pe, pe_svcs)
+	# TODO: here we need to be able to keep the linkage between the old BP
+	# and the new one
+	bp = _delete_vars!(bp, model, rc_discrete_bitstr, :cuts_made)
+	restore!.(model[:picuts], pe_svcs)
+	restore!.(model[:cuts_made], cm_svcs[rc_discrete_bitstr])
 	# restricted MIP solved
 	debug && println("MARK_FURINI_PRICING_RESTRICTED_MIP_SOLVE")
 	@timeit TIMER "mip_solve" optimize_within_time_limit!(model, start, limit)
-	# We MIP start the restricted model with a feasible solution, so it should be
-	# impossible to get a different status here.
+	# If we MIP start the restricted model with a feasible solution, it should
+	# be impossible to get a different status here.
 	@assert !mip_start || primal_status(model) == MOI.FEASIBLE_POINT
 	# The assert above is valid, but this does not mean we actually deal
 	# with the possibility of not having a primal solution below.
@@ -257,6 +286,8 @@ end
 		# every time a variable is deleted. For now this is too much effort
 		# because Gurobi log shows that the MIP start is being recognized even with
 		# variables being deleted after.
+		# `shift_idxs!` below correct the indexes considering the deleted vars.
+		shift_idxs!(heuristic_raw_ws[3], rc_discrete_bitstr)
 		unset_mip_start!(model, heuristic_raw_ws[1], heuristic_raw_ws[3])
 		raw_mip_start!(model, save_mip_start(model)...)
 	end
@@ -264,8 +295,14 @@ end
 
 	# The variables are left all relaxed but with only the variables used
 	# in the restricted priced model unfixed, the rest are fixed to zero.
-	@timeit TIMER "relax_ss_rc" relax!(rc_vars[rc_discrete_bitstr])
+	@timeit TIMER "relax_ss_rc" relax!(cm)
 	@timeit TIMER "relax_pe" relax!(pe)
+
+	error(
+		"Commits done inside branch furinifix have no guarantee of" *
+		" being functional. This version aborts at the end of the" *
+		" restricted furini pricing (if it is called)."
+	)
 
 	return bkv, pe_svcs, cm_svcs
 end
@@ -527,7 +564,8 @@ end
 @timeit TIMER function _furini_pricing!(
 	model, byproduct, d, p, seed, alpha, beta, debug, mip_start :: Bool,
 	bm :: BaseModel, switch_method :: Int, sort_by_rp :: Bool,
-	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
+	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365),
+	options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
 	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
 		old_method = get_optimizer_attribute(model, "Method")
@@ -538,7 +576,7 @@ end
 	end
 	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
 	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
-		model, d, p, byproduct, seed, debug, mip_start, bm, start, limit
+		model, d, p, byproduct, seed, debug, mip_start, bm, start, limit, options
 	)
 	debug && print_past_section_seconds(TIMER, "_restricted_final_pricing!")
 	LB = convert(Float64, bkv)

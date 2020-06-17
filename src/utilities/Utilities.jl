@@ -80,6 +80,39 @@ end
 export bits2idxs
 
 """
+    shift_idxs!(old_idxs, kept_bits)
+
+Given a sorted list of indexes (`old_idxs`) from a vector `A` and a
+bitarray-like (`kept_bits`) marking (with true) which positions of `A` were
+not deleted since last `shift_idxs!`, it changes the `old_idxs` to point
+to the correct positions and return it.
+
+The code throws if the `old_idxs` are not positions marked as kept by
+`kept_bits`.
+
+This code is efficient if `old_idxs` is a "small" subset of `A` indexes.
+
+The code assumes `A` had the usual `1:length(A)` indexes.
+
+The code does not allocate from the heap.
+"""
+function shift_idxs!(old_idxs, kept_bits)
+	@assert all(i -> kept_bits[i], old_idxs)
+	my_one = one(eltype(old_idxs))
+	new_idx = zero(eltype(old_idxs))
+	first_unvisited = my_one
+	for (j, old_idx) in pairs(old_idxs)
+		for i in first_unvisited:old_idx
+			kept_bits[i] && (new_idx += my_one)
+		end
+		old_idxs[j] = new_idx
+		first_unvisited = old_idx + my_one
+	end
+	return old_idxs
+end
+export shift_idxs!
+
+"""
     gather_nonzero(vars, ::Type{D}, threshold = 1e-5, sol_idx = 1)
 
 Given some valid JuMP.Model `vars`, return a list of all indexes in `vars`

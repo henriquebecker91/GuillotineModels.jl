@@ -11,6 +11,7 @@ module Enumeration
 # preprocessing phase participation on the total time is negligible), and it
 # makes the code far more complex (because I have to have code that respects
 # and ignores a basic assumption).
+
 using DocStringExtensions
 
 import ...Utilities.SortedLinkedLW
@@ -398,6 +399,15 @@ was kept here for now.
    one of many distinct pieces, and each piece may be extracted from many
    different plates.
 =#
+# TODO: Optional. Consider if changing the order of the variables can impact
+# the solver performance. The only problem with this is that current
+# ByproductPPG2KP forces all horizontal cuts to come before all vertical
+# cuts. Changing the order of the constraints, however, needs the complete
+# recomputation of ByproductPPG2KP.cuts and ByproductPPG2KP.np.
+# Some criteria to be considered for the np variables (mostly):
+# how much is the absolute profit obtained; how much relative area is wasted;
+# how much is the profit of the a squared unit of the plate used; or group
+# them by pii just for making it easier to the demand constraint.
 """
 Collection of internal datastructures used to create the PP-G2KP model and
 needed to assemble the solution given by the values of the model variables.
@@ -420,7 +430,7 @@ struct ByproductPPG2KP{D, S, P}
 	"The width of the pieces."
 	w :: Vector{S}
 	# TODO: add `d` to the ByproductPPG2KP and clean up methods that take both
-	# `d` and a `byrpoduct`.
+	# `d` and a `byproduct`.
 	#d :: Vector{D} # why this is not here? d is used in the enumeration
 	#p :: Vector{P} # for now, it is not necessary
 	"The length of the original plate."
