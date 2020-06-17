@@ -51,16 +51,42 @@ function _setdiff_sorted(u, s)
 	t
 end
 
-#=
 struct BPLinkage{P}
-	part2full
-	full2part
+	exts_part2full :: Vector{P}
+	exts_full2part :: Vector{P}
+	cuts_part2full :: Vector{P}
+	cuts_full2part :: Vector{P}
+	plis_part2full :: Vector{P}
+	plis_full2part :: Vector{P}
 end
-=#
+
+# Given the type for the index and a bitarray-like, return a duple of linked
+# indexes: the first has length equal to the number of true elements in bits
+# and the i-th position has the index of the i-th true value in bits; the
+# second has length equal to bits, value zero in each position that is false
+# in bits, and each position that is true in bits has the number of trues in
+# bits up to that position.
+function bits2lidxs(::Type{I}, bits) :: NTuple{2, Vector{I}} where {I}
+	part2full = I[]
+	full2part = Vector{I}(undef, length(bits))
+	qt_trues = zero(I)
+	for (i, v) in pairs(bits)
+		if v
+			qt_trues += one(I)
+			full2part[i] = qt_trues
+			push!(part2full, convert(I, i))
+		else
+			full2part[i] = zero(I)
+		end
+	end
+	return part2full, full2part
+end
 
 @timeit TIMER function _create_restricted_byproduct(
-   bp :: ByproductPPG2KP{D, S, P}
-) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	bp :: ByproductPPG2KP{D, S, P}
+) :: Tuple{
+	ByproductPPG2KP{D, S, P}, BPLinkage{P}
+} where {D, S, P}
 	# The cuts/plates/extractions of a restricted model are obtained by a
 	# two-step process: (1) get only the cuts in which the cut length/width
 	# match the corresponding dimension of a piece; (2) detect which plates,
@@ -80,8 +106,15 @@ end
 	qt_re, re_bits, qt_rc, rc_bits, qt_rp, rp_bits = _reachable(
 		bp.np, rc, lastindex(bp.pli_lwb)
 	)
-	re = deleteat!(copy(bp.np), .!re_bits)
-	rp = deleteat!(copy(bp.pli_lwb), .!rp_bits)
+	exts_part2full, exts_full2part = bits2lidxs(P, re_bits)
+	cuts_part2full, cuts_full2part = bits2lidxs(P, rc_bits)
+	plis_part2full, plis_full2part = bits2lidxs(P, rp_bits)
+	bpl = BPLinkage(
+		exts_part2full, exts_full2part, cuts_part2full, cuts_full2part,
+		plis_part2full, plis_full2part
+	)
+	re = bp.np[exts_part2full]
+	rp = bp.pli_lwb[plis_part2full]
 	deleteat!(rc, .!rc_bits) # rc is already a copy of a subset
 	rc_fvci = rc_fvci > length(rc_idxs) ? length(rc) + 1 : sum(rc_bits[1:rc_fvci])
 	# If this assert fails, it means our index tricks using searchsortedfirst
@@ -89,38 +122,24 @@ end
 	@assert rc_fvci > length(rc) || rc[rc_fvci] == fvc
 	# After the assert, we can update the values of the cuts and extractions to
 	# refer to the new plates.
-	qt_old_pl = length(bp.pli_lwb)
-	oldpli2newpli = zeros(qt_old_pl)
-	setindex!.((oldpli2newpli,), 1:length(rp), (1:qt_old_pl)[rp_bits])
 	# TODO: put these loops inside a internal method of their own, I have
 	# the feeling I have already written them many times.
 	for (i, (pp, fc, sc)) in pairs(rc)
-		new_pp, new_fc = oldpli2newpli[pp], oldpli2newpli[fc]
-		new_sc = iszero(sc) ? sc : oldpli2newpli[sc]
-		@assert new_pp > 0 && new_pp <= length(rp)
-		if !(new_fc > 0 && new_fc <= length(rp))
-			@show i
-			@show pp
-			@show fc
-			@show sc
-			@show oldpli2newpli[fc]
-			@show length(rp)
-		end
-		@assert new_sc >= 0 && new_fc <= length(rp)
+		new_pp, new_fc = plis_full2part[pp], plis_full2part[fc]
+		new_sc = iszero(sc) ? sc : plis_full2part[sc]
+		#@assert new_pp > 0 && new_pp <= length(rp)
+		#@assert new_fc > 0 && new_fc <= length(rp)
+		#@assert new_sc >= 0 && new_fc <= length(rp)
 		rc[i] = (new_pp, new_fc, new_sc)
 	end
 	for (i, (plate, piece)) in pairs(re)
-		@assert !iszero(oldpli2newpli[plate])
-		re[i] = (oldpli2newpli[plate], piece)
-		@assert re[i][1] > 0 && re[i][1] <= length(rp)
+		#@assert !iszero(oldpli2newpli[plate])
+		re[i] = (plis_full2part[plate], piece)
+		#@assert re[i][1] > 0 && re[i][1] <= length(rp)
 	end
 
-	# FUTURE PLAN: if we start returning the bitmasks to keep the link
-	# between original and restricted byproducts, then we can use
-	# broadcasted getindex and setindex! to create a bitmask for cuts using
-	# rc_idxs and rc_bits.
-
-	return ByproductPPG2KP{D, S, P}(rc, rc_fvci, re, rp, bp.l, bp.w, bp.L, bp.W)
+	r_bp = ByproductPPG2KP{D, S, P}(rc, rc_fvci, re, rp, bp.l, bp.w, bp.L, bp.W)
+	return r_bp, bpl
 end
 
 # Arguments:
@@ -168,7 +187,7 @@ end
 	limit :: Float64 = float(60*60*24*365), options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
 	empty!(model)
-	bp = _create_restricted_byproduct(bp)
+	bp, _ = _create_restricted_byproduct(bp)
 	r_inv_idxs = VarInvIndexes(bp)
 	_build_base_model!(model, d, p, bp, r_inv_idxs, options)
 	n = num_variables(model)
