@@ -331,6 +331,14 @@ function build_complete_model(
 	options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	bp = _gen_cuts_wo(P, d, l, w, L, W, options)
+	build_complete_model(model, d, p, bp, start, options)
+	return bp
+end
+
+function build_complete_model(
+	model, d :: Vector{D}, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P},
+	start :: Float64 = time(), options :: Dict{String, Any} = Dict{String, Any}()
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	inv_idxs = VarInvIndexes(bp)
 	limit :: Float64 = options["building-time-limit"]
 	throw_if_timeout_now(start, limit)
@@ -354,11 +362,17 @@ function _no_arg_check_build_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any}
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+	# Define 'start', this is the point where the building-time-limit
+	# starts to be counted.
 	start :: Float64 = time()
 	limit :: Float64 = options["building-time-limit"]
-	bp = build_complete_model(model, d, p, l, w, L, W, start, options)
+	# Enumerate plates and cuts.
+	bp = _gen_cuts_wo(P, d, l, w, L, W, options)
 	throw_if_timeout_now(start, limit)
-	debug = options["verbose"] && !options["quiet"]
+
+	# Deal with pricing or its absence. Builds the model based on the enumerated
+	# plates and cuts (or a subset of them).
+	verbose = options["verbose"] && !options["quiet"]
 	switch_method = options["Gurobi-LP-method-inside-furini-pricing"]
 	pricing = options["pricing"]
 	if pricing == "expected"
@@ -379,62 +393,57 @@ function _no_arg_check_build_model(
 				" This flag will have no effect besides warnings."
 		end
 	end
-	mip_start = options["MIP-start"]
-	heuristic_seed = options["heuristic-seed"]
-	bm = (options["faithful2furini2016"] ? FURINI : BECKER) :: BaseModel
-	@assert mip_start in ("expected", "guaranteed", "none")
-	if debug
-		println("length_pe_before_pricing = $(length(model[:picuts]))")
-		println("length_cm_before_pricing = $(length(model[:cuts_made]))")
-		println("length_pc_before_pricing = $(length(model[:plate_cons]))")
+	if verbose
+		println("length_pe_before_pricing = $(length(bp.np))")
+		println("length_cm_before_pricing = $(length(bp.cuts))")
+		println("length_pc_before_pricing = $(length(bp.pli_lwb))")
 	end
+	bm = (options["faithful2furini2016"] ? FURINI : BECKER) :: BaseModel
 	if pricing != "none"
-		ws_bool = (mip_start != "none")
 		# It is important to note that the pricing and the bm (BaseModel) have the
 		# same two values ("becker"/BECKER and "furini"/FURINI) but they are
-		# orthogonal/independent. You can have a FURINI model with "becker"
-		# pricing and vice-versa. It is just because each author has defined
-		# both a model and an optional pricing method (to be executed over it)
-		# but both pricings are compatible with both models, and we allow them
-		# to be mixed. The pricing methods just need to know the underlying base
-		# model to be able to MIP-start it corretly (initially at least, this
-		# comment may be out of date).
+		# orthogonal/independent. You can have a FURINI model with "becker" pricing
+		# and vice-versa. It is just because each author has defined both a model
+		# and an optional pricing method (to be executed over it) but both pricings
+		# are compatible with both models, and we allow them to be mixed. The
+		# pricing methods just need to know the underlying base model to be able to
+		# MIP-start it corretly (initially at least, this comment may be out of
+		# date).
 		if pricing == "furini"
-			bp = _furini_pricing!(
-				model, bp, d, p, heuristic_seed, options["pricing-alpha"],
-				options["pricing-beta"], debug, ws_bool, bm, switch_method,
-				!options["no-sort-in-iterative-pricing"], start, limit, options
-			)
-			debug && (pricing_time = past_section_seconds(TIMER, "_furini_pricing!"))
+			bp = _furini_pricing!(model, bp, d, p, start, options)
+			verbose && (pricing_time = past_section_seconds(TIMER, "_furini_pricing!"))
 		else
 			@assert pricing == "becker"
-			bp = _becker_pricing!(
-				model, bp, d, p, heuristic_seed, debug, ws_bool, bm, start, limit
-			)
-			debug && (pricing_time = past_section_seconds(TIMER, "_becker_pricing!"))
+			bp = _becker_pricing!(model, bp, d, p, start, options)
+			verbose && (pricing_time = past_section_seconds(TIMER, "_becker_pricing!"))
 		end
-		debug && @show pricing_time
+		verbose && @show pricing_time
 	else # in the case there is no pricing phase
+		# Needs to build the mode here, as when there is pricing the pricing
+		# procedure is responsible for building the model.
+		build_complete_model(model, d, p, bp, start, options)
 		if mip_start == "guaranteed" # we have to do the MIP-start ourselves
-			mip_start_by_heuristic!(
-				model, bp, d, p, heuristic_seed, bm
-			)
+			heuristic_seed = options["heuristic-seed"]
+			mip_start_by_heuristic!(model, bp, d, p, heuristic_seed, bm)
 		end
 	end
-	if debug
+	if verbose
 		println("length_pe_after_pricing = $(length(model[:picuts]))")
 		println("length_cm_after_pricing = $(length(model[:cuts_made]))")
 		println("length_pc_after_pricing = $(length(model[:plate_cons]))")
 	end
 	throw_if_timeout_now(start, limit) # after the pricings or warm-starts
+
+	# Check if variables and constraints made useless by the deletion
+	# of other variables will be kept or not.
 	purge = !options["do-not-purge-unreachable"]
-	bp = _handle_unreachable!(bp, model, debug, purge)
-	if debug && purge
+	bp = _handle_unreachable!(bp, model, verbose, purge)
+	if verbose && purge
 		println("length_pe_after_purge = $(length(model[:picuts]))")
 		println("length_cm_after_purge = $(length(model[:cuts_made]))")
 		println("length_pc_after_purge = $(length(model[:plate_cons]))")
 	end
-	throw_if_timeout_now(start, limit) # after handle_unreachable
+	throw_if_timeout_now(start, limit) # after handle_unreachable!
 
 	return bp
 end

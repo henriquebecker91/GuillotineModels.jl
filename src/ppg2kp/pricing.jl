@@ -182,14 +182,10 @@ end
 
 @timeit TIMER function _restricted_final_pricing!(
 	model, d :: Vector{D}, p :: Vector{P},
-	bp :: ByproductPPG2KP{D, S, P}, seed, debug :: Bool, mip_start :: Bool,
+	bp :: ByproductPPG2KP{D, S, P}, seed, verbose :: Bool, mip_start :: Bool,
 	bm :: BaseModel, start :: Float64 = time(),
 	limit :: Float64 = float(60*60*24*365), options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
-	empty!(model)
-	bp, _ = _create_restricted_byproduct(bp)
-	r_inv_idxs = VarInvIndexes(bp)
-	_build_base_model!(model, d, p, bp, r_inv_idxs, options)
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
 	cm = model[:cuts_made] # Cuts Made
@@ -201,13 +197,6 @@ end
 	@timeit TIMER "relax_cm" cm_svcs = relax!(cm)
 	@timeit TIMER "relax_pe" pe_svcs = relax!(pe)
 	@assert length(cm) == length(bp.cuts)
-
-	# Debug necessary for experiments.
-	if debug
-		println("qt_cmvars_restricted = $(length(bp.cuts))")
-		println("qt_pevars_restricted = $(length(bp.np))")
-		println("qt_plates_restricted = $(length(bp.pli_lwb))")
-	end
 
 	# The 'best known value'/'primal bound' of the heuristic is needed to do
 	# the pricing. If we can MIP-start the model, we can just call
@@ -223,14 +212,14 @@ end
 		)
 	end
 	restricted_LB = LB = convert(Float64, bkv)
-	debug && @show restricted_LB
+	verbose && @show restricted_LB
 
 	# Check if the heuristic did not blow the time limit, but only after
 	# the information output that happens after it.
 	throw_if_timeout_now(start, limit)
 
 	# Solve the relaxed restricted model.
-	debug && println("MARK_FURINI_PRICING_RESTRICTED_LP_SOLVE")
+	verbose && println("MARK_FURINI_PRICING_RESTRICTED_LP_SOLVE")
 	@timeit TIMER "lp_solve" optimize_within_time_limit!(model, start, limit)
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) == MOI.OPTIMAL
@@ -238,7 +227,7 @@ end
 		# Note: the iterated_greedy solve the shelf version of the problem,
 		# that is restricted, so it cannot return a better known value than the
 		# restricted "upper bound"/"linear(ized) problem".
-		debug && @show restricted_LP
+		verbose && @show restricted_LP
 		@assert restricted_LB <= restricted_LP
 	else
 		error(
@@ -264,7 +253,7 @@ end
 		@. floor(_reduced_profit(bp.cuts, (dual(plate_cons),)) + LP) >= LB
 	# ... and which ones should be fixed to zero.
 	rc_fix_bitstr = .!rc_discrete_bitstr
-	if debug
+	if verbose
 		qt_cmvars_priced_restricted = sum(rc_discrete_bitstr)
 		qt_cmvars_deleted_by_heuristic_pricing = length(rc_fix_bitstr) -
 			qt_cmvars_priced_restricted
@@ -277,7 +266,7 @@ end
 	restore!.(model[:picuts], pe_svcs)
 	restore!.(model[:cuts_made], cm_svcs[rc_discrete_bitstr])
 	# restricted MIP solved
-	debug && println("MARK_FURINI_PRICING_RESTRICTED_MIP_SOLVE")
+	verbose && println("MARK_FURINI_PRICING_RESTRICTED_MIP_SOLVE")
 	@timeit TIMER "mip_solve" optimize_within_time_limit!(model, start, limit)
 	# If we MIP start the restricted model with a feasible solution, it should
 	# be impossible to get a different status here.
@@ -285,7 +274,7 @@ end
 	# The assert above is valid, but this does not mean we actually deal
 	# with the possibility of not having a primal solution below.
 	model_obj = round(P, objective_value(model), RoundNearest)
-	if debug
+	if verbose
 		restricted_stop_reason = termination_status(model)
 		restricted_stop_code = Int(restricted_stop_reason)
 		println("restricted_obj_value = $model_obj")
@@ -303,8 +292,8 @@ end
 		# the deleted ones are not in the mip start). However, this would need us
 		# to either: save JuMP variables instead of indexes; or update the indexes
 		# every time a variable is deleted. For now this is too much effort
-		# because Gurobi log shows that the MIP start is being recognized even with
-		# variables being deleted after.
+		# because Gurobi/CPLEX log shows that the MIP start is being recognized
+		# even with variables being deleted after.
 		# `shift_idxs!` below correct the indexes considering the deleted vars.
 		shift_idxs!(heuristic_raw_ws[3], rc_discrete_bitstr)
 		unset_mip_start!(model, heuristic_raw_ws[1], heuristic_raw_ws[3])
@@ -312,18 +301,13 @@ end
 	end
 	model_obj > bkv && (bkv = model_obj)
 
-	# The variables are left all relaxed but with only the variables used
-	# in the restricted priced model unfixed, the rest are fixed to zero.
-	@timeit TIMER "relax_ss_rc" relax!(cm)
-	@timeit TIMER "relax_pe" relax!(pe)
-
 	error(
 		"Commits done inside branch furinifix have no guarantee of" *
 		" being functional. This version aborts at the end of the" *
 		" restricted furini pricing (if it is called)."
 	)
 
-	return bkv, pe_svcs, cm_svcs
+	return bkv
 end
 
 # Arguments:
@@ -424,6 +408,10 @@ end
 	# items and unfix the respective variables. If it is empty, we do this but to
 	# the first list instead. If the first list is empty too, then we finished
 	# the iterative pricing process.
+
+	# The variables are left all relaxed for the iterative pricing.
+	@timeit TIMER "relax_cm" cm_svcs = relax!(cm)
+	@timeit TIMER "relax_pe" pe_svcs = relax!(pe)
 
 	# This code is simplified by the assumption all variables had lower and
 	# upper bounds in their original discrete (integer or binary) configuration.
@@ -581,11 +569,19 @@ end
 # limit (the best solution found in the middle of this process is used for the
 # true final pricing).
 @timeit TIMER function _furini_pricing!(
-	model, byproduct, d, p, seed, alpha, beta, debug, mip_start :: Bool,
-	bm :: BaseModel, switch_method :: Int, sort_by_rp :: Bool,
-	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365),
-	options :: Dict{String, Any} = Dict{String, Any}()
+	model, bp, d, p, start :: Float64, options :: Dict{String, Any}
 ) where {D, S, P}
+	# First let us unpack what we need from the options.
+	bm :: BaseModel = (options["faithful2furini2016"] ? FURINI : BECKER)
+	heuristic_seed :: Int = options["heuristic-seed"]
+	verbose :: Bool = options["verbose"] & !options["quiet"]
+	# both "expected" and "guaranteed" mean 'true' in this context
+	mip_start :: Bool = (options["MIP-start"] != "none")
+	switch_method :: Int = options["Gurobi-LP-method-inside-furini-pricing"]
+	limit :: Float64 = options["building-time-limit"]
+	sort_by_rp :: Bool = !options["no-sort-in-iterative-pricing"]
+	alpha, beta = options["pricing-alpha"], options["pricing-beta"]
+
 	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
 		old_method = get_optimizer_attribute(model, "Method")
 		# Change the LP-solving method to dual simplex, this allows for better
@@ -593,27 +589,39 @@ end
 		# `_restricted_final_pricing!` but this just cause a new set of problems.
 		set_optimizer_attribute(model, "Method", switch_method)
 	end
+
 	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
+	restricted_bp, _ = _create_restricted_byproduct(bp)
+	r_inv_idxs = VarInvIndexes(restricted_bp)
+	_build_base_model!(model, d, p, restricted_bp, r_inv_idxs, options)
+	# Necessary for experiments.
+	if verbose
+		println("qt_cmvars_restricted = $(length(restricted_bp.cuts))")
+		println("qt_pevars_restricted = $(length(restricted_bp.np))")
+		println("qt_plates_restricted = $(length(restricted_bp.pli_lwb))")
+	end
 	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
-		model, d, p, byproduct, seed, debug, mip_start, bm, start, limit, options
+		model, d, p, restricted_bp, heuristic_seed, verbose, mip_start,
+		bm, start, limit, options
 	)
-	debug && print_past_section_seconds(TIMER, "_restricted_final_pricing!")
+	verbose && print_past_section_seconds(TIMER, "_restricted_final_pricing!")
 	LB = convert(Float64, bkv)
+
 	# If those fail, we need may need to rethink the iterative pricing,
 	# because the use of max_profit seems to assume no negative profit items.
 	@assert all(e -> e >= zero(e), d)
 	@assert all(e -> e >= zero(e), p)
 
 	_iterative_pricing!(
-		model, byproduct.cuts, cm_svcs, sum(d .* p), alpha, beta, sort_by_rp,
-		debug, start, limit
+		model, bp.cuts, cm_svcs, sum(d .* p), alpha, beta, sort_by_rp,
+		verbose, start, limit
 	)
-	debug && print_past_section_seconds(TIMER, "_iterative_pricing!")
+	verbose && print_past_section_seconds(TIMER, "_iterative_pricing!")
 	LP = objective_value(model)
-	byproduct, to_keep_bits = _final_pricing!(
-		model, byproduct, LB, LP, debug
+	bp, to_keep_bits = _final_pricing!(
+		model, bp, LB, LP, verbose
 	)
-	debug && print_past_section_seconds(TIMER, "_final_pricing!")
+	verbose && print_past_section_seconds(TIMER, "_final_pricing!")
 	throw_if_timeout_now(start, limit)
 	# NOTE: the flag description says that Gurobi's Method is changed just for
 	# _iterative_pricing! but here we change it back only after _final_pricing!,
@@ -633,7 +641,7 @@ end
 		[model[:picuts]; model[:cuts_made]], [pe_svcs; cm_svcs[to_keep_bits]]
 	)
 
-	return byproduct
+	return bp
 end
 
 # TODO: for now it takes the seed and use it with the same heuristic as
@@ -643,17 +651,28 @@ end
 # NOTE: the _becker_pricing! can be called over both a FURINI or a BECKER
 # model, this is the parameter bm.
 @timeit TIMER function _becker_pricing!(
-	model, bp :: ByproductPPG2KP{D, S, P}, d, p, seed,
-	debug :: Bool, mip_start :: Bool, bm :: BaseModel,
-	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
+	model, bp :: ByproductPPG2KP{D, S, P}, d, p, start :: Float64,
+	options :: Dict{String, Any}
 ) where {D, S, P}
+	# First let us unpack what we need from the options.
+	bm = (options["faithful2furini2016"] ? FURINI : BECKER) :: BaseModel
+	heuristic_seed = options["heuristic-seed"]
+	verbose = options["verbose"] & !options["quiet"]
+	limit :: Float64 = options["building-time-limit"]
+	# both "expected" and "guaranteed" mean 'true' in this context
+	mip_start = (options["MIP-start"] != "none") :: Bool
+
+	# Build the mode and relax it.
+	build_complete_model(model, d, p, bp, start, options)
 	pe_vars = model[:picuts]
 	cm_vars = model[:cuts_made]
 	all_vars = [pe_vars; cm_vars]
 	@timeit TIMER "relax!" all_scvs = relax!(all_vars)
+
+	# Get a lower bound (and possibly use it to MIP start the model).
 	if mip_start
 		(bkv, _, _), _ = mip_start_by_heuristic!(
-			model, bp, d, p, seed, bm
+			model, bp, d, p, heuristic_seed, bm
 		)
 	else
 		bkv, _, _ = fast_iterated_greedy(
@@ -661,16 +680,12 @@ end
 		)
 	end
 	LB = convert(Float64, bkv)
-	debug && println("MARK_BECKER_PRICING_LP_SOLVE")
+
+	# Solve the relaxation (i.e., get an upper bound).
+	verbose && println("MARK_BECKER_PRICING_LP_SOLVE")
 	@timeit TIMER "lp_solve" optimize_within_time_limit!(model, start, limit)
-	# Check if the model is solved.
-	@assert has_duals(model)
-	# Check if the variables are relaxed.
-	#@assert all(v -> !is_integer(v) & !is_binary(v), all_vars)
-	# Assert no variable considered is fixed but have lower bounds.
-	#@assert all(v -> has_lower_bound(v) & !is_fixed(v), cm_vars)
+	@assert has_duals(model) # Check if the model is solved.
 	LP = objective_value(model) # the model should be relaxed and solved now
-	LB = 0.0
 	@timeit TIMER "sel_del_res" begin
 		pe_rcvs = @. dual(LowerBoundRef(pe_vars))
 		cm_rcvs = @. dual(LowerBoundRef(cm_vars))
