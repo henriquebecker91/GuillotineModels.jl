@@ -86,7 +86,7 @@ function _delete_vars!(bp, model, to_keep_bits, var_set_name_in_model)
 	var_set_name_in_model == :picuts && return bp
 	new_fvci = searchsortedfirst(to_keep_idxs, bp.first_vertical_cut_idx)
 	return ByproductPPG2KP( # new_fvci was computed and need to be updated
-		bp.cuts, new_fvci, bp.np, bp.pli_lwb, bp.l, bp.w, bp.L, bp.W
+		bp.cuts, new_fvci, bp.np, bp.pli_lwb, bp.d, bp.l, bp.w, bp.L, bp.W
 	)
 end
 
@@ -209,7 +209,7 @@ end
 
 	# If all pieces have demand one, a binary variable will suffice to make the
 	# connection between a piece type and the plate it is extracted from.
-	naturally_only_binary = all(di -> di <= 1, d)
+	naturally_only_binary = all(di -> di == 1, d)
 	if naturally_only_binary
 		@variable(model, picuts[1:length(np)], Bin)
 	else

@@ -106,8 +106,16 @@ end
 	qt_re, re_bits, qt_rc, rc_bits, qt_rp, rp_bits = _reachable(
 		bp.np, rc, lastindex(bp.pli_lwb)
 	)
+	# The rc_bits cannot be directly used to create the BPLinkage,
+	# this because they refer to `rc` not to `bp.cuts` (i.e., a subset
+	# not the whole). Some indexing magic is necessary to convert the
+	# bitarray of the subset to a bitarray of the whole.
+	rc_full_bits = falses(length(bp.cuts))
+	rc_full_bits[rc_idxs] .= rc_bits
+	# `re_bits` refer to `bp.np` and `rp_bits` refer to
+	# `1:length(lastindex(bp.pli_lwb))` so they are fine.
 	exts_part2full, exts_full2part = bits2lidxs(P, re_bits)
-	cuts_part2full, cuts_full2part = bits2lidxs(P, rc_bits)
+	cuts_part2full, cuts_full2part = bits2lidxs(P, rc_full_bits)
 	plis_part2full, plis_full2part = bits2lidxs(P, rp_bits)
 	bpl = BPLinkage(
 		exts_part2full, exts_full2part, cuts_part2full, cuts_full2part,
@@ -138,7 +146,9 @@ end
 		#@assert re[i][1] > 0 && re[i][1] <= length(rp)
 	end
 
-	r_bp = ByproductPPG2KP{D, S, P}(rc, rc_fvci, re, rp, bp.l, bp.w, bp.L, bp.W)
+	r_bp = ByproductPPG2KP{D, S, P}(
+		rc, rc_fvci, re, rp, bp.d, bp.l, bp.w, bp.L, bp.W
+	)
 	return r_bp, bpl
 end
 
@@ -238,20 +248,7 @@ end
 		)
 	end
 
-	# If the assert below fails, then the solver used reaches an optimal point of
-	# a LP but do not has duals for it, what should not be possible, some problem
-	# has happened (for an example, the solver does not recognize the model as a
-	# LP but think it is a MIP for example, CPLEX sometimes does this).
-	@assert has_duals(model)
-
-	# Now let us do the restricted pricing, using the heuristic as LB and
-	# the continuous relaxation as UB.
-	plate_cons = model[:plate_cons]
-	# TODO: check if a tolerance is needed in the comparison. Query it from the
-	# solver/model if possible (or use eps?).
-	rc_discrete_bitstr = # the final pricing (get which variables should remain)
-		@. floor(_reduced_profit(bp.cuts, (dual(plate_cons),)) + LP) >= LB
-	# ... and which ones should be fixed to zero.
+	rc_discrete_bitstr, bp = _final_pricing!(model, bp, LB, LP)
 	rc_fix_bitstr = .!rc_discrete_bitstr
 	if verbose
 		qt_cmvars_priced_restricted = sum(rc_discrete_bitstr)
@@ -260,9 +257,6 @@ end
 		@show qt_cmvars_priced_restricted
 		@show qt_cmvars_deleted_by_heuristic_pricing
 	end
-	# TODO: here we need to be able to keep the linkage between the old BP
-	# and the new one
-	bp = _delete_vars!(bp, model, rc_discrete_bitstr, :cuts_made)
 	restore!.(model[:picuts], pe_svcs)
 	restore!.(model[:cuts_made], cm_svcs[rc_discrete_bitstr])
 	# restricted MIP solved
@@ -301,13 +295,7 @@ end
 	end
 	model_obj > bkv && (bkv = model_obj)
 
-	error(
-		"Commits done inside branch furinifix have no guarantee of" *
-		" being functional. This version aborts at the end of the" *
-		" restricted furini pricing (if it is called)."
-	)
-
-	return bkv
+	return bkv, rc_discrete_bitstr, bp
 end
 
 # Arguments:
@@ -324,7 +312,7 @@ end
 # Return: the number of positive reduced profit variables found,
 # and a boolean indicating if some variable above the threshold was found.
 @timeit TIMER function _recompute_idxs_to_add!(
-	pool_idxs_to_add, pool, plate_cons, threshold, n_max :: P,
+	pool_idxs_to_add, pool, plate_duals, threshold, n_max :: P,
 	sort_by_rp :: Bool, rps_buffer = Vector{Float64}(undef, length(pool))
 ) :: Tuple{P, Bool} where {P}
 	pool_size = length(pool)
@@ -336,11 +324,12 @@ end
 	num_positive_rp_vars = zero(P)
 	qt_selected_vars = zero(P)
 	for (pool_idx, cut) in pairs(pool)
-		rps_buffer[pool_idx] = _reduced_profit(cut, plate_cons)
+		rp = _reduced_profit(cut, plate_duals)
+		sort_by_rp && (rps_buffer[pool_idx] = rp)
 		# non-positive reduced profit is irrelevant to us
-		rps_buffer[pool_idx] <= 0.0 && continue
+		rp <= 0.0 && continue
 		num_positive_rp_vars += one(P)
-		if rps_buffer[pool_idx] > threshold
+		if rp > threshold
 			if !found_above_threshold
 				qt_selected_vars = zero(P)
 				found_above_threshold = true
@@ -382,6 +371,228 @@ end
 	return num_positive_rp_vars, found_above_threshold
 end
 
+# The values in `to_delete` refer to the indexes of `part2full`
+# (not the values of `part2full` that are indexes of `full2part`).
+function _delete_from_part!(part2full, full2part, to_delete)
+	# Supports BitArray and Vector{Bool} by creating an intermediary array, maybe
+	# optimize to have multiple method definitions in the future.
+	idxs_to_delete = keys(part2full)[to_delete]
+	# Quantity of deleted indexes before the current index.
+	qt_to_shift = zero(eltype(full2part))
+	# The loop acts in the ranges between the first deleted index and the
+	# second deleted index, the second and the thirds, and so on. The
+	# undeleted values in such ranges need full2part to be updated so
+	# it points to the right positions after the deletion.
+	for del_list_idx = 1:(length(idxs_to_delete) - 1)
+		deleted_idx = idxs_to_delete[del_list_idx]
+		full2part[part2full[deleted_idx]] = zero(eltype(full2part))
+		qt_to_shift += one(qt_to_shift)
+		range_start = deleted_idx + 1
+		range_end = idxs_to_delete[del_list_idx + 1] - 1
+		for part_idx in range_start:range_end
+			full2part[part2full[part_idx]] -= qt_to_shift
+		end
+	end
+	# The loop above does not take care of the range from the last deleted index
+	# to the end of part2full. The code below takes care of it.
+	deleted_idx = last(idxs_to_delete)
+	full2part[part2full[deleted_idx]] = zero(eltype(full2part))
+	qt_to_shift += one(qt_to_shift)
+	@assert qt_to_shift == length(idxs_to_delete)
+	range_start = deleted_idx + 1
+	range_end = lastindex(part2full)
+	for part_idx in range_start:range_end
+		full2part[part2full[part_idx]] -= qt_to_shift
+	end
+	# Finally, the values in part2full are really deleted.
+	deleteat!(part2full, to_delete)
+	return part2full
+end
+
+# The values in `to_append` refer to values in `part2full` (i.e., indexes in
+# `full2part`). `to_append` should contain no values already found in
+# `part2full` before the append.
+function _append_to_part!(part2full, full2part, to_append)
+	l = length(part2full)
+	for (i, v) in enumerate(to_append)
+		full2part[v] = l + i
+	end
+	append!(part2full, to_append)
+	return part2full
+end
+
+# Given a PPG2KP model that has `cut_var`, and in which all constraints that
+# `cut` references are present in `plate_cons`, set the variable coefficient in
+# the referenced constraints to the right value for a PPG2KP model.
+function _set_cut_coeffs!(cut, cut_var, plate_cons)
+	pp, fc, sc = cut
+	set_normalized_coefficient(plate_cons[pp], cut_var, 1.0)
+	if iszero(sc)
+		set_normalized_coefficient(plate_cons[fc], cut_var, -1.0)
+	elseif fc == sc
+		# This is the case in which the plate is divides by the exact
+		# middlepoint and births two copies of the same child plate.
+		set_normalized_coefficient(plate_cons[fc], cut_var, -2.0)
+	else
+		set_normalized_coefficient(plate_cons[fc], cut_var, -1.0)
+		set_normalized_coefficient(plate_cons[sc], cut_var, -1.0)
+	end
+	return
+end
+
+function _set_extraction_coeffs!(extraction, var, plate_cons, demand_cons)
+	plate, piece = extraction
+	set_normalized_coefficient(plate_cons[plate], var, 1.0)
+	set_normalized_coefficient(demand_cons[piece], var, 1.0)
+end
+
+# Given a PPG2KP model (with a :plate_cons structure associated)
+# and a number of new plate_cons to add, the method creates
+# `qt_plates_cons_to_add` empty constraints and append them to
+# model[:plate_cons] while setting their name correctly.
+function _add_plate_cons!(
+	model, qt_new_cons
+) :: Nothing
+	iszero(qt_new_cons) && return
+	plate_cons = model[:plate_cons]
+	qt_old_cons = length(plate_cons)
+	new_cons = @constraint(model, [i=1:qt_new_cons], 0.0 <= 0.0)
+	new_cons_idxs = (qt_old_cons + 1):(qt_old_cons + qt_new_cons)
+	@. set_name(new_cons, "plate_cons[" * string(new_cons_idxs) * "]")
+	append!(plate_cons, new_cons)
+	return
+end
+
+# Pattern repeated in many parts of the code.
+function _map_cuts(f, cuts)
+	return map(cuts) do (pp, fc, sc)
+		(f(pp), f(fc), iszero(sc) ? sc : f(sc))
+	end
+end
+
+function _add_cuts_from_pool!(
+	model, full_cut_idxs_to_add :: AbstractVector{P},
+	pli2pair :: Vector{Vector{P}}, lidxs :: BPLinkage{P},
+	full_bp :: ByproductPPG2KP{D, S, P}, part_bp :: ByproductPPG2KP{D, S, P}
+) where {D, S, P}
+	# Shorten the names.
+	picuts = model[:picuts]
+	plate_cons = model[:plate_cons]
+	demand_con = model[:plate_cons]
+
+	# Get some basic info from the parameters.
+	qt_new_cuts = length(full_cut_idxs_to_add)
+	cuts_to_add = full_bp.cuts[full_cut_idxs_to_add]
+
+	# ==================== PLATE CONSTRAINTS ====================
+
+	# Before anything else, we check if these cuts create plates that did not
+	# exist before in the part(ial) model.
+
+	# TODO: consider changing the code below to filter out the
+	# cuts in which the parent plate is not reachable from the already
+	# existing cuts plus the other ones added.
+	# Get the full indexes of the that plates will exist in the model
+	# only when these cuts were added.
+	full_plis_to_add = P[]
+	# (f)ull {(p)arent (p)late, {(f)irst, (s)econd} (c)hild}
+	for (fpp, ffc, fsc) in cuts_to_add # has the full indexes
+		# If a cut is being added, then the plate/constraint that makes it
+		# possible must already be available.
+		#@assert !iszero(lidxs.plis_full2part[fpp])
+		push!(full_plis_to_add, fpp)
+		push!(full_plis_to_add, ffc)
+		@assert !iszero(ffc)
+		iszero(fsc) || push!(full_plis_to_add, fsc)
+	end
+	# The same plates not yet in the model can appear in multiple cuts,
+	# so the vector needs to be cleaned up so each constraint is added a
+	# single time.
+	unique!(sort!(full_plis_to_add))
+
+	# Create the missing plate constraints, update their linked indexes,
+	# add the plates to part_bp.pli_lwb.
+	_add_plate_cons!(model, length(full_plis_to_add))
+	@unpack plis_part2full, plis_full2part = lidxs
+	_append_to_part!(plis_part2full, plis_full2part, full_plis_to_add)
+	append!(part_bp.pli_lwb, full_bp.pli_lwb[full_plis_to_add])
+
+	# ==================== CUTS ====================
+
+	# Create the new cut variables and add them to the model.
+	qt_cuts_before = length(lidxs.cuts_part2full)
+	upper_bounds = getindex.(full_bp.pli_lwb[getindex.(cuts_to_add, PARENT)], 3)
+	new_cut_vars = @variable(
+		model, [i=1:qt_new_cuts], lower_bound = 0.0, upper_bound = upper_bounds[i]
+	)
+	new_cut_vars_range = (qt_cuts_before + 1):(qt_cuts_before + qt_new_cuts)
+	@. set_name(new_cut_vars, "cuts_made[" * string(new_cut_vars_range) * "]")
+	cuts_made = model[:cuts_made]
+	append!(cuts_made, new_cut_vars)
+
+	# Update the cut index linking between full and part models.
+	@unpack cuts_part2full, cuts_full2part = lidxs
+	_append_to_part!(cuts_part2full, cuts_full2part, full_cut_idxs_to_add)
+
+	# Create the cuts in the partial model, they are not guaranteed to be the
+	# same objects, as they are just triples of plate indexes, and the same
+	# plate can have different indexes in the full and part(ial) models.
+	cuts_to_add_in_part = _map_cuts(cuts_to_add) do pli
+		lidxs.plis_full2part[pli]
+	end
+	append!(part_bp.cuts, cuts_to_add_in_part)
+
+	# Use the cuts with corrected indexes to set the coefficients of the
+	# newly created cut variables in the newly created plate constraints.
+	_set_cut_coeffs!.(cuts_to_add_in_part, new_cut_vars, (plate_cons,))
+
+	# ==================== EXTRACTIONS ====================
+
+	# Discover which extractions do not exist yet in the (part)ial model.
+	new_full_exts_idxs = collect(Iterators.flatten(pli2pair[full_plis_to_add]))
+	new_exts = full_bp.np[new_full_exts_idxs]
+	qt_new_exts = length(new_exts)
+
+	# If there is new extraction variables to be added...
+	if !iszero(qt_new_exts)
+		@unpack exts_part2full, exts_full2part = lidxs
+
+		# Add the extraction vars to the model.
+		upper_bounds = map(new_full_exts_idxs) do i
+			# The field `1` in a `np` element is the plate index, the `3` in
+			# a `pli_lwb` element is the (b)ound. The field `2` in a np element
+			# is the piece. TODO: someday make it readable.
+			min(full_bp.pli_lwb[full_bp.np[i][1]][3], full_bp.d[full_bp.np[i][2]])
+		end
+		qt_exts_before = length(exts_part2full)
+		new_exts_vars = @variable(
+			model, [i=1:qt_new_exts], lower_bound = 0.0,
+			upper_bound = upper_bounds[i]
+		)
+		new_exts_vars_range = (qt_exts_before + 1):(qt_exts_before + qt_new_exts)
+		@. set_name(new_exts_vars, "picuts[" * string(new_exts_vars_range) * "]")
+		append!(picuts, new_exts_vars)
+
+		# Update the Linkage of the extraction vars. Needed for next step.
+		_append_to_part!(exts_part2full, exts_full2part, new_full_exts_idxs)
+
+		# Set the coefficient of the extraction vars in the constraints.
+		# Convert the full plate indexes inside the extractions to the indexes in
+		# the partial model, use these "partialized" extractions to set the
+		# coefficients in the partial model.
+		exts_to_add_in_part = map(new_exts) do (plate, piece)
+			(lidxs.plis_full2part[plate], piece)
+		end
+		_set_extraction_coeffs!.(
+			exts_to_add_in_part, new_exts_vars, (plate_cons,), (demand_con,)
+		)
+		# Add the extractions to the part_bp.
+		append!(part_bp.np, exts_to_add_in_part)
+	end
+
+	return
+end
+
 # NOTE: expect the model to already be relaxed, and with only the restricted
 # cut variables not fixed to zero (while the rest is fixed to zero).
 # NOTE: the description of this method (Explained in 10.1287/ijoc.2016.0710,
@@ -393,87 +604,53 @@ end
 # all variables and ordering them by reduced profit (if they are more than
 # n-max)?
 @timeit TIMER function _iterative_pricing!(
-	model, cuts :: Vector{NTuple{3, P}}, cm_svcs :: Vector{SavedVarConf},
-	max_profit :: P, alpha :: Float64, beta :: Float64, sort_by_rp :: Bool,
-	debug :: Bool = false, start :: Float64 = time(),
-	limit :: Float64 = float(60*60*24*365)
-) :: Nothing where {P}
-	# Summary of the method:
-	# The variables themselves are not iterated, bp.cuts is iterated. The indexes
-	# of the plates in each cut element are the indexes of the associated
-	# constraints. Query the duals of the three associated constraints, compute
-	# the reduced profit. Then, we need the list of idxs of variables with
-	# positive reduced profit but below p̄ threshold, and the one above p̄
-	# threshold. If this second list is non-empty, then we take the first n_max
-	# items and unfix the respective variables. If it is empty, we do this but to
-	# the first list instead. If the first list is empty too, then we finished
-	# the iterative pricing process.
+	model, full_bp :: ByproductPPG2KP{D, S, P},
+	part_bp :: ByproductPPG2KP{D, S, P}, lidxs :: BPLinkage{P},
+	full_pli2pair :: Vector{Vector{P}}, max_profit :: P,
+	alpha :: Float64, beta :: Float64, sort_by_rp :: Bool, debug :: Bool = false,
+	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
+) :: Nothing where {D, S, P}
+	# Technically, the old part_bp is not used after this call, but purely for
+	# hygiene reasons let us deepcopy it and avoid invalidating it.
+	part_bp = deepcopy(part_bp)
 
 	# The variables are left all relaxed for the iterative pricing.
-	@timeit TIMER "relax_cm" cm_svcs = relax!(cm)
-	@timeit TIMER "relax_pe" pe_svcs = relax!(pe)
+	@timeit TIMER "relax_cm" cm_svcs = relax!(model[:cuts_made])
+	@timeit TIMER "relax_pe" pe_svcs = relax!(model[:picuts])
 
-	# This code is simplified by the assumption all variables had lower and
-	# upper bounds in their original discrete (integer or binary) configuration.
-	# If the asserts below triggers, then this method need to be reevaluated.
-	@assert all(svc -> svc.had_ub, cm_svcs)
-	@assert all(svc -> svc.had_lb, cm_svcs)
-	unused_lbs = getfield.(cm_svcs, :lb)
-	unused_ubs = getfield.(cm_svcs, :ub)
-	# We use copy, and not deepcopy, because we want to avoid only the original
-	# *container* to change, the contents either need to change or cannot be
-	# changed (i.e., are immutable).
-	unused_cuts = copy(cuts)
-	unfixed_at_start = (!is_fixed).(model[:cuts_made])
-	if debug
-		println("qt_cmvars_before_iterated = $(sum(unfixed_at_start))")
-	end
-	unused_vars = copy(model[:cuts_made])
-	# We just need the unused vars/cuts in the pricing process, once a variable
-	# is "added" (in truth, unfixed) it is always kept, so it does not need to be
-	# reevaluated.
-	deleteat!(unused_vars, unfixed_at_start)
-	deleteat!(unused_cuts, unfixed_at_start)
-	deleteat!(unused_lbs, unfixed_at_start)
-	deleteat!(unused_ubs, unfixed_at_start)
-	allsame(x) = all(y -> y == x[1], x)
-	@assert allsame(length.((unused_vars, unused_cuts, unused_lbs, unused_ubs)))
+	flush_all_output()
+	# the last solve before this was MIP and has no duals
+	debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_0")
+	@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
+	flush_all_output()
+
 	# The p̄ value in the paper, if there are variables with reduced profit
 	# above this threshold then they are added (and none below the threshold),
 	# but the n_max limit of variables added in a single iteration is respected.
   threshold = max_profit * beta
 	@assert threshold > zero(threshold) # threshold is always larger than zero
-	# The vectors are all allocated here (but used inside `price!`) for
-	# reuse (avoiding reallocating them every loop).
-	to_unfix = Vector{eltype(keys(cuts))}()
+
+	# Gets just the cuts of the full model that are present in the partial model.
+	unused_full_cuts_idxs = deleteat!(
+		collect(keys(full_bp.cuts)), lidxs.plis_part2full
+	)
+	unused_full_cuts = full_bp.cuts[unused_full_cuts_idxs]
+
+	# The vectors are all allocated here (but used inside
+	# `_recompute_idxs_to_add!`) to avoid reallocating them every loop.
+	# Note that the `pool_idxs_to_add` values are indexes for the
+	# `unused_full_cuts_idxs` vector, they are not the cut indexes themselves.
+	pool_idxs_to_add = Vector{P}()
 	plate_cons = model[:plate_cons]
-	size_var_pool_before_iterative = length(unused_vars)
-	debug && @show size_var_pool_before_iterative
-	flush_all_output()
-	# the last solve before this was MIP and has no duals
-	debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_0")
-	#@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
-	@timeit TIMER "solve_lp" optimize!(model)
-	#v_attr_pstart = Gurobi.VariableAttribute("PStart")
-	#c_attr_dstart = Gurobi.ConstraintAttribute("DStart")
-	#all_vars = all_variables(model)
-	#relevant_constraints = vcat(plate_cons, model[:demand_con])
-	#pstart = MOI.get.((backend(model),), (v_attr_pstart,), index.(all_vars))
-	#dstart = MOI.get.((backend(model),), (c_attr_dstart,), index.(relevant_constraints))
-	#pstart = value.(all_vars)
-	#dstart = value.(relevant_constraints)
-	#vector_summary(pstart)
-	#vector_summary(dstart)
-	#plate_cons_dual = dual.(plate_cons)
-	#println("plate_con_duals stats")
-	#vector_summary(plate_cons_dual)
-	flush_all_output()
+	plate_duals = zeros(Float64, length(full_bp.pli_lwb))
+	plate_duals[lidxs.plis_part2full] .= dual.(plate_cons)
+	rps_buffer = Vector{Float64}(undef, length(unused_full_cuts))
+
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
-	rps_buffer = Vector{Float64}(undef, length(unused_cuts))
 	initial_num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
-		to_unfix, unused_cuts, plate_cons, threshold, typemax(P), sort_by_rp,
-		rps_buffer
+		pool_idxs_to_add, unused_full_cuts, plate_duals, threshold, typemax(P),
+		sort_by_rp, rps_buffer
 	)
 	pricing_threshold_hits = was_above_threshold ? 1 : 0
 	debug && @show initial_num_positive_rp_vars
@@ -484,51 +661,51 @@ end
 	# to be able to compute `n_max` in the first place, we need to resize
 	# this first list to `n_max` (in the loop below `_recompute_idxs_to_add!`
 	# will do it for us).
-	n_max < length(to_unfix) && resize!(to_unfix, n_max)
-	# Not sure if restarting the model use the old values as start values.
-	#all_vars = all_variables(model)
+	n_max < length(pool_idxs_to_add) && resize!(pool_idxs_to_add, n_max)
 	num_positive_rp_vars = initial_num_positive_rp_vars
 	# The iterative pricing continue until there are variables to unfix.
 	qt_vars_added_back_to_LP_by_iterated = zero(P)
 	qt_iters = zero(P)
-	while !isempty(to_unfix)
+	while !isempty(pool_idxs_to_add)
 		if debug
 			qt_iters += one(P)
 			println("qt_positive_rp_vars_iter_$(qt_iters) = $(num_positive_rp_vars)")
 			println("above_threshold_iter_$(qt_iters) = $(was_above_threshold)")
-			println("qt_vars_added_to_LP_iter_$(qt_iters) = $(length(to_unfix))")
-			qt_vars_added_back_to_LP_by_iterated += length(to_unfix)
+			println(
+				"qt_vars_added_to_LP_iter_$(qt_iters) = $(length(pool_idxs_to_add))"
+			)
+			qt_vars_added_back_to_LP_by_iterated += length(pool_idxs_to_add)
 		end
-		@timeit TIMER "update_bounds" begin
-			unfixed_vars = unused_vars[to_unfix]
-			unfix.(unfixed_vars)
-			set_lower_bound.(unfixed_vars, unused_lbs[to_unfix])
-			set_upper_bound.(unfixed_vars, unused_ubs[to_unfix])
-		end
+
+		# Updates the model, part_bp, and lidxs. The part_bp is left in a
+		# not-quite-valid-state, vertical and horizontal cuts intercalate and the
+		# value of first_vertical_cut_idx is bullshit. But such state is enough for
+		# passing it again to _add_cuts_from_pool. It is fixed just before return.
+		_add_cuts_from_pool!(
+			model, unused_full_cuts_idxs[pool_idxs_to_add], full_pli2pair, lidxs,
+			full_bp, part_bp
+		)
+
+		# Now that the cuts were added to the model from the pool they can be
+		# removed from the pool.
 		@timeit TIMER "deleteat!" begin
-			deleteat!(unused_vars, to_unfix)
-			deleteat!(unused_cuts, to_unfix)
-			deleteat!(unused_lbs, to_unfix)
-			deleteat!(unused_ubs, to_unfix)
+			deleteat!(unused_full_cuts_idxs, pool_idxs_to_add)
+			deleteat!(unused_full_cuts, pool_idxs_to_add)
 		end
-		@assert allsame(length.((unused_vars, unused_cuts, unused_lbs, unused_ubs)))
-		#set_start_value.(all_vars, value.(all_vars))
+		@assert length(unused_full_cuts_idxs) == length(unused_full_cuts)
+
+		# Solve the LP model again so the constraint duals are updated.
 		flush_all_output()
 		debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_$(qt_iters)")
 		#println("USING Gurobi.reset_model!(backend(model).inner)")
 		#Gurobi.reset_model!(backend(model).inner)
-		#@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
-		#MOI.set.((backend(model),), (v_attr_pstart,), index.(all_vars), pstart)
-		#MOI.set.((backend(model),), (c_attr_dstart,), index.(relevant_constraints), dstart)
-		@timeit TIMER "solve_lp" optimize!(model)
-		#pstart .= value.(all_vars)
-		#dstart .= value.(relevant_constraints)
-		#pstart .= MOI.get.((backend(model),), (v_attr_pstart,), all_vars)
-		#dstart .= MOI.get.((backend(model),), (c_attr_dstart,), relevant_constraints)
+		@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
 		flush_all_output()
+
+		plate_duals[lidxs.plis_part2full] .= dual.(plate_cons)
 		num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
-			to_unfix, unused_cuts, plate_cons, threshold, n_max, sort_by_rp,
-			rps_buffer
+			pool_idxs_to_add, unused_full_cuts, plate_duals, threshold, n_max,
+			sort_by_rp, rps_buffer
 		)
 		was_above_threshold && (pricing_threshold_hits += 1)
 	end
@@ -538,28 +715,31 @@ end
 		@show qt_vars_added_back_to_LP_by_iterated
 	end
 
+	error(
+		"Commits done inside branch furinifix have no guarantee of" *
+		" being functional. This version aborts at the end of the" *
+		" of iterative pricing (if it is called)."
+	)
 	return
 end
 
 @timeit TIMER function _final_pricing!(
-	model, bp :: ByproductPPG2KP{D, S, P}, LB :: Float64, LP :: Float64,
-	debug :: Bool = false
+	model, bp :: ByproductPPG2KP{D, S, P}, LB :: Float64, LP :: Float64
 ) where {D, S, P}
-	plate_cons = model[:plate_cons]
-	vars = model[:cuts_made]
-	debug && @show LP
-	debug && @show LB
-	# If this assert fails is because some change was done to a solved model
-	# and its state was reset to unoptimized.
+	# If the assert below fails, then the solver used reaches an optimal point of
+	# a LP but do not has duals for it, what should not be possible, some problem
+	# has happened (for an example, the solver does not recognize the model as a
+	# LP but think it is a MIP for example, CPLEX sometimes does this).
 	@assert has_duals(model)
-	plate_duals = dual.(plate_cons)
-	rps = _reduced_profit.(bp.cuts, (plate_duals,))
-	#=if debug
-		println("stats on reduced profit values of final pricing")
-		vector_summary(rps) # defined in GuillotineModels.Utilities
-	end=#
-	to_keep_bits = @. floor(rps + LP) >= LB # the final pricing
-	return _delete_vars!(bp, model, to_keep_bits, :cuts_made), to_keep_bits
+	plate_cons = model[:plate_cons]
+	# TODO: check if a tolerance is needed in the comparison. Query it from the
+	# solver/model if possible (or use eps?).
+	kept = # the final pricing (get which variables should remain)
+		@. floor(_reduced_profit(bp.cuts, (dual(plate_cons),)) + LP) >= LB
+	# yes, _delete_vars! receive which variables to keep, it is strange but it
+	# will not be changed now
+	new_bp = _delete_vars!(bp, model, kept, :cuts_made)
+	return kept, new_bp
 end
 
 # SEE SECTION 4.2 of Furini 2016: unfortunately they decided to complicate the
@@ -591,7 +771,7 @@ end
 	end
 
 	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
-	restricted_bp, _ = _create_restricted_byproduct(bp)
+	restricted_bp, lidxs = _create_restricted_byproduct(bp)
 	r_inv_idxs = VarInvIndexes(restricted_bp)
 	_build_base_model!(model, d, p, restricted_bp, r_inv_idxs, options)
 	# Necessary for experiments.
@@ -600,11 +780,19 @@ end
 		println("qt_pevars_restricted = $(length(restricted_bp.np))")
 		println("qt_plates_restricted = $(length(restricted_bp.pli_lwb))")
 	end
-	bkv, pe_svcs, cm_svcs = _restricted_final_pricing!(
+	bkv, kept, restricted_bp = _restricted_final_pricing!(
 		model, d, p, restricted_bp, heuristic_seed, verbose, mip_start,
 		bm, start, limit, options
 	)
+	if verbose
+		# After _restricted_final_pricing! these values can have changed.
+		println("qt_cmvars_before_iterated = $(length(restricted_bp.cuts))")
+		println("qt_pevars_before_iterated = $(length(restricted_bp.np))")
+		println("qt_plates_before_iterated = $(length(restricted_bp.pli_lwb))")
+	end
 	verbose && print_past_section_seconds(TIMER, "_restricted_final_pricing!")
+	# Keep the BPLinkage synced with the restricted_bp
+	_delete_from_part!(lidxs.cuts_part2full, lidxs.cuts_full2part, .!kept)
 	LB = convert(Float64, bkv)
 
 	# If those fail, we need may need to rethink the iterative pricing,
@@ -612,15 +800,14 @@ end
 	@assert all(e -> e >= zero(e), d)
 	@assert all(e -> e >= zero(e), p)
 
-	_iterative_pricing!(
-		model, bp.cuts, cm_svcs, sum(d .* p), alpha, beta, sort_by_rp,
-		verbose, start, limit
+	full_inv_idxs = VarInvIndexes(bp)
+	priced_bp = _iterative_pricing!(
+		model, bp, restricted_bp, lidxs, full_inv_idxs.pli2pair,
+		sum(p .* d), alpha, beta, sort_by_rp, verbose, start, limit
 	)
 	verbose && print_past_section_seconds(TIMER, "_iterative_pricing!")
 	LP = objective_value(model)
-	bp, to_keep_bits = _final_pricing!(
-		model, bp, LB, LP, verbose
-	)
+	kept, bp = _final_pricing!(model, bp, LB, LP, verbose)
 	verbose && print_past_section_seconds(TIMER, "_final_pricing!")
 	throw_if_timeout_now(start, limit)
 	# NOTE: the flag description says that Gurobi's Method is changed just for
@@ -698,3 +885,4 @@ end
 	end
 	return bp
 end
+

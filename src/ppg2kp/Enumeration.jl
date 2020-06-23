@@ -425,13 +425,12 @@ struct ByproductPPG2KP{D, S, P}
 	np :: Vector{Tuple{P, D}} # TODO: rename np to pe (piece extraction)?
 	"Indexed by a plate index, values are the plate length, width, and bound."
 	pli_lwb :: Vector{Tuple{S, S, P}}
+	"The demand of the pieces."
+	d :: Vector{D}
 	"The length of the pieces."
 	l :: Vector{S}
 	"The width of the pieces."
 	w :: Vector{S}
-	# TODO: add `d` to the ByproductPPG2KP and clean up methods that take both
-	# `d` and a `byproduct`.
-	#d :: Vector{D} # why this is not here? d is used in the enumeration
 	#p :: Vector{P} # for now, it is not necessary
 	"The length of the original plate."
 	L :: S
@@ -892,7 +891,7 @@ function gen_cuts(
 	first_vertical_cut_idx = length(hnnn) + 1
 	return ByproductPPG2KP(
 		append!(hnnn, vnnn), first_vertical_cut_idx, np, pli_lwb,
-		deepcopy(l), deepcopy(w), deepcopy(L), deepcopy(W)
+		deepcopy(d), deepcopy(l), deepcopy(w), deepcopy(L), deepcopy(W)
 	)
 end
 
