@@ -593,6 +593,62 @@ function _add_cuts_from_pool!(
 	return
 end
 
+# Given the linked indexes part2full and full2part, sort the values of
+# part2full (i.e., stored indexes of full2part) in increasing order,
+# update full2part to point to the correct positions, and sort all
+# vectors in part_vecs the same way. Consequently, the subset of the full
+# vectors represented by part2full and part_vecs now has the same
+# order of their full counterparts.
+function _sort_linkage!(part2full, full2part, part_vecs)
+	sp = sortperm(part2full)
+	position_when_sorted = invperm(sp)
+	for (part_idx, full_idx) in enumerate(part2full)
+		full2part[full_idx] = position_when_sorted[part_idx]
+	end
+	@assert issorted(filter(!iszero, full2part))
+	part2full .= part2full[sp]
+	for part_vec in part_vecs
+		part_vec .= part_vec[sp]
+	end
+
+	return
+end
+
+# Create a new byproduct to replace the parameter part_bp, the
+# model (in truth, the variable and constraint vectors associated)
+# and the linked indexes are updated to refer to this new ByproductPPG2KP.
+# The `full_bp` is not changed, and `part_bp` is invalidated (its vectors
+# are reused, so it should not be used anymore after this).
+function _clean_partial_byproduct!(model, lidxs, full_bp, part_bp)
+	# The part_bp.cuts and part_bp.np are special in the context of this
+	# method, they have references to the plate indexes, so their value (not
+	# only position) needs to be changed (as the plate indexes will change).
+	oldidx2newidx = invperm(sortperm(lidxs.plis_part2full))
+	part_bp.cuts .= _map_cuts(i -> oldidx2newidx[i], part_bp.cuts)
+	part_bp.np .= map(part_bp.np) do (pli, pii)
+		(oldidx2newidx[pli], pii)
+	end
+	_sort_linkage!(
+		lidxs.cuts_part2full, lidxs.cuts_full2part,
+		(part_bp.cuts, model[:cuts_made])
+	)
+	_sort_linkage!(
+		lidxs.exts_part2full, lidxs.exts_full2part,
+		(part_bp.np, model[:picuts])
+	)
+	_sort_linkage!(
+		lidxs.plis_part2full, lidxs.plis_full2part,
+		(part_bp.pli_lwb, model[:plate_cons])
+	)
+	new_fvci = searchsortedfirst(
+		lidxs.cuts_part2full, full_bp.first_vertical_cut_idx
+	)
+	return ByproductPPG2KP( # new_fvci was computed and need to be updated
+		part_bp.cuts, new_fvci, part_bp.np, part_bp.pli_lwb, part_bp.d,
+		part_bp.l, part_bp.w, part_bp.L, part_bp.W
+	)
+end
+
 # NOTE: expect the model to already be relaxed, and with only the restricted
 # cut variables not fixed to zero (while the rest is fixed to zero).
 # NOTE: the description of this method (Explained in 10.1287/ijoc.2016.0710,
@@ -609,7 +665,7 @@ end
 	full_pli2pair :: Vector{Vector{P}}, max_profit :: P,
 	alpha :: Float64, beta :: Float64, sort_by_rp :: Bool, debug :: Bool = false,
 	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
-) :: Nothing where {D, S, P}
+) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	# Technically, the old part_bp is not used after this call, but purely for
 	# hygiene reasons let us deepcopy it and avoid invalidating it.
 	part_bp = deepcopy(part_bp)
@@ -715,12 +771,7 @@ end
 		@show qt_vars_added_back_to_LP_by_iterated
 	end
 
-	error(
-		"Commits done inside branch furinifix have no guarantee of" *
-		" being functional. This version aborts at the end of the" *
-		" of iterative pricing (if it is called)."
-	)
-	return
+	return _clean_partial_byproduct!(model, lidxs, full_bp, part_bp)
 end
 
 @timeit TIMER function _final_pricing!(
@@ -740,6 +791,21 @@ end
 	# will not be changed now
 	new_bp = _delete_vars!(bp, model, kept, :cuts_made)
 	return kept, new_bp
+end
+
+function _integralize!(model, bp)
+	naturally_only_binary = all(di -> di == 1, bp.d)
+	extraction_vars = model[:picuts]
+	if naturally_only_binary
+		delete_lower_bound.(extraction_vars)
+		delete_upper_bound.(extraction_vars)
+		set_binary.(extraction_vars)
+	else
+		set_integer.(extraction_vars)
+	end
+	set_integer.(model[:cuts_made])
+
+	return
 end
 
 # SEE SECTION 4.2 of Furini 2016: unfortunately they decided to complicate the
@@ -784,6 +850,7 @@ end
 		model, d, p, restricted_bp, heuristic_seed, verbose, mip_start,
 		bm, start, limit, options
 	)
+	LB = convert(Float64, bkv)
 	if verbose
 		# After _restricted_final_pricing! these values can have changed.
 		println("qt_cmvars_before_iterated = $(length(restricted_bp.cuts))")
@@ -793,7 +860,6 @@ end
 	verbose && print_past_section_seconds(TIMER, "_restricted_final_pricing!")
 	# Keep the BPLinkage synced with the restricted_bp
 	_delete_from_part!(lidxs.cuts_part2full, lidxs.cuts_full2part, .!kept)
-	LB = convert(Float64, bkv)
 
 	# If those fail, we need may need to rethink the iterative pricing,
 	# because the use of max_profit seems to assume no negative profit items.
@@ -806,9 +872,21 @@ end
 		sum(p .* d), alpha, beta, sort_by_rp, verbose, start, limit
 	)
 	verbose && print_past_section_seconds(TIMER, "_iterative_pricing!")
+	if verbose
+		# After _iterative_pricing! these values can have changed.
+		println("qt_cmvars_after_iterated = $(length(priced_bp.cuts))")
+		println("qt_pevars_after_iterated = $(length(priced_bp.np))")
+		println("qt_plates_after_iterated = $(length(priced_bp.pli_lwb))")
+	end
 	LP = objective_value(model)
-	kept, bp = _final_pricing!(model, bp, LB, LP, verbose)
+	kept, final_bp = _final_pricing!(model, priced_bp, LB, LP)
 	verbose && print_past_section_seconds(TIMER, "_final_pricing!")
+	if verbose
+		# After _final_pricing! these values can have changed.
+		println("qt_cmvars_after_final = $(length(final_bp.cuts))")
+		println("qt_pevars_after_final = $(length(final_bp.np))")
+		println("qt_plates_after_final = $(length(final_bp.pli_lwb))")
+	end
 	throw_if_timeout_now(start, limit)
 	# NOTE: the flag description says that Gurobi's Method is changed just for
 	# _iterative_pricing! but here we change it back only after _final_pricing!,
@@ -824,11 +902,9 @@ end
 	end
 	# Restore the piece extractions and the kept variables to their original
 	# configuration. Note that cuts_made is now a subset of what it was before.
-	@timeit TIMER "last_restore" @views restore!(
-		[model[:picuts]; model[:cuts_made]], [pe_svcs; cm_svcs[to_keep_bits]]
-	)
+	@timeit TIMER "_integralize!" _integralize!(model, final_bp)
 
-	return bp
+	return final_bp
 end
 
 # TODO: for now it takes the seed and use it with the same heuristic as
