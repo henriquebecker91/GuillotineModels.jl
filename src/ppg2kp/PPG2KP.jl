@@ -422,7 +422,7 @@ function _no_arg_check_build_model(
 		# Needs to build the mode here, as when there is pricing the pricing
 		# procedure is responsible for building the model.
 		build_complete_model(model, d, p, bp, start, options)
-		if mip_start == "guaranteed" # we have to do the MIP-start ourselves
+		if options["MIP-start"] == "guaranteed"
 			heuristic_seed = options["heuristic-seed"]
 			mip_start_by_heuristic!(model, bp, d, p, heuristic_seed, bm)
 		end
