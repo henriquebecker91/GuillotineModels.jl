@@ -83,7 +83,7 @@ export bits2idxs
     shift_idxs!(old_idxs, kept_bits)
 
 Given a sorted list of indexes (`old_idxs`) from a vector `A` and a
-bitarray-like (`kept_bits`) marking (with true) which positions of `A` were
+bitarray-like (`kept_bits`) marking (with `true`) which positions of `A` were
 not deleted since last `shift_idxs!`, it changes the `old_idxs` to point
 to the correct positions and return it.
 

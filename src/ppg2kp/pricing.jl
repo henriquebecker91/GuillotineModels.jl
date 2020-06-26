@@ -306,23 +306,6 @@ end
 		@show restricted_stop_reason
 		@show restricted_stop_code
 	end
-	if mip_start && model_obj > bkv
-		# Clean the old MIP start (that comes from the heuristic) and replace it
-		# with the solution of the restricted model (yes, take the solution and
-		# re-input it as warm-start just to have an extra guarantee it will be
-		# used). The ideal would be saving it and passing it along to just be
-		# applied before returning the model. This because some solvers can discard
-		# the start value of all variables if some variables are deleted (even if
-		# the deleted ones are not in the mip start). However, this would need us
-		# to either: save JuMP variables instead of indexes; or update the indexes
-		# every time a variable is deleted. For now this is too much effort
-		# because Gurobi/CPLEX log shows that the MIP start is being recognized
-		# even with variables being deleted after.
-		# `shift_idxs!` below correct the indexes considering the deleted vars.
-		shift_idxs!(heuristic_raw_ws[3], rc_discrete_bitstr)
-		unset_mip_start!(model, heuristic_raw_ws[1], heuristic_raw_ws[3])
-		raw_mip_start!(model, save_mip_start(model)...)
-	end
 	model_obj > bkv && (bkv = model_obj)
 
 	return bkv, rc_discrete_bitstr, bp
@@ -945,6 +928,13 @@ end
 	# Keep the BPLinkage synced with the restricted_bp
 	_delete_from_part!(lidxs.cuts_part2full, lidxs.cuts_full2part, .!kept)
 	_check_linkage(lidxs)
+	# Save the restricted model optimal solution so we can warm-start the
+	# final model later.
+	restricted_sol = save_mip_start(model)
+	# Keep the MIP-start in full indexes, so we can just convert it back
+	# to final indexes, instead of changing each time the part indexes change.
+	restricted_sol[1] .= lidxs.exts_part2full[restricted_sol[1]]
+	restricted_sol[3] .= lidxs.cuts_part2full[restricted_sol[3]]
 
 	# If those fail, we need may need to rethink the iterative pricing,
 	# because the use of max_profit seems to assume no negative profit items.
@@ -991,9 +981,19 @@ end
 	end
 	vector_summary(full_plate_duals)
 
+	# At this moment the part(ial) model stops existing, and so the lidxs
+	# and the part_bp have no meaning anymore.
 	empty!(model)
 	_build_base_model!(model, d, p, full_bp, full_inv_idxs, options)
-	kept, final_bp = _final_pricing!(model, full_plate_duals, full_bp, LB, LP)
+	final_kept, final_bp = _final_pricing!(
+		model, full_plate_duals, full_bp, LB, LP
+	)
+
+	# Shift the full indexes considering the cut variables deleted by
+	# _final_pricing!, MIP-start the model with the restricted solution.
+	shift_idxs!(restricted_sol[3], final_kept)
+	raw_mip_start!(model, restricted_sol...)
+
 	verbose && print_past_section_seconds(TIMER, "_final_pricing!")
 	if verbose
 		# After _final_pricing! these values can have changed.
