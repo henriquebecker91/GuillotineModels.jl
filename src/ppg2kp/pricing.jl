@@ -220,7 +220,7 @@ function _reduced_profit(
 end
 
 @timeit TIMER function _restricted_final_pricing!(
-	model, d :: Vector{D}, p :: Vector{P},
+	model, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, seed, verbose :: Bool, mip_start :: Bool,
 	bm :: BaseModel, start :: Float64 = time(),
 	limit :: Float64 = float(60*60*24*365), options :: Dict{String, Any} = Dict{String, Any}()
@@ -243,7 +243,7 @@ end
 	# to call just the heuristic to get the bkv (and throw away the rest).
 	if mip_start
 		(bkv, _, _), heuristic_raw_ws = mip_start_by_heuristic!(
-			model, bp, d, p, seed, bm
+			model, bp, p, seed, bm
 		)
 	else
 		bkv :: P, _, _ = fast_iterated_greedy(
@@ -882,7 +882,7 @@ end
 # limit (the best solution found in the middle of this process is used for the
 # true final pricing).
 @timeit TIMER function _furini_pricing!(
-	model, full_bp, d, p, start :: Float64, options :: Dict{String, Any}
+	model, full_bp, p, start :: Float64, options :: Dict{String, Any}
 ) where {D, S, P}
 	# First let us unpack what we need from the options.
 	bm :: BaseModel = (options["faithful2furini2016"] ? FURINI : BECKER)
@@ -895,6 +895,8 @@ end
 	sort_by_rp :: Bool = !options["no-sort-in-iterative-pricing"]
 	alpha, beta = options["pricing-alpha"], options["pricing-beta"]
 
+	d = full_bp.d # shorten the name
+
 	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
 		old_method = get_optimizer_attribute(model, "Method")
 		# Change the LP-solving method to dual simplex, this allows for better
@@ -906,7 +908,7 @@ end
 	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
 	restricted_bp, lidxs = _create_restricted_byproduct(full_bp)
 	r_inv_idxs = VarInvIndexes(restricted_bp)
-	_build_base_model!(model, d, p, restricted_bp, r_inv_idxs, options)
+	_build_base_model!(model, p, restricted_bp, r_inv_idxs, options)
 	# Necessary for experiments.
 	if verbose
 		println("qt_cmvars_restricted = $(length(restricted_bp.cuts))")
@@ -914,7 +916,7 @@ end
 		println("qt_plates_restricted = $(length(restricted_bp.pli_lwb))")
 	end
 	bkv, kept, restricted_bp = _restricted_final_pricing!(
-		model, d, p, restricted_bp, heuristic_seed, verbose, mip_start,
+		model, p, restricted_bp, heuristic_seed, verbose, mip_start,
 		bm, start, limit, options
 	)
 	LB = convert(Float64, bkv)
@@ -984,7 +986,7 @@ end
 	# At this moment the part(ial) model stops existing, and so the lidxs
 	# and the part_bp have no meaning anymore.
 	empty!(model)
-	_build_base_model!(model, d, p, full_bp, full_inv_idxs, options)
+	_build_base_model!(model, p, full_bp, full_inv_idxs, options)
 	final_kept, final_bp = _final_pricing!(
 		model, full_plate_duals, full_bp, LB, LP
 	)
@@ -1021,11 +1023,11 @@ end
 # TODO: for now it takes the seed and use it with the same heuristic as
 # the furini pricing, but in the future we need to allow it to receive
 # an arbitrary LB value, and let it call the heuristic if it is not passed
-# NOTE: the d and p are necessary exactly because of the heuristic.
+# NOTE: the p is necessary exactly because of the heuristic.
 # NOTE: the _becker_pricing! can be called over both a FURINI or a BECKER
 # model, this is the parameter bm.
 @timeit TIMER function _becker_pricing!(
-	model, bp :: ByproductPPG2KP{D, S, P}, d, p, start :: Float64,
+	model, bp :: ByproductPPG2KP{D, S, P}, p, start :: Float64,
 	options :: Dict{String, Any}
 ) where {D, S, P}
 	# First let us unpack what we need from the options.
@@ -1037,7 +1039,7 @@ end
 	mip_start = (options["MIP-start"] != "none") :: Bool
 
 	# Build the mode and relax it.
-	build_complete_model(model, d, p, bp, start, options)
+	build_complete_model(model, p, bp, start, options)
 	pe_vars = model[:picuts]
 	cm_vars = model[:cuts_made]
 	all_vars = [pe_vars; cm_vars]
@@ -1046,7 +1048,7 @@ end
 	# Get a lower bound (and possibly use it to MIP start the model).
 	if mip_start
 		(bkv, _, _), _ = mip_start_by_heuristic!(
-			model, bp, d, p, heuristic_seed, bm
+			model, bp, p, heuristic_seed, bm
 		)
 	else
 		bkv, _, _ = fast_iterated_greedy(

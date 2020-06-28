@@ -197,12 +197,12 @@ end
 end
 
 @timeit TIMER function _build_base_model!(
-	model, d :: Vector{D}, p :: Vector{P},
+	model, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, inv_idxs :: VarInvIndexes{P},
 	options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
 	# shorten the names
-	@unpack l, w, L, W, np, cuts, pli_lwb = bp
+	@unpack d, l, w, L, W, np, cuts, pli_lwb = bp
 	@unpack pii2pair, pli2pair, child2cut, parent2cut = inv_idxs
 	num_piece_types = convert(D, length(d))
 	num_plate_types = length(pli_lwb)
@@ -331,12 +331,12 @@ function build_complete_model(
 	options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	bp = _gen_cuts_wo(P, d, l, w, L, W, options)
-	build_complete_model(model, d, p, bp, start, options)
+	build_complete_model(model, p, bp, start, options)
 	return bp
 end
 
 function build_complete_model(
-	model, d :: Vector{D}, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P},
+	model, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P},
 	start :: Float64 = time(), options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	inv_idxs = VarInvIndexes(bp)
@@ -350,7 +350,7 @@ function build_complete_model(
 		@view bp.cuts[bp.first_vertical_cut_idx:end];
 		by = c -> c[PARENT]
 	)
-	_build_base_model!(model, d, p, bp, inv_idxs, options)
+	_build_base_model!(model, p, bp, inv_idxs, options)
 
 	return bp
 end
@@ -410,21 +410,21 @@ function _no_arg_check_build_model(
 		# MIP-start it corretly (initially at least, this comment may be out of
 		# date).
 		if pricing == "furini"
-			bp = _furini_pricing!(model, bp, d, p, start, options)
+			bp = _furini_pricing!(model, bp, p, start, options)
 			verbose && (pricing_time = past_section_seconds(TIMER, "_furini_pricing!"))
 		else
 			@assert pricing == "becker"
-			bp = _becker_pricing!(model, bp, d, p, start, options)
+			bp = _becker_pricing!(model, bp, p, start, options)
 			verbose && (pricing_time = past_section_seconds(TIMER, "_becker_pricing!"))
 		end
 		verbose && @show pricing_time
 	else # in the case there is no pricing phase
 		# Needs to build the mode here, as when there is pricing the pricing
 		# procedure is responsible for building the model.
-		build_complete_model(model, d, p, bp, start, options)
+		build_complete_model(model, p, bp, start, options)
 		if options["MIP-start"] == "guaranteed"
 			heuristic_seed = options["heuristic-seed"]
-			mip_start_by_heuristic!(model, bp, d, p, heuristic_seed, bm)
+			mip_start_by_heuristic!(model, bp, p, heuristic_seed, bm)
 		end
 	end
 	if verbose

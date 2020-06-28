@@ -368,7 +368,7 @@ end
 export raw_mip_start!
 
 """
-    mip_start_by_heuristic!(model, seed, d, p, bp, bm)
+    mip_start_by_heuristic!(model, seed, p, bp, bm)
 
 TODO: document. Returns two tuples, the first is the result of internal
 `fast_iterated_greedy` the second tuple contain the last four arguments
@@ -376,11 +376,11 @@ of the raw_mip_start! used to MIP-start the model (this way
 unset_mip_start! can be easily called over the model).
 """
 function mip_start_by_heuristic!(
-	model, bp :: ByproductPPG2KP{D, S, P}, d, p, seed, bm :: BaseModel
+	model, bp :: ByproductPPG2KP{D, S, P}, p, seed, bm :: BaseModel
 ) where {D, S, P}
 	rng = Xoroshiro128Plus(seed)
 	bkv, selected, shelves = fast_iterated_greedy(
-		d, p, bp.l, bp.w, bp.L, bp.W, rng
+		bp.d, p, bp.l, bp.w, bp.L, bp.W, rng
 	)
 	raw_ws = @timeit TIMER "create_raw_ws_from_heuristic" begin
 		cuts, extractions = cuts_and_extractions_from_2_staged_solution(
