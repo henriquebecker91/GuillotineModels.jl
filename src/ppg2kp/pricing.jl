@@ -946,10 +946,12 @@ end
 	# to get the LB for the unrestricted model.
 	# CAUTION: this invalidates the old `restricted_bp` now only
 	# priced_r_bp should be used.
-	bkv, kept, priced_r_bp = _restricted_final_pricing!(
-		model, p, restricted_bp, heuristic_seed, verbose, mip_start,
-		bm, start, limit, options
-	)
+	restricted_final_pricing_time = @elapsed begin
+		bkv, kept, priced_r_bp = _restricted_final_pricing!(
+			model, p, restricted_bp, heuristic_seed, verbose, mip_start,
+			bm, start, limit, options
+		)
+	end
 	LB = convert(Float64, bkv)
 
 	if verbose
@@ -957,7 +959,7 @@ end
 		println("qt_cmvars_priced_restricted = $(length(priced_r_bp.cuts))")
 		println("qt_pevars_priced_restricted = $(length(priced_r_bp.np))")
 		println("qt_plates_priced_restricted = $(length(priced_r_bp.pli_lwb))")
-		print_past_section_seconds(TIMER, "_restricted_final_pricing!")
+		@show restricted_final_pricing_time
 	end
 
 	if mip_start
@@ -1001,17 +1003,19 @@ end
 		println("qt_pevars_before_iterated = $(length(iterative_bp.np))")
 		println("qt_plates_before_iterated = $(length(iterative_bp.pli_lwb))")
 	end
-	final_iter_bp = _iterative_pricing!(
-		model, full_bp, iterative_bp, lidxs, full_inv_idxs.pli2pair,
-		sum(p .* d), alpha, beta, sort_by_rp, verbose, start, limit
-	)
+	iterative_pricing_time = @elapsed begin
+		final_iter_bp = _iterative_pricing!(
+			model, full_bp, iterative_bp, lidxs, full_inv_idxs.pli2pair,
+			sum(p .* d), alpha, beta, sort_by_rp, verbose, start, limit
+		)
+	end
 	_check_linkage(lidxs)
 	if verbose
 		# After _iterative_pricing! these values can have changed.
 		println("qt_cmvars_after_iterated = $(length(final_iter_bp.cuts))")
 		println("qt_pevars_after_iterated = $(length(final_iter_bp.np))")
 		println("qt_plates_after_iterated = $(length(final_iter_bp.pli_lwb))")
-		print_past_section_seconds(TIMER, "_iterative_pricing!")
+		@show iterative_pricing_time
 	end
 	LP = objective_value(model)
 
@@ -1023,9 +1027,20 @@ end
 	full_plate_duals[lidxs.plis_part2full] .= dual.(model[:plate_cons])
 	empty!(model)
 	_build_base_model!(model, p, full_bp, full_inv_idxs, options)
-	final_kept, final_bp = _final_pricing!(
-		model, full_plate_duals, full_bp, LB, LP
-	)
+	final_pricing_time = @elapsed begin
+		final_kept, final_bp = _final_pricing!(
+			model, full_plate_duals, full_bp, LB, LP
+		)
+	end
+
+	if verbose
+		# After _final_pricing! these values can have changed.
+		println("qt_cmvars_after_final = $(length(final_bp.cuts))")
+		println("qt_pevars_after_final = $(length(final_bp.np))")
+		println("qt_plates_after_final = $(length(final_bp.pli_lwb))")
+		@show final_pricing_time
+	end
+	throw_if_timeout_now(start, limit)
 
 	if mip_start
 		# Shift the full indexes considering the cut variables deleted by
@@ -1034,14 +1049,6 @@ end
 		raw_mip_start!(model, restricted_sol...)
 	end
 
-	verbose && print_past_section_seconds(TIMER, "_final_pricing!")
-	if verbose
-		# After _final_pricing! these values can have changed.
-		println("qt_cmvars_after_final = $(length(final_bp.cuts))")
-		println("qt_pevars_after_final = $(length(final_bp.np))")
-		println("qt_plates_after_final = $(length(final_bp.pli_lwb))")
-	end
-	throw_if_timeout_now(start, limit)
 	# NOTE: the flag description says that Gurobi's Method is changed just for
 	# _iterative_pricing! but here we change it back only after _final_pricing!,
 	# the reasoning follows: _final_pricing! does not call optimize! and is not

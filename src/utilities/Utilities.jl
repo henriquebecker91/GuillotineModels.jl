@@ -2,41 +2,6 @@ module Utilities
 
 using DocStringExtensions # for TYPEDFIELDS
 
-import TimerOutputs
-"""
-    past_section_seconds(timer, section_label) :: Float64
-
-NOTE: THIS ACCESS TimerOutputs INTERNALS AND MAY BREAK.
-
-Given a `TimerOutput` `timer`, get the total time in seconds, from a previous
-timing section called `section_label` (already finished) that is a direct
-child of the current (not yet finished) timing section.
-"""
-function past_section_seconds(
-	timer :: TimerOutputs.TimerOutput,
-	section_label :: String
-)
-	section = timer.timer_stack[end][section_label]
-	ns_time = TimerOutputs.time(section)
-	return ns_time * 1e-9
-end
-export past_section_seconds
-
-"""
-    print_past_section_seconds(timer, section_label)
-
-Calls `past_section_seconds` and print the result in the format
-"\$section_label = result\\n".
-"""
-function print_past_section_seconds(
-	timer :: TimerOutputs.TimerOutput,
-	section_label :: String
-)
-	println("$section_label = $(past_section_seconds(timer, section_label))")
-	return
-end
-export print_past_section_seconds
-
 """
     throw_if_unrecognized(name, value, list)
 

@@ -420,13 +420,13 @@ function _no_arg_check_build_model(
 		# pricing methods just need to know the underlying base model to be able to
 		# MIP-start it corretly (initially at least, this comment may be out of
 		# date).
-		if pricing == "furini"
-			bp = _furini_pricing!(model, bp, p, start, options)
-			verbose && (pricing_time = past_section_seconds(TIMER, "_furini_pricing!"))
-		else
-			@assert pricing == "becker"
-			bp = _becker_pricing!(model, bp, p, start, options)
-			verbose && (pricing_time = past_section_seconds(TIMER, "_becker_pricing!"))
+		pricing_time = @elapsed begin
+			if pricing == "furini"
+					bp = _furini_pricing!(model, bp, p, start, options)
+			else
+				@assert pricing == "becker"
+				bp = _becker_pricing!(model, bp, p, start, options)
+			end
 		end
 		verbose && @show pricing_time
 	else # in the case there is no pricing phase
