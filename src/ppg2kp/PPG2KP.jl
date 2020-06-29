@@ -199,7 +199,8 @@ end
 @timeit TIMER function _build_base_model!(
 	model, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, inv_idxs :: VarInvIndexes{P},
-	options :: Dict{String, Any} = Dict{String, Any}()
+	options :: Dict{String, Any} = Dict{String, Any}();
+	build_LP_not_MIP = false
 ) where {D, S, P}
 	# shorten the names
 	@unpack d, l, w, L, W, np, cuts, pli_lwb = bp
@@ -211,17 +212,23 @@ end
 	# connection between a piece type and the plate it is extracted from.
 	naturally_only_binary = all(di -> di == 1, d)
 	if naturally_only_binary
-		@variable(model, picuts[1:length(np)], Bin)
+		if build_LP_not_MIP
+			@variable(model, 0 <= picuts[1:length(np)] <= 1)
+		else
+			@variable(model, picuts[1:length(np)], Bin)
+		end
 	else
 		#@variable(model, picuts[1:length(np)] >= 0, Int)
 		@variable(model,
 			0 <= picuts[i = 1:length(np)] <= min(pli_lwb[np[i][1]][3], d[np[i][2]]),
-		Int)
+			integer = !build_LP_not_MIP
+		)
 	end
 
 	@variable(model,
-		0 <= cuts_made[i = 1:length(cuts)] <= pli_lwb[cuts[i][PARENT]][3]
-	, Int)
+		0 <= cuts_made[i = 1:length(cuts)] <= pli_lwb[cuts[i][PARENT]][3],
+		integer = !build_LP_not_MIP
+	)
 
 	# The objective function is to maximize the profit made by extracting
 	# pieces from subplates.
@@ -240,10 +247,14 @@ end
 	# type will be available the number of times it was the child of a cut,
 	# subtracted the number of times it had a piece extracted or used for
 	# further cutting.
+	# NOTE: the range is 1:(num_plate_types-1) and not 2:num_plate_types
+	# because if the range does not start at 1, the returned type is not
+	# a vector but a special JuMP type.
 	plate_numbers_2_to_m = @constraint(model, [ppli=1:(num_plate_types-1)],
 		sum(picuts[pli2pair[ppli+1]]) + sum(cuts_made[parent2cut[ppli+1]]) <=
 		sum(cuts_made[child2cut[ppli+1]])
 	)
+	set_name.(plate_numbers_2_to_m, "plate_cons" .* string.(2:num_plate_types))
 	# NOTE: we use a ppli that is pli-1 above because if we start the array at
 	# 2 then we do not get an array but another container type. Also, these
 	# constraints are not named, if we want to name them we can make a loop

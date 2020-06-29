@@ -473,11 +473,15 @@ end
 Given a vector of the command-line arguments `args` and the lists of
 available models and solvers, parse the arguments. If the `args`
 refer to a model or solver not in `models_list` or `solvers_list`
-exceptions may be thrown.
+exceptions may be thrown. If `args` just triggers the help message,
+an empty `Dict` is returned.
 """
-@timeit TIMER function parse_args(args, models_list, solvers_list) :: Dict{String, Any}
+@timeit TIMER function parse_args(
+	args, models_list, solvers_list
+) :: Dict{String, Any}
 	s = argparse_settings(models_list, solvers_list)
-	p_args = ArgParse.parse_args(args, s) :: Dict{String, Any}
+	p_args = ArgParse.parse_args(args, s)
+	isnothing(p_args) && return Dict{String, Any}()
 	warn_if_changed_unused_values(p_args, models_list, solvers_list)
 	throw_if_incompatible_options(p_args)
 
@@ -565,6 +569,7 @@ you just need to remove the `["--help"]` from the call.
 	supported_solvers :: Vector{Symbol} = [:CPLEX, :Gurobi, :Cbc, :GLPK]
 )
 	p_args = parse_args(args, implemented_models, supported_solvers)
+	isempty(p_args) && return # Happens if called just for "--help".
 	!p_args["no-csv-output"] && @show args
 	!p_args["no-csv-output"] && @show p_args
 	date_now = Dates.format(Dates.now(), dateformat"yyyy-mm-ddTHH:MM:SS")
@@ -574,6 +579,8 @@ you just need to remove the `["--help"]` from the call.
 	delete!(p_args, "warm-jit")
 	total_instance_time = @elapsed read_build_solve_and_print(p_args)
 	!p_args["no-csv-output"] && @show total_instance_time
+
+	return
 end
 
 end # module

@@ -111,7 +111,8 @@ function bits2lidxs(::Type{I}, bits) :: NTuple{2, Vector{I}} where {I}
 end
 
 @timeit TIMER function _create_restricted_byproduct(
-	bp :: ByproductPPG2KP{D, S, P}
+	bp :: ByproductPPG2KP{D, S, P}; copy_unchanged = true,
+	given_rc_idxs = nothing, only_reachable = true
 ) :: Tuple{
 	ByproductPPG2KP{D, S, P}, BPLinkage{P}
 } where {D, S, P}
@@ -123,14 +124,41 @@ end
 	# obtained from the cuts in (1), consequently, the number of restricted cuts
 	# often drastically reduces in (2) (and the values become similar to the ones
 	# obtained by Furini).
+	if isnothing(given_rc_idxs)
+		rc_idxs = _all_restricted_cuts_idxs(bp)
+	elseif copy_unchanged
+		# copyied here because it is returned as a field of BPLinkage
+		rc_idxs = copy(given_rc_idxs)
+	else
+		rc_idxs = given_rc_idxs
+	end
 	fvc = if bp.first_vertical_cut_idx > length(bp.cuts)
 		nothing
 	else
 		bp.cuts[bp.first_vertical_cut_idx]
 	end
-	rc_idxs = _all_restricted_cuts_idxs(bp)
+
 	rc_fvci = searchsortedfirst(rc_idxs, bp.first_vertical_cut_idx)
 	rc = bp.cuts[rc_idxs]
+
+	if !only_reachable
+		kept_fields = (bp.np, bp.pli_lwb, bp.d, bp.l, bp.w, bp.L, bp.W)
+		if copy_unchanged
+			kept_fields = copy.(kept_fields)
+		end
+		new_bp = ByproductPPG2KP{D, S, P}(
+			rc, rc_fvci, kept_fields...
+		)
+		cuts_full2part = zeros(P, length(bp.cuts))
+		cuts_full2part[rc_idxs] .= 1:length(rc_idxs)
+		exts = collect(1:length(bp.np))
+		plis = collect(1:length(bp.pli_lwb))
+		bpl = BPLinkage(
+			exts, copy(exts), rc_idxs, cuts_full2part, plis, copy(plis)
+		)
+		return new_bp, bpl
+	end
+
 	qt_re, re_bits, qt_rc, rc_bits, qt_rp, rp_bits = _reachable(
 		bp.np, rc, lastindex(bp.pli_lwb)
 	)
@@ -175,9 +203,9 @@ end
 		#@assert re[i][1] > 0 && re[i][1] <= length(rp)
 	end
 
-	r_bp = ByproductPPG2KP{D, S, P}(
-		rc, rc_fvci, re, rp, bp.d, bp.l, bp.w, bp.L, bp.W
-	)
+	kept_fields = (bp.d, bp.l, bp.w, bp.L, bp.W)
+	copy_unchanged && (kept_fields = copy.(kept_fields))
+	r_bp = ByproductPPG2KP{D, S, P}(rc, rc_fvci, re, rp, kept_fields...)
 	return r_bp, bpl
 end
 
@@ -223,7 +251,8 @@ end
 	model, p :: Vector{P},
 	bp :: ByproductPPG2KP{D, S, P}, seed, verbose :: Bool, mip_start :: Bool,
 	bm :: BaseModel, start :: Float64 = time(),
-	limit :: Float64 = float(60*60*24*365), options :: Dict{String, Any} = Dict{String, Any}()
+	limit :: Float64 = float(60*60*24*365),
+	options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
 	n = num_variables(model)
 	pe = model[:picuts] # Piece Extractions
@@ -247,7 +276,7 @@ end
 		)
 	else
 		bkv :: P, _, _ = fast_iterated_greedy(
-			d, p, bp.l, bp.w, bp.L, bp.W, Xoroshiro128Plus(seed)
+			bp.d, p, bp.l, bp.w, bp.L, bp.W, Xoroshiro128Plus(seed)
 		)
 	end
 	restricted_LB = LB = convert(Float64, bkv)
@@ -551,9 +580,6 @@ function _add_cuts_from_pool!(
 	# Before anything else, we check if these cuts create plates that did not
 	# exist before in the part(ial) model.
 
-	# TODO: consider changing the code below to filter out the
-	# cuts in which the parent plate is not reachable from the already
-	# existing cuts plus the other ones added.
 	# Get the full indexes of the that plates will exist in the model
 	# only when these cuts were added.
 	full_plis_to_add = P[]
@@ -731,10 +757,6 @@ end
 	# hygiene reasons let us deepcopy it and avoid invalidating it.
 	part_bp = deepcopy(part_bp)
 
-	# The variables are left all relaxed for the iterative pricing.
-	@timeit TIMER "relax_cm" cm_svcs = relax!(model[:cuts_made])
-	@timeit TIMER "relax_pe" pe_svcs = relax!(model[:picuts])
-
 	flush_all_output()
 	# the last solve before this was MIP and has no duals
 	debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_0")
@@ -905,56 +927,91 @@ end
 		set_optimizer_attribute(model, "Method", switch_method)
 	end
 
-	# The two possible mip-starts occur inside `_restricted_final_pricing!`.
-	restricted_bp, lidxs = _create_restricted_byproduct(full_bp)
+	# Builds the restricted model, with smaller number of cuts, extractions,
+	# and plate constraints.
+	r_full_cut_idxs = _all_restricted_cuts_idxs(full_bp)
+	restricted_bp, lidxs = _create_restricted_byproduct(
+		full_bp; given_rc_idxs = r_full_cut_idxs
+	)
 	r_inv_idxs = VarInvIndexes(restricted_bp)
 	_build_base_model!(model, p, restricted_bp, r_inv_idxs, options)
-	# Necessary for experiments.
-	if verbose
+	if verbose # Necessary for experiments.
 		println("qt_cmvars_restricted = $(length(restricted_bp.cuts))")
 		println("qt_pevars_restricted = $(length(restricted_bp.np))")
 		println("qt_plates_restricted = $(length(restricted_bp.pli_lwb))")
 	end
-	bkv, kept, restricted_bp = _restricted_final_pricing!(
+
+	# Use heuristic solution as LB, and relaxation as UB, to cut variables
+	# from the restricted model (by a _final_pricing!), and the solve it
+	# to get the LB for the unrestricted model.
+	# CAUTION: this invalidates the old `restricted_bp` now only
+	# priced_r_bp should be used.
+	bkv, kept, priced_r_bp = _restricted_final_pricing!(
 		model, p, restricted_bp, heuristic_seed, verbose, mip_start,
 		bm, start, limit, options
 	)
 	LB = convert(Float64, bkv)
+
 	if verbose
 		# After _restricted_final_pricing! these values can have changed.
-		println("qt_cmvars_before_iterated = $(length(restricted_bp.cuts))")
-		println("qt_pevars_before_iterated = $(length(restricted_bp.np))")
-		println("qt_plates_before_iterated = $(length(restricted_bp.pli_lwb))")
+		println("qt_cmvars_priced_restricted = $(length(priced_r_bp.cuts))")
+		println("qt_pevars_priced_restricted = $(length(priced_r_bp.np))")
+		println("qt_plates_priced_restricted = $(length(priced_r_bp.pli_lwb))")
+		print_past_section_seconds(TIMER, "_restricted_final_pricing!")
 	end
-	verbose && print_past_section_seconds(TIMER, "_restricted_final_pricing!")
-	# Keep the BPLinkage synced with the restricted_bp
-	_delete_from_part!(lidxs.cuts_part2full, lidxs.cuts_full2part, .!kept)
-	_check_linkage(lidxs)
-	# Save the restricted model optimal solution so we can warm-start the
-	# final model later.
-	restricted_sol = save_mip_start(model)
-	# Keep the MIP-start in full indexes, so we can just convert it back
-	# to final indexes, instead of changing each time the part indexes change.
-	restricted_sol[1] .= lidxs.exts_part2full[restricted_sol[1]]
-	restricted_sol[3] .= lidxs.cuts_part2full[restricted_sol[3]]
+
+	if mip_start
+		# Update the BPLinkage to link `priced_r_bp` to `full_bp`, not
+		# `restricted_bp` to `full_bp` anymore.
+		_delete_from_part!(lidxs.cuts_part2full, lidxs.cuts_full2part, .!kept)
+		_check_linkage(lidxs)
+		# Save the restricted model optimal solution so we can warm-start the
+		# final model later.
+		restricted_sol = save_mip_start(model)
+		# Keep the MIP-start in full indexes, so we can just convert it back to
+		# the final indexes, instead of changing each time the part indexes change.
+		restricted_sol[1] .= lidxs.exts_part2full[restricted_sol[1]]
+		restricted_sol[3] .= lidxs.cuts_part2full[restricted_sol[3]]
+	end
 
 	# If those fail, we need may need to rethink the iterative pricing,
 	# because the use of max_profit seems to assume no negative profit items.
 	@assert all(e -> e >= zero(e), d)
 	@assert all(e -> e >= zero(e), p)
 
+	# The iterative pricing could be better explained in the original paper.
+	# Our interpretation is that it starts with all plate constraints, and all
+	# extractions (`y` variables), but only with the cuts (`x` variables) that
+	# represent restricted cuts. However, differently of the restricted model,
+	# these restricted cut variables include cuts over plates that are not
+	# generated by other cuts present, in other words, cuts over 'unreachable'
+	# plates are allowed.
+	empty!(model)
+	iterative_bp, lidxs = _create_restricted_byproduct(
+		full_bp; given_rc_idxs = r_full_cut_idxs, only_reachable = false
+	)
 	full_inv_idxs = VarInvIndexes(full_bp)
-	priced_bp = _iterative_pricing!(
-		model, full_bp, restricted_bp, lidxs, full_inv_idxs.pli2pair,
+	ip_inv_idxs = VarInvIndexes(iterative_bp)
+	_build_base_model!(
+		model, p, iterative_bp, ip_inv_idxs, options; build_LP_not_MIP = true
+	)
+	if verbose
+		# After _iterative_pricing! these values can have changed.
+		println("qt_cmvars_before_iterated = $(length(iterative_bp.cuts))")
+		println("qt_pevars_before_iterated = $(length(iterative_bp.np))")
+		println("qt_plates_before_iterated = $(length(iterative_bp.pli_lwb))")
+	end
+	final_iter_bp = _iterative_pricing!(
+		model, full_bp, iterative_bp, lidxs, full_inv_idxs.pli2pair,
 		sum(p .* d), alpha, beta, sort_by_rp, verbose, start, limit
 	)
 	_check_linkage(lidxs)
-	verbose && print_past_section_seconds(TIMER, "_iterative_pricing!")
 	if verbose
 		# After _iterative_pricing! these values can have changed.
-		println("qt_cmvars_after_iterated = $(length(priced_bp.cuts))")
-		println("qt_pevars_after_iterated = $(length(priced_bp.np))")
-		println("qt_plates_after_iterated = $(length(priced_bp.pli_lwb))")
+		println("qt_cmvars_after_iterated = $(length(final_iter_bp.cuts))")
+		println("qt_pevars_after_iterated = $(length(final_iter_bp.np))")
+		println("qt_plates_after_iterated = $(length(final_iter_bp.pli_lwb))")
+		print_past_section_seconds(TIMER, "_iterative_pricing!")
 	end
 	LP = objective_value(model)
 
@@ -962,39 +1019,20 @@ end
 	# model. Throw away the old model and create the full model.
 	# Use the duals to make a final pricing of the full model and finally
 	# get the Priced PP-G2KP.
-	println("duals")
-	plate_duals = dual.(model[:plate_cons])
-	vector_summary(plate_duals)
-	println("non_zero_plate_duals")
-	non_zero_plate_duals = filter(!iszero, plate_duals)
-	vector_summary(non_zero_plate_duals)
-
-	println("lidxs.plis_part2full")
-	vector_summary(lidxs.plis_part2full)
-
-	unique_plis_part2full = unique!(sort(lidxs.plis_part2full))
-	println("unique_plis_part2full")
-	vector_summary(unique_plis_part2full)
-
-	println("full_plate_duals")
 	full_plate_duals = zeros(Float64, length(full_bp.pli_lwb))
-	for (part_idx, full_idx) in enumerate(unique_plis_part2full)
-		full_plate_duals[full_idx] = plate_duals[part_idx]
-	end
-	vector_summary(full_plate_duals)
-
-	# At this moment the part(ial) model stops existing, and so the lidxs
-	# and the part_bp have no meaning anymore.
+	full_plate_duals[lidxs.plis_part2full] .= dual.(model[:plate_cons])
 	empty!(model)
 	_build_base_model!(model, p, full_bp, full_inv_idxs, options)
 	final_kept, final_bp = _final_pricing!(
 		model, full_plate_duals, full_bp, LB, LP
 	)
 
-	# Shift the full indexes considering the cut variables deleted by
-	# _final_pricing!, MIP-start the model with the restricted solution.
-	shift_idxs!(restricted_sol[3], final_kept)
-	raw_mip_start!(model, restricted_sol...)
+	if mip_start
+		# Shift the full indexes considering the cut variables deleted by
+		# _final_pricing!, MIP-start the model with the restricted solution.
+		shift_idxs!(restricted_sol[3], final_kept)
+		raw_mip_start!(model, restricted_sol...)
+	end
 
 	verbose && print_past_section_seconds(TIMER, "_final_pricing!")
 	if verbose
@@ -1052,7 +1090,7 @@ end
 		)
 	else
 		bkv, _, _ = fast_iterated_greedy(
-			d, p, bp.l, bp.w, bp.L, bp.W, Xoroshiro128Plus(seed)
+			bp.d, p, bp.l, bp.w, bp.L, bp.W, Xoroshiro128Plus(seed)
 		)
 	end
 	LB = convert(Float64, bkv)
