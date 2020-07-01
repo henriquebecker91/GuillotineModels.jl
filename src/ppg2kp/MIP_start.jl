@@ -163,7 +163,6 @@ function _safe_trim_dim!(
 				pp = _successive_trims!(
 					cuts_done, pp, bp, cuts_by_pp, s, min_s, dim
 				)
-				println("successive_pp = $pp")
 				rS = bp.pli_lwb[pp][dim]
 				# If bm == BECKER and the other dim has a difference smaller than
 				# the smallest-other-dim-size piece-that-fits, then it is guaranteed
