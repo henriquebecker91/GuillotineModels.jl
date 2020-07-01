@@ -97,26 +97,30 @@ function _make_cut!(
 	return bp.cuts[cut_idx][FIRST_CHILD], bp.cuts[cut_idx][SECOND_CHILD]
 end
 
-# For `qt_trims` times, find a cut that reduces the current plate by
-# `trim_size` (the method errors if such cut does not exist) and update
-# the current plate, return the remaining plate after all those trim cuts,
-# saves the trim cuts done to cuts_done.
+# Takes a `plate_idx`, and then successively chip the plate removing trims of
+# `trim_size` (of dimension `dim`) while the plate is not smaller than
+# `size_limit`. Returns a plate with `dim` smaller than `size_limit +
+# trim_size`. Save the `trim_cuts` to `cuts_done`. The number of trims is
+# not computed beforehand because of `--PPG2KP-round2disc` (i.e., a trim
+# can reduce the dimension by more than `trim_size`).
 function _successive_trims!(
 	cuts_done :: Vector{P},
 	plate_idx :: P,
 	bp :: ByproductPPG2KP{D, S, P},
 	cuts_by_pp :: Vector{UnitRange{P}},
-	qt_trims :: P,
+	size_limit :: S,
 	trim_size :: S,
 	dim :: Dimension
 ) :: P where {D, S, P}
 	pp = plate_idx
-	for _ = 1:qt_trims
+	safe_limit = size_limit + trim_size
+	while bp.pli_lwb[pp][dim] >= safe_limit
 		# We throw away the info about which was the first child (i.e., the trim
 		# plate) and update the parent plate to be the second child.
 		_, pp = _make_cut!(cuts_done, pp, bp, cuts_by_pp, trim_size, dim)
 		@assert !iszero(pp)
 	end
+	@assert bp.pli_lwb[pp][dim] >= size_limit
 	return pp
 end
 
@@ -156,10 +160,10 @@ function _safe_trim_dim!(
 			# the smallest-dim-size piece-that-fits, reduce the difference by
 			# successive trim cuts.
 			if rS - s >= min_s
-				qt_trims = convert(P, div(rS - s, min_s))
 				pp = _successive_trims!(
-					cuts_done, pp, bp, cuts_by_pp, qt_trims, min_s, dim
+					cuts_done, pp, bp, cuts_by_pp, s, min_s, dim
 				)
+				println("successive_pp = $pp")
 				rS = bp.pli_lwb[pp][dim]
 				# If bm == BECKER and the other dim has a difference smaller than
 				# the smallest-other-dim-size piece-that-fits, then it is guaranteed

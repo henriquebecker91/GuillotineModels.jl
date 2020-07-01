@@ -468,6 +468,7 @@ function _delete_from_part!(part2full, full2part, to_delete)
 	# Supports BitArray and Vector{Bool} by creating an intermediary array, maybe
 	# optimize to have multiple method definitions in the future.
 	idxs_to_delete = keys(part2full)[to_delete]
+	isempty(idxs_to_delete) && return part2full
 	# Quantity of deleted indexes before the current index.
 	qt_to_shift = zero(eltype(full2part))
 	# The loop acts in the ranges between the first deleted index and the
