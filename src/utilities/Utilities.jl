@@ -68,7 +68,7 @@ function shift_idxs!(old_idxs, kept_bits)
 	first_unvisited = my_one
 	for (j, old_idx) in pairs(old_idxs)
 		for i in first_unvisited:old_idx
-			kept_bits[i] && (new_idx += my_one)
+			new_idx += kept_bits[i]
 		end
 		old_idxs[j] = new_idx
 		first_unvisited = old_idx + my_one

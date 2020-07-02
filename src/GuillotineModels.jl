@@ -1,3 +1,5 @@
+# For now, precompilation will be disabled, as the package is in development.
+__precompile__(false)
 # TODO: for now, many documentation strings do not wrap at 79 characters
 # because this break list items, discover where is the problem (incorrect use
 # of markdown? documenter.jl is broken?).

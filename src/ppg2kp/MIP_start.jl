@@ -145,7 +145,7 @@ function _safe_trim_dim!(
 	@assert rS >= s
 	if s != rS # Check if trimming is actually necessary.
 		# If the cut is in the first half of the plate it is guaranteed to exist.
-		if s <= (rS+1)/2
+		if s <= div(rS, 2)
 			# In the case of a 'clean' trim cut, the trim is the SECOND_CHILD that
 			# is thrown away, and the PARENT is updated to the FIRST_CHILD.
 			pp, _ = _make_cut!(cuts_done, pp, bp, cuts_by_pp, s, dim)
