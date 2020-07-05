@@ -1,5 +1,3 @@
-# For now, precompilation will be disabled, as the package is in development.
-__precompile__(false)
 # TODO: for now, many documentation strings do not wrap at 79 characters
 # because this break list items, discover where is the problem (incorrect use
 # of markdown? documenter.jl is broken?).
@@ -76,17 +74,21 @@ function throw_if_timeout_now(start, limit)
 	return
 end
 
+@enum BuildStopReason BUILT_MODEL FOUND_OPTIMUM
+
 """
     build_model(::Val{T}, model, d, p, l, w, L, W[, options])
 
 Given an instance of the demand-constrained unrestricted stage-unlimited
 knapsack 2D cutting problem without rotation (defined by `d`, `p`, `l`, `w`,
 `L`, `W`), add variables and constraints to `model` to make it a `::Val{T}`
-model for the specified instance. A dict of options that are
-`::Val{T}`-specific may be also provided (otherwise defaults are used).
-The values returned are `::Val{T}`-specific and are often byproducts of
-the model construction that are needed to assemble a solution from the
-variables values of a solved model.
+model for the specified instance.
+
+A dict of options that are `::Val{T}`-specific may be also provided (otherwise
+defaults are used).
+
+Should always return two values: the first is always an element of
+BuildStopReason; the second is `::Val{T}`-specific.
 
 # Arguments
 
@@ -99,6 +101,11 @@ variables values of a solved model.
 7. `L::S`: The length of the original plate.
 8. `W::S`: The width of the original plate.
 9. `options::Dict{String, Any}`: Model-specific options.
+
+# Returns
+
+1. `::BuildStopReason`: The reason for which the method returned. It can be: BUILT_MODEL (the model was built successfully) or FOUND_OPTIMUM (in the process of building the model, the optimal solution was already found, so the building process was abandoned). See [`get_cut_pattern`](@ref) for more information.
+2. `::Any`: the specific type of the second returned value depends on `T` (and other Type parameters), however it should always exist (even if it is `nothing`). It is passed as last argument of `get_cut_pattern` to assemble a solution (CutPattern) from the variables values of a model.
 """
 function build_model(
 	::Val{T}, model, d :: Vector{D}, p :: Vector{P},
@@ -364,9 +371,14 @@ end
 """
     get_cut_pattern(model_type, model, ::D, ::S, build_model_return)
 
-Given a solved `model` built with `build_model(model_type, ...)` and its
-respective `build_model_return`, returns a CutPattern representing the optimal
-solution found. The implementation of this method is responsability of
+Given a `model` built with `build_model(model_type, ...)` and its respective
+`build_model_return` (i.e., the second return of `build_model`), returns a
+CutPattern representing the optimal solution found. If the first return of
+`build_model` is `BUILT_MODEL`, then the model needs to be
+solved before calling this method; however, if it is
+`FOUND_OPTIMUM` then the model does not need to be solved.
+
+The implementation of this method is responsability of
 whoever implemented the corresponding `build_model` method.
 
 The `::Type{D}` and `::Type{S}` parameters define the integer type used for

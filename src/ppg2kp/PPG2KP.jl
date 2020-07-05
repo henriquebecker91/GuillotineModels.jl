@@ -5,22 +5,46 @@ include("./Heuristic.jl")
 include("./Args.jl")
 include("./Enumeration.jl")
 
-using UnPack # for @unpack
-using DocStringExtensions # For better struct documentation
-import ..TIMER # Global module timer for use with TimerOutputs.@timeit.
-import ..throw_if_timeout_now
+# Everything that is exported by PPG2KP.Enumeration ends up being used here.
 using .Enumeration # Where all the plate enumeration logic is defined.
 export ByproductPPG2KP # re-export ByproductPPG2KP from Enumeration
 
-using ..Utilities
-using RandomNumbers.Xorshifts # for Xoroshiro128Plus (for heuristic rng)
-import ..to_pretty_str # for debug
-
 # Import third-party libraries.
 using JuMP
+using UnPack # for @unpack
 import TimerOutputs.@timeit
 import MathOptInterface
+using RandomNumbers.Xorshifts # for Xoroshiro128Plus (for heuristic rng)
 const MOI = MathOptInterface
+using DocStringExtensions # For better struct documentation
+
+# Import globals/modules/functions defined in GuillotineModels (main module).
+import ..TIMER # Global module timer for use with TimerOutputs.@timeit.
+import ..throw_if_timeout_now
+import ..to_pretty_str # for debug
+import ..CutPattern # type returned by get_cut_pattern
+import ..BuildStopReason, ..BUILT_MODEL, ..FOUND_OPTIMUM
+using ..Utilities
+
+struct ModelByproduct{D, S, P}
+	preprocess_byproduct :: ByproductPPG2KP{D, S, P}
+	found_optimum :: Bool
+	optimum_if_found :: CutPattern{D, S}
+end
+
+# Convenience in case of FOUND_OPTIMUM. `found_optimum` is set
+# to `true` and `optimum_if_found` stores the solution.
+function ModelByproduct(
+	bp :: ByproductPPG2KP{D, S, P}, optimum :: CutPattern{D, S}
+) where {D, S, P}
+	return ModelByproduct{D, S, P}(bp, true, optimum)
+end
+
+# Convenience in case of BUILT_MODEL. `found_optimum` is set
+# to `false` and `optimum_if_found` stores an empty (but valid) solution.
+function ModelByproduct(bp :: ByproductPPG2KP{D, S, P}) where {D, S, P}
+	return ModelByproduct{D, S, P}(bp, false, CutPattern(bp.L, bp.W))
+end
 
 @enum Dimension begin
 	LENGTH = 1
@@ -372,7 +396,7 @@ include("./pricing.jl")
 function _no_arg_check_build_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, options :: Dict{String, Any}
-) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+) :: Tuple{BuildStopReason, ModelByproduct{D, S, P}} where {D, S, P}
 	# Define 'start', this is the point where the building-time-limit
 	# starts to be counted.
 	start :: Float64 = time()
@@ -422,13 +446,19 @@ function _no_arg_check_build_model(
 		# date).
 		pricing_time = @elapsed begin
 			if pricing == "furini"
-					bp = _furini_pricing!(model, bp, p, start, options)
+				bsr, mbp = _furini_pricing!(model, bp, p, start, options)
+				bp = mbp.preprocess_byproduct
 			else
 				@assert pricing == "becker"
 				bp = _becker_pricing!(model, bp, p, start, options)
 			end
 		end
 		verbose && @show pricing_time
+		# Could be cleaner...
+		if @isdefined(bsr) && bsr == FOUND_OPTIMUM
+			@assert @isdefined(mbp)
+			return bsr, mbp
+		end
 	else # in the case there is no pricing phase
 		# Needs to build the mode here, as when there is pricing the pricing
 		# procedure is responsible for building the model.
@@ -456,7 +486,7 @@ function _no_arg_check_build_model(
 	end
 	throw_if_timeout_now(start, limit) # after handle_unreachable!
 
-	return bp
+	return BUILT_MODEL, ModelByproduct(bp)
 end
 
 # Only used to define `build_model(Val{:PPG2KP}, ...)`.
@@ -466,20 +496,17 @@ import ..build_model
 """
     build_model(::Val{:PPG2KP}, model, d, p, l, w, L, W[, options])
 
-
+TODO: Document.
 """
 @timeit TIMER function build_model(
 	::Val{:PPG2KP}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
 	options :: Dict{String, Any} = Dict{String, Any}()
-) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+) :: Tuple{BuildStopReason, ModelByproduct{D, S, P}} where {D, S, P}
 	norm_options = create_normalized_arg_subset(
 		options, accepted_arg_list(Val(:PPG2KP))
 	)
-	bmr = _no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
-	# show(stdout, "text/plain", bmr.cuts)
-	# show(stdout, "text/plain", bmr.pli_lwb)
-	return bmr
+	return _no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
 end
 
 end # module

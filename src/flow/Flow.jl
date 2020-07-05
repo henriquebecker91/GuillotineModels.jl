@@ -23,6 +23,7 @@ include("Format.jl")
 using JuMP
 
 import ..build_model
+import ..BUILT_MODEL
 """
     build_model(::Val{:Flow}, model, d, p, l, w, L, W, [options])
 
@@ -141,7 +142,7 @@ function build_model(
 	::Val{:Flow}, model, d :: Vector{D}, p :: Vector{P},
 	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
 	options :: Dict{String, Any} = Dict{String, Any}()
-) :: Tuple{Vector{Node{S, P}}, Vector{Edge{P, P}}} where {D, S, P}
+) where {D, S, P}
 	# TODO: fix (L, W, l, w, d) = (20, 5, [20, 4, 18], [4, 5, 2], [1, 1, 1])
 	@assert length(d) == length(l)
 	@assert length(d) == length(w)
@@ -236,7 +237,7 @@ function build_model(
 	#@show num_piece_types
 	#@show edges_data[num_piece_types+1:num_piece_types+4]
 
-	nodes_data, edges_data
+	BUILT_MODEL, (nodes_data, edges_data)
 end # build_model_no_symmbreak
 
 end # module

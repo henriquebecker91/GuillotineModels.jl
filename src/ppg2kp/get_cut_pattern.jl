@@ -1,5 +1,3 @@
-import ..CutPattern # type returned by get_cut_pattern
-
 # INTERNAL METHOD USED ONLY IN get_cut_pattern
 # If the "pattern" is the extraction of a single piece return either:
 # (1) a CutPattern representing the piece, if it is the same size as the
@@ -152,13 +150,12 @@ function _bottom_up_tree_build!(
 	patterns
 end
 
-import ..get_cut_pattern
-@timeit TIMER function get_cut_pattern(
-	model_type :: Val{:PPG2KP}, model :: JuMP.Model, ::Type{D}, ::Type{S},
-	build_model_return :: ByproductPPG2KP{D, S}
+# Internal function that does the heavy lifting with the data already
+# extracted from the model.
+function _get_cut_pattern(
+	nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals,
+	bmr :: ByproductPPG2KP{D, S}, debug :: Bool
 ) :: CutPattern{D, S} where {D, S}
-	# local constant to alternate debug mode (method will not take a debug flag)
-	debug = false
 	# 1. Check if there can be an extraction from the original plate to a
 	#    single piece. If it may and it happens, then just return this single
 	#    piece solution; otherwise the first cut is in `cuts_made`, find it
@@ -173,22 +170,6 @@ import ..get_cut_pattern
 	#    to be only present inside their parent pattern. At the end of the
 	#    process there should remain a single pattern in the pool that is the
 	#    root pattern.
-	bmr = build_model_return
-	pe = model[:picuts] # Piece Extractions
-	cm = model[:cuts_made] # Cuts Made
-
-	# non-zero {piece extractions, cuts made} {indexes,values}
-	nzpe_idxs, nzpe_vals = gather_nonzero(pe, D)
-	nzcm_idxs, nzcm_vals = gather_nonzero(cm, D)
-	if debug
-		@show nzpe_idxs
-		@show nzpe_vals
-		@show nzcm_idxs
-		@show nzcm_vals
-		@show value.(pe[nzpe_idxs])
-		@show value.(cm[nzcm_idxs])
-	end
-
 	sps_idx = _check_if_single_piece_solution(bmr.np, nzpe_idxs)
 	!iszero(sps_idx) && return _extraction_pattern(bmr, sps_idx)
 
@@ -234,4 +215,37 @@ import ..get_cut_pattern
 	@assert isone(length(patterns[1]))
 
 	return patterns[1][1]
+end
+
+import ..get_cut_pattern
+@timeit TIMER function get_cut_pattern(
+	model_type :: Val{:PPG2KP}, model :: JuMP.Model, ::Type{D}, ::Type{S},
+	build_model_return :: ModelByproduct{D, S, P}
+) :: CutPattern{D, S} where {D, S, P}
+	# local constant to alternate debug mode (method will not take a debug flag)
+	debug = false
+
+	bmr = build_model_return
+
+	bmr.found_optimum && return bmr.optimum_if_found
+
+	pe = model[:picuts] # Piece Extractions
+	cm = model[:cuts_made] # Cuts Made
+
+	# non-zero {piece extractions, cuts made} {indexes,values}
+	nzpe_idxs, nzpe_vals = gather_nonzero(pe, D)
+	nzcm_idxs, nzcm_vals = gather_nonzero(cm, D)
+	if debug
+		@show nzpe_idxs
+		@show nzpe_vals
+		@show nzcm_idxs
+		@show nzcm_vals
+		@show value.(pe[nzpe_idxs])
+		@show value.(cm[nzcm_idxs])
+	end
+
+	# Call the method that deals only with the data, and not with the JuMP.Model.
+	return _get_cut_pattern(
+		nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, bmr, debug
+	)
 end

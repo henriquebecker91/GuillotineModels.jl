@@ -19,6 +19,8 @@ using .SolversArgs
 import ..TIMER # The global module timer.
 using ..InstanceReader
 import ..build_model
+import ..cut_pattern_profit
+import ..BuildStopReason, ..BUILT_MODEL, ..FOUND_OPTIMUM
 using ..Utilities
 using ..Utilities.Args
 using ..PPG2KP, ..PPG2KP.Args
@@ -117,6 +119,14 @@ specific and are extracted and passed to their specific methods.
 	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(instfname)
 	before_build_time = time()
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
+	p_ = max(L/minimum(l), W/minimum(w))
+	if !pp["no-csv-output"]
+		n = length(d)
+		@show n
+		n_ = sum(d)
+		@show n_
+		@show p_
+	end
 	throw_if_timeout_now(start, limit)
 
 	solver_pp = create_unprefixed_subset(pp["solver"], pp)
@@ -125,77 +135,93 @@ specific and are extracted and passed to their specific methods.
 
 	model_pp = create_unprefixed_subset(pp["model"], pp)
 	model_id = Val(Symbol(pp["model"]))
-	bmr = build_model(
+	bsr, mbp = build_model(
 		model_id, m, d, p, l, w, L, W, model_pp
 	)
-	throw_if_timeout_now(start, limit)
 
-	!isempty(pp["save-model"]) && !pp["no-csv-output"] &&
-		@timeit TIMER "save_model" JuMP.write_to_file(m, pp["save-model"])
-	throw_if_timeout_now(start, limit)
-
-	p_ = max(L/minimum(l), W/minimum(w))
-	num_vars = num_variables(m)
-	num_constrs = num_all_constraints(m)
 	if !pp["no-csv-output"]
-		#@show time_to_build_model
-		n = length(d)
-		@show n
-		n_ = sum(d)
-		@show n_
-		@show p_
-		@show num_vars
-		@show num_constrs
+		println("build_stop_reason = $(bsr)")
+		println("build_stop_code = $(Int(bsr))")
 	end
+
+	if bsr == BUILT_MODEL
+		num_vars = num_variables(m)
+		num_constrs = num_all_constraints(m)
+		if !pp["no-csv-output"]
+			@show num_vars
+			@show num_constrs
+		end
+	end
+
+	throw_if_timeout_now(start, limit)
+
+	if !isempty(pp["save-model"]) && !pp["no-csv-output"]
+		if bsr == BUILT_MODEL
+			@timeit TIMER "save_model" JuMP.write_to_file(m, pp["save-model"])
+		else
+			@warn "No model saved to '$(pp["save-model"])' because the reason for" *
+				" stopping the model building was not $(BUILT_MODEL)" *
+				" but instead $(bsr)."
+		end
+	end
+
+	throw_if_timeout_now(start, limit)
 
 	pp["do-not-solve"] && return nothing
 
-	throw_if_timeout_now(start, limit)
-	pp["no-csv-output"] || println("MARK_FINAL_GENERIC_SOLVE")
-	output_name = "finished_model_solve"
-	output_value = @elapsed begin
-		@timeit TIMER output_name optimize_within_time_limit!(m, start, limit)
+	if bsr == BUILT_MODEL
+		pp["no-csv-output"] || println("MARK_FINAL_GENERIC_SOLVE")
+		fms_name = "finished_model_solve"
+		fms_time = @elapsed begin
+			@timeit TIMER fms_name optimize_within_time_limit!(m, start, limit)
+		end
+		if !pp["no-csv-output"]
+			println("$fms_name = $fms_time")
+			stop_reason = termination_status(m)
+			@show stop_reason
+			stop_code = Int64(stop_reason)
+			@show stop_code
+			obj_value = objective_value(m)
+			@show obj_value
+			obj_bound = objective_bound(m)
+			@show obj_bound
+		end
 	end
-	@assert termination_status(m) == MOI.OPTIMAL
-	pp["no-csv-output"] || println("$output_name = $output_value")
 	after_solve_time = time()
 	build_and_solve_time = after_solve_time - before_build_time
 	!pp["no-csv-output"] && @show build_and_solve_time
-	#See comment above about TimerOutputs.
-	#time_to_solve_model = TimerOutputs.time(get_defaulttimer(), "optimize!")
 
-	# This needs to be done even if it is not printed to warm-start the JIT.
-	obj_value = 0.0
-	if primal_status(m) == MOI.FEASIBLE_POINT
-		@timeit TIMER "stringfy_solutions" begin
-			obj_value = objective_value(m)
-			solution = get_cut_pattern(model_id, m, eltype(d), eltype(l), bmr)
-			sol_str = "solution = $solution\n"
-			sol_pretty_str = "PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
-				"\nPRETTY_STR_SOLUTION_END\n"
-			sol_simple_pretty_sol = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
-				to_pretty_str(simplify!(deepcopy(solution))) *
-				"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
-		end
-	end
-	if !pp["no-csv-output"]
-		#@show time_to_solve_model
+	# This needs to be done even if it is not printed to warm-start the JIT
+	# when a mock run is done.
+	@assert bsr in (BUILT_MODEL, FOUND_OPTIMUM)
+	solution = if bsr == BUILT_MODEL
 		if primal_status(m) == MOI.FEASIBLE_POINT
-			@timeit TIMER "print_solutions" begin
-				iob = IOBuffer()
-				write(iob, sol_str)
-				write(iob, sol_pretty_str)
-				write(iob, sol_simple_pretty_sol)
-				print(read(seekstart(iob), String))
-			end
+			get_cut_pattern(model_id, m, eltype(d), eltype(l), mbp)
+		else
+			CutPattern(L, W)
 		end
-		@show obj_value
-		obj_bound = objective_bound(m)
-		@show obj_bound
-		stop_reason = termination_status(m)
-		@show stop_reason
-		stop_code = Int64(stop_reason)
-		@show stop_code
+	elseif bsr == FOUND_OPTIMUM
+		get_cut_pattern(model_id, m, eltype(d), eltype(l), mbp)
+	end
+	@timeit TIMER "stringfy_solutions" begin
+		sol_str = "solution = $solution\n"
+		sol_pretty_str = "PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
+			"\nPRETTY_STR_SOLUTION_END\n"
+		sol_simple_pretty_sol = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
+			to_pretty_str(simplify!(deepcopy(solution))) *
+			"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
+	end
+
+	if !pp["no-csv-output"]
+		@timeit TIMER "print_solutions" begin
+			iob = IOBuffer()
+			write(iob, sol_str)
+			write(iob, sol_pretty_str)
+			write(iob, sol_simple_pretty_sol)
+			print(read(seekstart(iob), String))
+		end
+		solution_profit = cut_pattern_profit(solution, p)
+		@show solution_profit
 	end
 
 	return nothing

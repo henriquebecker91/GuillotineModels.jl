@@ -250,10 +250,10 @@ end
 
 @timeit TIMER function _restricted_final_pricing!(
 	model, p :: Vector{P},
-	bp :: ByproductPPG2KP{D, S, P}, seed, verbose :: Bool, mip_start :: Bool,
+	bp :: ByproductPPG2KP{D, S, P}, lidxs :: BPLinkage{P},
+	seed, verbose :: Bool, mip_start :: Bool,
 	bm :: BaseModel, start :: Float64 = time(),
-	limit :: Float64 = float(60*60*24*365),
-	options :: Dict{String, Any} = Dict{String, Any}()
+	limit :: Float64 = float(60*60*24*365)
 ) where {D, S, P}
 	bp = deepcopy(bp) # avoids tainting this parameter
 	n = num_variables(model)
@@ -292,14 +292,7 @@ end
 	verbose && println("MARK_FURINI_PRICING_RESTRICTED_LP_SOLVE")
 	@timeit TIMER "lp_solve" optimize_within_time_limit!(model, start, limit)
 	# Check if everything seems ok with the values obtained.
-	if termination_status(model) == MOI.OPTIMAL
-		restricted_LP = LP = objective_value(model)
-		# Note: the iterated_greedy solve the shelf version of the problem,
-		# that is restricted, so it cannot return a better known value than the
-		# restricted "upper bound"/"linear(ized) problem".
-		verbose && @show restricted_LP
-		@assert restricted_LB <= restricted_LP
-	else
+	if termination_status(model) != MOI.OPTIMAL
 		error(
 			"For some reason, solving the relaxed restricted model did not" *
 			" terminate with optimal status (the status was" *
@@ -307,19 +300,42 @@ end
 			" with this possibility and will abort."
 		)
 	end
+	restricted_LP = LP = objective_value(model)
+	# Note: the iterated_greedy solve the shelf version of the problem,
+	# that is restricted, so it cannot return a better known value than the
+	# restricted "upper bound"/"linear(ized) problem"/"integer relaxation".
+	verbose && @show restricted_LP
+	@assert restricted_LB <= restricted_LP + eps(restricted_LP)
+	# This is a hack. If restricted_LB (that is guaranteed to be an integer
+	# considering our assumption that piece profits are integer) is less than
+	# one unity smaller than restricted_LP, then the optimal for the
+	# restricted problem was already found, and we do not need to price the
+	# restricted model and solve it.
+	if restricted_LP - restricted_LB < 1.0
+		# Keep the MIP-start in full indexes, so we can just convert it back to
+		# the final indexes, instead of changing each time the part indexes change.
+		heuristic_raw_ws[1] .= lidxs.exts_part2full[heuristic_raw_ws[1]]
+		heuristic_raw_ws[3] .= lidxs.cuts_part2full[heuristic_raw_ws[3]]
+		# If LB and UB match, the restricted priced model is an empty model.
+		return bkv, heuristic_raw_ws, true #= early_return =#, bp
+	end
 
 	plate_duals = dual.(model[:plate_cons])
-	rc_discrete_bitstr, bp = _final_pricing!(model, plate_duals, bp, LB, LP)
-	rc_fix_bitstr = .!rc_discrete_bitstr
+	kept, bp = _final_pricing!(model, plate_duals, bp, LB, LP)
+
+	# Update the BPLinkage (some cuts were deleted). Needed to convert the
+	# MIP-start part indexes to full indexes before returning.
+	_delete_from_part!(lidxs.cuts_part2full, lidxs.cuts_full2part, .!kept)
+
 	if verbose
-		qt_cmvars_priced_restricted = sum(rc_discrete_bitstr)
-		qt_cmvars_deleted_by_heuristic_pricing = length(rc_fix_bitstr) -
+		qt_cmvars_priced_restricted = sum(kept)
+		qt_cmvars_deleted_by_heuristic_pricing = length(kept) -
 			qt_cmvars_priced_restricted
 		@show qt_cmvars_priced_restricted
 		@show qt_cmvars_deleted_by_heuristic_pricing
 	end
 	restore!.(model[:picuts], pe_svcs)
-	restore!.(model[:cuts_made], cm_svcs[rc_discrete_bitstr])
+	restore!.(model[:cuts_made], cm_svcs[kept])
 	# restricted MIP solved
 	verbose && println("MARK_FURINI_PRICING_RESTRICTED_MIP_SOLVE")
 	@timeit TIMER "mip_solve" optimize_within_time_limit!(model, start, limit)
@@ -339,7 +355,15 @@ end
 	end
 	model_obj > bkv && (bkv = model_obj)
 
-	return bkv, rc_discrete_bitstr, bp
+	# Save the restricted model optimal solution so the final model can be
+	# warm-start or, if iterative pricing proves this solution is optimal,
+	# return this solution.
+	restricted_sol = save_mip_start(model)
+	# Convert it to full indexes before returning.
+	restricted_sol[1] .= lidxs.exts_part2full[restricted_sol[1]]
+	restricted_sol[3] .= lidxs.cuts_part2full[restricted_sol[3]]
+
+	return bkv, restricted_sol, false #= early_return =#, bp
 end
 
 # Arguments:
@@ -995,33 +1019,23 @@ end
 	# from the restricted model (by a _final_pricing!), and the solve it
 	# to get the LB for the unrestricted model.
 	restricted_final_pricing_time = @elapsed begin
-		bkv, kept, priced_r_bp = _restricted_final_pricing!(
-			model, p, restricted_bp, heuristic_seed, verbose, mip_start,
-			bm, start, limit, options
+		bkv, raw_ws_full, early_return, priced_r_bp = _restricted_final_pricing!(
+			model, p, restricted_bp, lidxs, heuristic_seed, verbose, mip_start,
+			bm, start, limit
 		)
 	end
 	LB = convert(Float64, bkv)
 
 	if verbose
 		# After _restricted_final_pricing! these values can have changed.
-		println("qt_cmvars_priced_restricted = $(length(priced_r_bp.cuts))")
-		println("qt_pevars_priced_restricted = $(length(priced_r_bp.np))")
-		println("qt_plates_priced_restricted = $(length(priced_r_bp.pli_lwb))")
+		println("unrestricted_LB = $LB")
+		println("solved_priced_restricted_model = $(!early_return)")
+		if !early_return
+			println("qt_cmvars_priced_restricted = $(length(priced_r_bp.cuts))")
+			println("qt_pevars_priced_restricted = $(length(priced_r_bp.np))")
+			println("qt_plates_priced_restricted = $(length(priced_r_bp.pli_lwb))")
+		end
 		@show restricted_final_pricing_time
-	end
-
-	if mip_start
-		# Update the BPLinkage to link `priced_r_bp` to `full_bp`, not
-		# `restricted_bp` to `full_bp` anymore.
-		_delete_from_part!(lidxs.cuts_part2full, lidxs.cuts_full2part, .!kept)
-		_check_linkage(lidxs)
-		# Save the restricted model optimal solution so we can warm-start the
-		# final model later.
-		restricted_sol = save_mip_start(model)
-		# Keep the MIP-start in full indexes, so we can just convert it back to
-		# the final indexes, instead of changing each time the part indexes change.
-		restricted_sol[1] .= lidxs.exts_part2full[restricted_sol[1]]
-		restricted_sol[3] .= lidxs.cuts_part2full[restricted_sol[3]]
 	end
 
 	# If those fail, we need may need to rethink the iterative pricing,
@@ -1066,14 +1080,26 @@ end
 		)
 	end
 	_check_linkage(lidxs)
+	LP = objective_value(model)
 	if verbose
 		# After _iterative_pricing! these values can have changed.
+		println("unrestricted_UB = $LP")
 		println("qt_cmvars_after_iterated = $(length(final_iter_bp.cuts))")
 		println("qt_pevars_after_iterated = $(length(final_iter_bp.np))")
 		println("qt_plates_after_iterated = $(length(final_iter_bp.pli_lwb))")
 		@show iterative_pricing_time
 	end
-	LP = objective_value(model)
+
+	# If the upper bound (LP) computed by `_iterative_pricing!` proves that the
+	# already found lower bound (LB) is optimal, then we do not need to finish
+	# the model building and can just return the optimal solution. The check
+	# below assumes all pieces have integer prices/'profit values' (they
+	# can be Float64, they just need to not have a fractionary part for this
+	# to be correct).
+	if (LP - LB) < 1.0
+		optimum = _get_cut_pattern(raw_ws_full..., full_bp, verbose)
+		return FOUND_OPTIMUM, ModelByproduct(full_bp, optimum)
+	end
 
 	# Create an array with the value of the constraint duals in the full
 	# model. Throw away the old model and create the full model.
@@ -1101,8 +1127,8 @@ end
 	if mip_start
 		# Shift the full indexes considering the cut variables deleted by
 		# _final_pricing!, MIP-start the model with the restricted solution.
-		shift_idxs!(restricted_sol[3], final_kept)
-		raw_mip_start!(model, restricted_sol...)
+		shift_idxs!(raw_ws_full[3], final_kept)
+		raw_mip_start!(model, raw_ws_full...)
 	end
 
 	# NOTE: the flag description says that Gurobi's Method is changed just for
@@ -1118,7 +1144,7 @@ end
 		#set_optimizer_attribute(model, "Presolve", -1)
 	end
 
-	return final_bp
+	return BUILT_MODEL, ModelByproduct(final_bp)
 end
 
 # TODO: for now it takes the seed and use it with the same heuristic as
