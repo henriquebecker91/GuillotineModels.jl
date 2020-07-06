@@ -61,6 +61,10 @@ end
 	!debug && return
 	qt_unreachable_plate_types = total_num_plates - num_reached
 	@show qt_unreachable_plate_types
+	# This loop increase the log files by orders of magnitude. Useful for
+	# extensive debug, but not for experiment logs (in which hundreds
+	# of files are created).
+	#=
 	iob = IOBuffer()
 	write(iob, "START_UNREACHABLE_PLATES\n")
 	if qt_unreachable_plate_types > 0
@@ -73,6 +77,7 @@ end
 	end
 	write(iob, "END_UNREACHABLE_PLATES\n")
 	print(read(seekstart(iob), String))
+	=#
 	return
 end
 

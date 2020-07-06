@@ -241,7 +241,7 @@ solver time limit to the old value before returning.
 """
 function optimize_within_time_limit!(model, secs :: Float64)
 	old_time_limit = JuMP.time_limit_sec(model)
-	JuMP.set_time_limit_sec(model, secs)
+	JuMP.set_time_limit_sec(model, secs > 0.0 ? secs : 0.0)
 	flush_all_output()
 	optimize!(model)
 	JuMP.set_time_limit_sec(model, old_time_limit)
@@ -253,13 +253,30 @@ export optimize_within_time_limit!
 
 """
     optimize_within_time_limit!(model, start, limit[, now = time()])
+    optimize_within_time_limit!(f, model, start, limit[, now = time()])
 
 Throws a `TimeoutError` if the time limit has been violated before
 calling the `JuMP.optimize!`, change the solver to respect a time limit of the
 remaining time, throws a `TimeoutError` if the solver termination status is
 `MOI.TIME_LIMIT` OR calling `time()` shows a time limit violation.
+
+If the method with the `f` parameter is called, and a timeout happens, then `f`
+is called with four parameters: `model`, `start`, `limit`, and the value
+returned by a call to `time()` just after the model stopping. If `f` returns
+`true` then the exception is not thrown, any other return value is ignored and
+the exception is thrown.
 """
 function optimize_within_time_limit!(
+	model,
+	start :: Float64,
+	limit :: Float64,
+	now :: Float64 = time()
+)
+	just_no(args...) = false
+	return optimize_within_time_limit!(just_no, model, start, limit)
+end
+function optimize_within_time_limit!(
+	f,
 	model,
 	start :: Float64,
 	limit :: Float64,
@@ -271,10 +288,13 @@ function optimize_within_time_limit!(
 	# be pedantic to the point of throwing a TimeoutError in middle of solution
 	# printing (that is considerably fast).
 	optimize_within_time_limit!(model, limit - (now - start))
-	if termination_status(model) == MOI.TIME_LIMIT
+	now = time() # updates `now` to after the optimization
+	if termination_status(model) == MOI.TIME_LIMIT || (now - start) > limit
+		# The comparison below can appear to be unnecessary and stupid, but it
+		# is not. `f` is allowed to return a non-Bool and, without the comparison,
+		# an exception would be raised (not the TimeoutError that it should be).
+		f(model, start, limit, now) === true && return model
 		throw(TimeoutError(start, limit, time()))
-	else
-		throw_if_timeout_now(start, limit)
 	end
 	return model
 end

@@ -300,18 +300,18 @@ end
 			" with this possibility and will abort."
 		)
 	end
-	restricted_LP = LP = objective_value(model)
+	restricted_UB = LP = objective_value(model)
 	# Note: the iterated_greedy solve the shelf version of the problem,
 	# that is restricted, so it cannot return a better known value than the
 	# restricted "upper bound"/"linear(ized) problem"/"integer relaxation".
-	verbose && @show restricted_LP
-	@assert restricted_LB <= restricted_LP + eps(restricted_LP)
+	verbose && @show restricted_UB
+	@assert restricted_LB <= restricted_UB + eps(restricted_UB)
 	# This is a hack. If restricted_LB (that is guaranteed to be an integer
 	# considering our assumption that piece profits are integer) is less than
-	# one unity smaller than restricted_LP, then the optimal for the
+	# one unity smaller than restricted_UB, then the optimal for the
 	# restricted problem was already found, and we do not need to price the
 	# restricted model and solve it.
-	if restricted_LP - restricted_LB < 1.0
+	if restricted_UB - restricted_LB < 1.0
 		# Keep the MIP-start in full indexes, so we can just convert it back to
 		# the final indexes, instead of changing each time the part indexes change.
 		heuristic_raw_ws[1] .= lidxs.exts_part2full[heuristic_raw_ws[1]]
@@ -763,6 +763,61 @@ function _clean_partial_byproduct!(model, lidxs, full_bp, part_bp)
 	)
 end
 
+# Structs and functions to store and print stats related to the model.
+#=
+abstract type AbstractAggregate{T} end;
+function Base.getindex(a :: AbstractAggregate{T}, s :: Symbol) :: T where {T}
+	return (getfield(a, s) :: T)
+end
+struct ModelStats{T} <: AbstractAggregate{T}
+	cuts :: T
+	extractions :: T
+	plates :: T
+end
+=#
+
+const ModelStats{P} = NamedTuple{(:cmvars, :pevars, :plates), NTuple{3, P}}
+function ModelStats(
+	bp :: ByproductPPG2KP{D, S, P}
+) :: ModelStats{P} where {D, S, P}
+	return ModelStats{P}(convert.(P, length.((bp.cuts, bp.np, bp.pli_lwb))))
+end
+mutable struct IterativePricingStats{P}
+	starting_qt :: ModelStats{P}
+	previous_qt :: ModelStats{P}
+	current_iter :: P
+	qt_threshold_hits :: P
+end
+function IterativePricingStats(
+	bp :: ByproductPPG2KP{D, S, P}
+) :: IterativePricingStats{P} where {D, S, P}
+  initial_stats = ModelStats(bp)
+	return IterativePricingStats(initial_stats, initial_stats, zero(P), zero(P))
+end
+function _print_and_update!(
+	stats :: IterativePricingStats{P},
+	bp :: ByproductPPG2KP{D, S, P},
+	threshold_hit :: Bool
+) :: Nothing where {D, S, P}
+	println("threshold_hit_in_iter_$(stats.current_iter) = $(threshold_hit)")
+	stats.qt_threshold_hits += threshold_hit
+	curr_stats = ModelStats(bp)
+	for name in fieldnames(ModelStats{P})
+		println(
+			"qt_$(name)_added_by_iter_$(stats.current_iter) = " *
+			string(curr_stats[name] - stats.previous_qt[name])
+		)
+		println(
+			"qt_$(name)_after_iter_$(stats.current_iter) = " *
+			string(curr_stats[name])
+		)
+	end
+	stats.previous_qt = curr_stats
+	stats.current_iter += 1
+
+	return
+end
+
 # NOTE: expect the model to already be relaxed, and with only the restricted
 # cut variables not fixed to zero (while the rest is fixed to zero).
 # NOTE: the description of this method (Explained in 10.1287/ijoc.2016.0710,
@@ -780,9 +835,8 @@ end
 	alpha :: Float64, beta :: Float64, sort_by_rp :: Bool, debug :: Bool = false,
 	start :: Float64 = time(), limit :: Float64 = float(60*60*24*365)
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
-	# Technically, the old part_bp is not used after this call, but purely for
-	# hygiene reasons let us deepcopy it and avoid invalidating it.
-	part_bp = deepcopy(part_bp)
+	part_bp = deepcopy(part_bp) # Avoid invalidating the original part_bp.
+	stats = IterativePricingStats(part_bp)
 
 	flush_all_output()
 	# the last solve before this was MIP and has no duals
@@ -803,27 +857,29 @@ end
 	)
 	unused_full_cuts = full_bp.cuts[unused_full_cuts_idxs]
 
-	# The vectors are all allocated here (but used inside
-	# `_recompute_idxs_to_add!`) to avoid reallocating them every loop.
-	# Note that the `pool_idxs_to_add` values are indexes for the
-	# `unused_full_cuts_idxs` vector, they are not the cut indexes themselves.
-	pool_idxs_to_add = P[]
 	plate_cons = model[:plate_cons]
 	plate_duals = zeros(Float64, length(full_bp.pli_lwb))
 	plate_duals[lidxs.plis_part2full] .= dual.(plate_cons)
-	rps_buffer = Vector{Float64}(undef, length(unused_full_cuts))
 
 	# Do the initial pricing, necessary to compute n_max, and that is always done
 	# (i.e., the end condition can only be tested after this first loop).
-	#=initial_num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
-		pool_idxs_to_add, unused_full_cuts, plate_duals, threshold, typemax(P),
-		sort_by_rp, rps_buffer
-	)=#
 	pool_idxs_to_add, initial_num_positive_rp_vars, was_above_threshold =
 		_safe_recompute_idxs_to_add!(
 			unused_full_cuts, plate_duals, threshold, typemax(P), sort_by_rp
 		)
-	pricing_threshold_hits = was_above_threshold ? 1 : 0
+
+	# NOTE: the _recompute_idxs_to_add! below was deemed excessive optimization.
+	# The vectors are all allocated here (but used inside
+	# `_recompute_idxs_to_add!`) to avoid reallocating them every loop.
+	# Note that the `pool_idxs_to_add` values are indexes for the
+	# `unused_full_cuts_idxs` vector, they are not the cut indexes themselves.
+	#pool_idxs_to_add = P[]
+	#rps_buffer = Vector{Float64}(undef, length(unused_full_cuts))
+	#initial_num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
+	#	pool_idxs_to_add, unused_full_cuts, plate_duals, threshold, typemax(P),
+	#	sort_by_rp, rps_buffer
+	#)
+
 	debug && @show initial_num_positive_rp_vars
 	# The maximum number of variables unfixed at each iteration.
 	n_max = round(P, initial_num_positive_rp_vars * alpha, RoundUp)
@@ -835,19 +891,7 @@ end
 	n_max < length(pool_idxs_to_add) && resize!(pool_idxs_to_add, n_max)
 	num_positive_rp_vars = initial_num_positive_rp_vars
 	# The iterative pricing continue until there are variables to unfix.
-	qt_vars_added_back_to_LP_by_iterated = zero(P)
-	qt_iters = zero(P)
 	while !isempty(pool_idxs_to_add)
-		if debug
-			qt_iters += one(P)
-			println("qt_positive_rp_vars_iter_$(qt_iters) = $(num_positive_rp_vars)")
-			println("above_threshold_iter_$(qt_iters) = $(was_above_threshold)")
-			println(
-				"qt_vars_added_to_LP_iter_$(qt_iters) = $(length(pool_idxs_to_add))"
-			)
-			qt_vars_added_back_to_LP_by_iterated += length(pool_idxs_to_add)
-		end
-
 		# Updates the model, part_bp, and lidxs. The part_bp is left in a
 		# not-quite-valid-state, vertical and horizontal cuts intercalate and the
 		# value of first_vertical_cut_idx is bullshit. But such state is enough for
@@ -856,6 +900,14 @@ end
 			model, unused_full_cuts_idxs[pool_idxs_to_add], full_pli2pair, lidxs,
 			full_bp, part_bp
 		)
+		if debug
+			_print_and_update!(stats, part_bp, was_above_threshold)
+			println(
+				"qt_positive_rp_cmvars_iter_$(stats.current_iter) = " *
+				string(num_positive_rp_vars)
+			)
+		end
+
 		_check_linkage(lidxs)
 
 		# Now that the cuts were added to the model from the pool they can be
@@ -868,27 +920,30 @@ end
 
 		# Solve the LP model again so the constraint duals are updated.
 		flush_all_output()
-		debug && println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_$(qt_iters)")
-		#println("USING Gurobi.reset_model!(backend(model).inner)")
-		#Gurobi.reset_model!(backend(model).inner)
+		if debug
+			println("MARK_FURINI_PRICING_ITERATED_LP_SOLVE_$(stats.current_iter)")
+		end
+
 		@timeit TIMER "solve_lp" optimize_within_time_limit!(model, start, limit)
 		flush_all_output()
 
+		# The only information needed from the model solving.
 		plate_duals[lidxs.plis_part2full] .= dual.(plate_cons)
-		#=num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
-			pool_idxs_to_add, unused_full_cuts, plate_duals, threshold, n_max,
-			sort_by_rp, rps_buffer
-		)=#
+
+		# Excessively optimized version disabled.
+		#num_positive_rp_vars, was_above_threshold = _recompute_idxs_to_add!(
+		#	pool_idxs_to_add, unused_full_cuts, plate_duals, threshold, n_max,
+		#	sort_by_rp, rps_buffer
+		#)
+
 		pool_idxs_to_add, num_positive_rp_vars, was_above_threshold =
 			_safe_recompute_idxs_to_add!(
 				unused_full_cuts, plate_duals, threshold, n_max, sort_by_rp
 			)
-		was_above_threshold && (pricing_threshold_hits += 1)
 	end
 	if debug
-		println("qt_iterations_of_iterated_pricing = $qt_iters")
-		@show pricing_threshold_hits
-		@show qt_vars_added_back_to_LP_by_iterated
+		println("qt_iters_in_iterative = $(stats.current_iter)")
+		println("qt_threshold_hits_in_iterative = $(stats.qt_threshold_hits)")
 	end
 
 	return _clean_partial_byproduct!(model, lidxs, full_bp, part_bp)

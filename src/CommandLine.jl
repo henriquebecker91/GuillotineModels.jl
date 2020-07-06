@@ -173,7 +173,9 @@ specific and are extracted and passed to their specific methods.
 		pp["no-csv-output"] || println("MARK_FINAL_GENERIC_SOLVE")
 		fms_name = "finished_model_solve"
 		fms_time = @elapsed begin
-			@timeit TIMER fms_name optimize_within_time_limit!(m, start, limit)
+			# The version taking an amount of seconds does not throw a timeout
+			# error, it just sets the time limit.
+			@timeit TIMER fms_name optimize_within_time_limit!(m, limit - start)
 		end
 		if !pp["no-csv-output"]
 			println("$fms_name = $fms_time")
@@ -223,6 +225,16 @@ specific and are extracted and passed to their specific methods.
 		solution_profit = cut_pattern_profit(solution, p)
 		@show solution_profit
 	end
+
+	# This is done just before returning because the version of
+	# `optimize_within_time_limit!` called above does not throw. The
+	# non-throwing version was used to be able to print as much information as
+	# possible before throwing. However, if the timeout was reached, this
+	# method MUST throw.
+	if termination_status(m) == MOI.TIME_LIMIT
+		throw(TimeoutError(start, limit, time()))
+	end
+	throw_if_timeout_now(start, limit)
 
 	return nothing
 end
@@ -301,7 +313,7 @@ function generic_args() :: Vector{Arg}
 		),
 		Arg(
 			"generic-time-limit", 60.0 * 60.0 * 24.0 * 365.0,
-			"Defines a time limit (in seconds) to be observed in the context of the model-agnostic proccess of reading, building, solving, and printing. Each model has to define its own flag to control the time inside the model building process (to be set independently, it is does not interact with this flag). `JuMP.set_time_limit_sec` is called over the model before starting to solve it, with the remaining time after reading instance and building the model (not the total time). If `--warm-jit` defines that there will be a mock run to warm the jit, the time limit applies to this mock run (i.e., if the mock run breaks the limit it an exception is raised) but the timer is reset after the mock, so the mock time is not counted for the 'real' run time limit. A `GuillotineModels.TimeoutError` is raised if the time limit is violated."
+			"Defines a time limit (in seconds) to be observed in the context of the model-agnostic process of reading, building, solving, and printing. Each model has to define its own flag to control the time inside the model building process (to be set independently, it is does not interact with this flag). `JuMP.set_time_limit_sec` is called over the model before starting to solve it, with the remaining time after reading instance and building the model (not the total time). If `--warm-jit` defines that there will be a mock run to warm the jit, the time limit applies to this mock run (i.e., if the mock run breaks the limit it an exception is raised) but the timer is reset after the mock, so the mock time is not counted for the 'real' run time limit. A `GuillotineModels.TimeoutError` is raised if the time limit is violated."
 		),
 		Arg(
 			"save-model", "",
