@@ -246,6 +246,6 @@ import ..get_cut_pattern
 
 	# Call the method that deals only with the data, and not with the JuMP.Model.
 	return _get_cut_pattern(
-		nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, bmr, debug
+		nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, bmr.preprocess_byproduct, debug
 	)
 end
