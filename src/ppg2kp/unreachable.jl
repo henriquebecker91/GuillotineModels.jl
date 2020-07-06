@@ -143,8 +143,15 @@ end
 	model[:plate_cons] = kept_cons
 	deleteat!(bp.pli_lwb, .!rp)
 
-	@assert issorted(@view bp.cuts[1:(bp.first_vertical_cut_idx-1)]; by = c -> c[PARENT])
-	@assert	issorted(@view bp.cuts[bp.first_vertical_cut_idx:end]; by = c -> c[PARENT])
+	@assert bp.first_vertical_cut_idx <= length(bp.cuts) + 1
+	@assert issorted(
+		@view bp.cuts[1:(bp.first_vertical_cut_idx-1)]; by = c -> c[PARENT]
+	)
+	# If there are no vertical cuts this creates an empty array, which is
+	# sorted by definition.
+	@assert	issorted(
+		@view bp.cuts[bp.first_vertical_cut_idx:end]; by = c -> c[PARENT]
+	)
 	return bp
 end
 

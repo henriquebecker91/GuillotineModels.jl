@@ -403,11 +403,16 @@ function _no_arg_check_build_model(
 	limit :: Float64 = options["building-time-limit"]
 	# Enumerate plates and cuts.
 	bp = _gen_cuts_wo(P, d, l, w, L, W, options)
+	verbose = options["verbose"] && !options["quiet"]
+	if verbose
+		println("qt_pevars_after_preprocess = $(length(bp.np))")
+		println("qt_cmvars_after_preprocess = $(length(bp.cuts))")
+		println("qt_plates_after_preprocess = $(length(bp.pli_lwb))")
+	end
 	throw_if_timeout_now(start, limit)
 
 	# Deal with pricing or its absence. Builds the model based on the enumerated
 	# plates and cuts (or a subset of them).
-	verbose = options["verbose"] && !options["quiet"]
 	switch_method = options["Gurobi-LP-method-inside-furini-pricing"]
 	pricing = options["pricing"]
 	if pricing == "expected"
@@ -427,11 +432,6 @@ function _no_arg_check_build_model(
 				" non-default value, but the solver is '$current_solver_name'." *
 				" This flag will have no effect besides warnings."
 		end
-	end
-	if verbose
-		println("length_pe_before_pricing = $(length(bp.np))")
-		println("length_cm_before_pricing = $(length(bp.cuts))")
-		println("length_pc_before_pricing = $(length(bp.pli_lwb))")
 	end
 	bm = (options["faithful2furini2016"] ? FURINI : BECKER) :: BaseModel
 	if pricing != "none"
@@ -464,8 +464,10 @@ function _no_arg_check_build_model(
 		# procedure is responsible for building the model.
 		build_complete_model(model, p, bp, start, options)
 		if options["MIP-start"] == "guaranteed"
-			heuristic_seed = options["heuristic-seed"]
-			mip_start_by_heuristic!(model, bp, p, heuristic_seed, bm)
+			(heuristic_mip_start_value, _, _), _ = mip_start_by_heuristic!(
+				model, bp, p, options["heuristic-seed"], bm
+			)
+			@show heuristic_mip_start_value
 		end
 	end
 	if verbose
@@ -480,9 +482,9 @@ function _no_arg_check_build_model(
 	purge = !options["do-not-purge-unreachable"]
 	bp = _handle_unreachable!(bp, model, verbose, purge)
 	if verbose && purge
-		println("length_pe_after_purge = $(length(model[:picuts]))")
-		println("length_cm_after_purge = $(length(model[:cuts_made]))")
-		println("length_pc_after_purge = $(length(model[:plate_cons]))")
+		println("qt_pevars_after_purge = $(length(model[:picuts]))")
+		println("qt_cmvars_after_purge = $(length(model[:cuts_made]))")
+		println("qt_plates_after_purge = $(length(model[:plate_cons]))")
 	end
 	throw_if_timeout_now(start, limit) # after handle_unreachable!
 

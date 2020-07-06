@@ -1151,6 +1151,7 @@ end
 	# below assumes all pieces have integer prices/'profit values' (they
 	# can be Float64, they just need to not have a fractionary part for this
 	# to be correct).
+	@assert LB ≈ round(LB, RoundNearest)
 	if (LP - LB) < 1.0
 		optimum = _get_cut_pattern(raw_ws_full..., full_bp, verbose)
 		return FOUND_OPTIMUM, ModelByproduct(full_bp, optimum)

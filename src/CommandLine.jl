@@ -175,7 +175,9 @@ specific and are extracted and passed to their specific methods.
 		fms_time = @elapsed begin
 			# The version taking an amount of seconds does not throw a timeout
 			# error, it just sets the time limit.
-			@timeit TIMER fms_name optimize_within_time_limit!(m, limit - start)
+			@timeit TIMER fms_name optimize_within_time_limit!(
+				m, limit - (time() - start)
+			)
 		end
 		if !pp["no-csv-output"]
 			println("$fms_name = $fms_time")
