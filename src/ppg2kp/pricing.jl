@@ -290,7 +290,22 @@ end
 
 	# Solve the relaxed restricted model.
 	verbose && println("MARK_FURINI_PRICING_RESTRICTED_LP_SOLVE")
-	@timeit TIMER "lp_solve" optimize_within_time_limit!(model, start, limit)
+	@timeit TIMER "lp_solve" optimize_within_time_limit!(
+		model, limit - (time() - start)
+	)
+	if verbose
+		restricted_lp_stop_reason = termination_status(model)
+		@show restricted_lp_stop_reason
+		restricted_lp_stop_code = Int(restricted_lp_stop_reason)
+		@show restricted_lp_stop_code
+	end
+	if primal_status(model) == MOI.FEASIBLE_POINT
+		restricted_UB = LP = objective_value(model)
+		verbose && @show restricted_UB
+	end
+
+	throw_if_timeout_now(start, limit)
+
 	# Check if everything seems ok with the values obtained.
 	if termination_status(model) != MOI.OPTIMAL
 		error(
@@ -300,11 +315,9 @@ end
 			" with this possibility and will abort."
 		)
 	end
-	restricted_UB = LP = objective_value(model)
 	# Note: the iterated_greedy solve the shelf version of the problem,
 	# that is restricted, so it cannot return a better known value than the
 	# restricted "upper bound"/"linear(ized) problem"/"integer relaxation".
-	verbose && @show restricted_UB
 	@assert restricted_LB <= restricted_UB + eps(restricted_UB)
 	# This is a hack. If restricted_LB (that is guaranteed to be an integer
 	# considering our assumption that piece profits are integer) is less than
@@ -327,18 +340,24 @@ end
 	# MIP-start part indexes to full indexes before returning.
 	_delete_from_part!(lidxs.cuts_part2full, lidxs.cuts_full2part, .!kept)
 
+	# Already prints this info before we risk timeout solving it.
 	if verbose
-		qt_cmvars_priced_restricted = sum(kept)
-		qt_cmvars_deleted_by_heuristic_pricing = length(kept) -
-			qt_cmvars_priced_restricted
-		@show qt_cmvars_priced_restricted
+		qt_cmvars_deleted_by_heuristic_pricing = length(kept) - sum(kept)
 		@show qt_cmvars_deleted_by_heuristic_pricing
+		println("qt_cmvars_priced_restricted = $(length(bp.cuts))")
+		println("qt_pevars_priced_restricted = $(length(bp.np))")
+		println("qt_plates_priced_restricted = $(length(bp.pli_lwb))")
 	end
+
+	# Make the model a MIP again.
 	restore!.(model[:picuts], pe_svcs)
 	restore!.(model[:cuts_made], cm_svcs[kept])
+
 	# restricted MIP solved
 	verbose && println("MARK_FURINI_PRICING_RESTRICTED_MIP_SOLVE")
-	@timeit TIMER "mip_solve" optimize_within_time_limit!(model, start, limit)
+	@timeit TIMER "mip_solve" optimize_within_time_limit!(
+		model, limit - (time() - start)
+	)
 	# If we MIP start the restricted model with a feasible solution, it should
 	# be impossible to get a different status here.
 	@assert !mip_start || primal_status(model) == MOI.FEASIBLE_POINT
@@ -353,8 +372,10 @@ end
 		@show restricted_stop_reason
 		@show restricted_stop_code
 	end
-	model_obj > bkv && (bkv = model_obj)
 
+	throw_if_timeout_now(start, limit)
+
+	model_obj > bkv && (bkv = model_obj)
 	# Save the restricted model optimal solution so the final model can be
 	# warm-start or, if iterative pricing proves this solution is optimal,
 	# return this solution.
@@ -1082,14 +1103,8 @@ end
 	LB = convert(Float64, bkv)
 
 	if verbose
-		# After _restricted_final_pricing! these values can have changed.
 		println("unrestricted_LB = $LB")
 		println("solved_priced_restricted_model = $(!early_return)")
-		if !early_return
-			println("qt_cmvars_priced_restricted = $(length(priced_r_bp.cuts))")
-			println("qt_pevars_priced_restricted = $(length(priced_r_bp.np))")
-			println("qt_plates_priced_restricted = $(length(priced_r_bp.pli_lwb))")
-		end
 		@show restricted_final_pricing_time
 	end
 
