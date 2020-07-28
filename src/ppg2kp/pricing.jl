@@ -61,6 +61,7 @@ struct BPLinkage{P}
 	plis_full2part :: Vector{P}
 end
 
+#= Use to assert correctness. Uncomment if something seems wrong.
 function _check_part2full(part2full)
 	@assert allunique(part2full)
 	return
@@ -87,6 +88,7 @@ function _check_linkage(l)
 	_check_linked_idxs(l.plis_part2full, l.plis_full2part)
 	return
 end
+=#
 
 # Given the type for the index and a bitarray-like, return a duple of linked
 # indexes: the first has length equal to the number of true elements in bits
@@ -107,7 +109,7 @@ function bits2lidxs(::Type{I}, bits) :: NTuple{2, Vector{I}} where {I}
 			full2part[i] = zero(I)
 		end
 	end
-	_check_linked_idxs(part2full, full2part)
+	#_check_linked_idxs(part2full, full2part)
 	return part2full, full2part
 end
 
@@ -178,7 +180,7 @@ end
 		exts_part2full, exts_full2part, cuts_part2full, cuts_full2part,
 		plis_part2full, plis_full2part
 	)
-	_check_linkage(bpl)
+	#_check_linkage(bpl)
 	re = bp.np[exts_part2full]
 	rp = bp.pli_lwb[plis_part2full]
 	deleteat!(rc, .!rc_bits) # rc is already a copy of a subset
@@ -272,7 +274,7 @@ end
 	# the pricing. If we can MIP-start the model, we can just call
 	# `mip_start_by_heuristic!` and get the `bkv` returned, otherwise we need
 	# to call just the heuristic to get the bkv (and throw away the rest).
-	if mip_start
+	heuristic_lb_time = @elapsed if mip_start
 		(bkv, _, _), heuristic_raw_ws = mip_start_by_heuristic!(
 			model, bp, p, seed, bm
 		)
@@ -282,7 +284,11 @@ end
 		)
 	end
 	restricted_LB = LB = convert(Float64, bkv)
-	verbose && @show restricted_LB
+	if verbose
+		@show restricted_LB
+		println("heuristic_lb = $(restricted_LB)")
+		@show heuristic_lb_time
+	end
 
 	# Check if the heuristic did not blow the time limit, but only after
 	# the information output that happens after it.
@@ -543,7 +549,7 @@ function _delete_from_part!(part2full, full2part, to_delete)
 	end
 	# Finally, the values in part2full are really deleted.
 	deleteat!(part2full, to_delete)
-	_check_linked_idxs(part2full, full2part)
+	#_check_linked_idxs(part2full, full2part)
 	return part2full
 end
 
@@ -556,7 +562,7 @@ function _append_to_part!(part2full, full2part, to_append)
 		full2part[v] = l + i
 	end
 	append!(part2full, to_append)
-	_check_linked_idxs(part2full, full2part)
+	#_check_linked_idxs(part2full, full2part)
 	return part2full
 end
 
@@ -744,7 +750,7 @@ function _sort_linkage!(part2full, full2part, part_vecs)
 		part_vec .= part_vec[sp]
 	end
 
-	_check_linked_idxs(part2full, full2part)
+	#_check_linked_idxs(part2full, full2part)
 	return
 end
 
@@ -774,7 +780,7 @@ function _clean_partial_byproduct!(model, lidxs, full_bp, part_bp)
 		lidxs.plis_part2full, lidxs.plis_full2part,
 		(part_bp.pli_lwb, model[:plate_cons])
 	)
-	_check_linkage(lidxs)
+	#_check_linkage(lidxs)
 	new_fvci = searchsortedfirst(
 		lidxs.cuts_part2full, full_bp.first_vertical_cut_idx
 	)
@@ -929,7 +935,7 @@ end
 			)
 		end
 
-		_check_linkage(lidxs)
+		#_check_linkage(lidxs)
 
 		# Now that the cuts were added to the model from the pool they can be
 		# removed from the pool.
@@ -1069,6 +1075,8 @@ end
 
 	d = full_bp.d # shorten the name
 
+	timings = TimeSection[]
+	verbose && push!(timings, "restricted_pricing_time")
 	if JuMP.solver_name(model) == "Gurobi" && switch_method > -2
 		old_method = get_optimizer_attribute(model, "Method")
 		# Change the LP-solving method to dual simplex, this allows for better
@@ -1094,18 +1102,17 @@ end
 	# Use heuristic solution as LB, and relaxation as UB, to cut variables
 	# from the restricted model (by a _final_pricing!), and the solve it
 	# to get the LB for the unrestricted model.
-	restricted_final_pricing_time = @elapsed begin
-		bkv, raw_ws_full, early_return, priced_r_bp = _restricted_final_pricing!(
-			model, p, restricted_bp, lidxs, heuristic_seed, verbose, mip_start,
-			bm, start, limit
-		)
-	end
+	bkv, raw_ws_full, early_return, priced_r_bp = _restricted_final_pricing!(
+		model, p, restricted_bp, lidxs, heuristic_seed, verbose, mip_start,
+		bm, start, limit
+	)
 	LB = convert(Float64, bkv)
 
 	if verbose
 		println("unrestricted_LB = $LB")
 		println("solved_priced_restricted_model = $(!early_return)")
-		@show restricted_final_pricing_time
+		close_time = close_and_print!(timings, "restricted_pricing_time")
+		push!(timings, TimeSection("iterative_pricing_time", close_time))
 	end
 
 	# If those fail, we need may need to rethink the iterative pricing,
@@ -1143,13 +1150,11 @@ end
 		println("qt_pevars_before_iterated = $(length(iterative_bp.np))")
 		println("qt_plates_before_iterated = $(length(iterative_bp.pli_lwb))")
 	end
-	iterative_pricing_time = @elapsed begin
-		final_iter_bp = _iterative_pricing!(
-			model, full_bp, iterative_bp, lidxs, full_inv_idxs.pli2pair,
-			sum(p .* d), alpha, beta, sort_by_rp, verbose, start, limit
-		)
-	end
-	_check_linkage(lidxs)
+	final_iter_bp = _iterative_pricing!(
+		model, full_bp, iterative_bp, lidxs, full_inv_idxs.pli2pair,
+		sum(p .* d), alpha, beta, sort_by_rp, verbose, start, limit
+	)
+	#_check_linkage(lidxs)
 	LP = objective_value(model)
 	if verbose
 		# After _iterative_pricing! these values can have changed.
@@ -1157,7 +1162,8 @@ end
 		println("qt_cmvars_after_iterated = $(length(final_iter_bp.cuts))")
 		println("qt_pevars_after_iterated = $(length(final_iter_bp.np))")
 		println("qt_plates_after_iterated = $(length(final_iter_bp.pli_lwb))")
-		@show iterative_pricing_time
+		close_time = close_and_print!(timings, "iterative_pricing_time")
+		push!(timings, TimeSection("final_pricing_time", close_time))
 	end
 
 	# If the upper bound (LP) computed by `_iterative_pricing!` proves that the
@@ -1180,18 +1186,17 @@ end
 	full_plate_duals[lidxs.plis_part2full] .= dual.(model[:plate_cons])
 	empty!(model)
 	_build_base_model!(model, p, full_bp, full_inv_idxs, options)
-	final_pricing_time = @elapsed begin
-		final_kept, final_bp = _final_pricing!(
-			model, full_plate_duals, full_bp, LB, LP
-		)
-	end
+	final_kept, final_bp = _final_pricing!(
+		model, full_plate_duals, full_bp, LB, LP
+	)
 
 	if verbose
 		# After _final_pricing! these values can have changed.
 		println("qt_cmvars_after_final = $(length(final_bp.cuts))")
 		println("qt_pevars_after_final = $(length(final_bp.np))")
 		println("qt_plates_after_final = $(length(final_bp.pli_lwb))")
-		@show final_pricing_time
+		close_time = close_and_print!(timings, "final_pricing_time")
+		push!(timings, TimeSection("pricing_final_ws_time", close_time))
 	end
 	throw_if_timeout_now(start, limit)
 
@@ -1215,6 +1220,7 @@ end
 		#set_optimizer_attribute(model, "Presolve", -1)
 	end
 
+	verbose && close_and_print!(timings, "pricing_final_ws_time")
 	return BUILT_MODEL, ModelByproduct(final_bp)
 end
 

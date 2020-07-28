@@ -114,17 +114,26 @@ specific and are extracted and passed to their specific methods.
 	start :: Float64 = time() # seconds since epoch
 	limit :: Float64 = pp["generic-time-limit"]
 	instfname = pp["instfname"]
-	!pp["no-csv-output"] && @show instfname
+	verbose = !pp["no-csv-output"]
+	verbose && @show instfname
 
+	timings = TimeSection[]
+	verbose && push!(timings, "read_instance_time")
 	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(instfname)
-	before_build_time = time()
+	verbose && close_and_print!(timings, "read_instance_time")
+
+	verbose && append!(timings, ["build_and_solve_time", "build_time"])
 	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
 	p_ = max(L/minimum(l), W/minimum(w))
-	if !pp["no-csv-output"]
-		n = length(d)
-		@show n
+	if verbose
+		@show L
+		@show W
 		n_ = sum(d)
 		@show n_
+		n = length(d)
+		@show n
+		println("min_l = $(minimum(l))")
+		println("min_w = $(minimum(w))")
 		@show p_
 	end
 	throw_if_timeout_now(start, limit)
@@ -138,8 +147,7 @@ specific and are extracted and passed to their specific methods.
 	bsr, mbp = build_model(
 		model_id, m, d, p, l, w, L, W, model_pp
 	)
-
-	if !pp["no-csv-output"]
+	if verbose
 		println("build_stop_reason = $(bsr)")
 		println("build_stop_code = $(Int(bsr))")
 	end
@@ -147,17 +155,21 @@ specific and are extracted and passed to their specific methods.
 	if bsr == BUILT_MODEL
 		num_vars = num_variables(m)
 		num_constrs = num_all_constraints(m)
-		if !pp["no-csv-output"]
+		if verbose
 			@show num_vars
 			@show num_constrs
 		end
 	end
 
+	verbose && close_and_print!(timings, "build_time")
 	throw_if_timeout_now(start, limit)
 
-	if !isempty(pp["save-model"]) && !pp["no-csv-output"]
+	if !isempty(pp["save-model"]) && verbose
 		if bsr == BUILT_MODEL
-			@timeit TIMER "save_model" JuMP.write_to_file(m, pp["save-model"])
+			save_model_time = @elapsed begin
+				@timeit TIMER "save_model" JuMP.write_to_file(m, pp["save-model"])
+			end
+			@show save_model_time
 		else
 			@warn "No model saved to '$(pp["save-model"])' because the reason for" *
 				" stopping the model building was not $(BUILT_MODEL)" *
@@ -165,12 +177,11 @@ specific and are extracted and passed to their specific methods.
 		end
 	end
 
+	pp["do-not-solve"] && return nothing
 	throw_if_timeout_now(start, limit)
 
-	pp["do-not-solve"] && return nothing
-
 	if bsr == BUILT_MODEL
-		pp["no-csv-output"] || println("MARK_FINAL_GENERIC_SOLVE")
+		verbose && println("MARK_FINAL_GENERIC_SOLVE")
 		fms_name = "finished_model_solve"
 		fms_time = @elapsed begin
 			# The version taking an amount of seconds does not throw a timeout
@@ -179,7 +190,7 @@ specific and are extracted and passed to their specific methods.
 				m, limit - (time() - start)
 			)
 		end
-		if !pp["no-csv-output"]
+		if verbose
 			println("$fms_name = $fms_time")
 			stop_reason = termination_status(m)
 			@show stop_reason
@@ -191,9 +202,10 @@ specific and are extracted and passed to their specific methods.
 			@show obj_bound
 		end
 	end
-	after_solve_time = time()
-	build_and_solve_time = after_solve_time - before_build_time
-	!pp["no-csv-output"] && @show build_and_solve_time
+	if verbose
+		close_time = close_and_print!(timings, "build_and_solve_time")
+		push!(timings, TimeSection("solution_print_time", close_time))
+	end
 
 	# This needs to be done even if it is not printed to warm-start the JIT
 	# when a mock run is done.
@@ -216,7 +228,7 @@ specific and are extracted and passed to their specific methods.
 			"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
 	end
 
-	if !pp["no-csv-output"]
+	if verbose
 		@timeit TIMER "print_solutions" begin
 			iob = IOBuffer()
 			write(iob, sol_str)
@@ -226,6 +238,7 @@ specific and are extracted and passed to their specific methods.
 		end
 		solution_profit = cut_pattern_profit(solution, p)
 		@show solution_profit
+		close_and_print!(timings, "solution_print_time")
 	end
 
 	# This is done just before returning because the version of

@@ -401,10 +401,13 @@ function _no_arg_check_build_model(
 	# starts to be counted.
 	start :: Float64 = time()
 	limit :: Float64 = options["building-time-limit"]
-	# Enumerate plates and cuts.
-	bp = _gen_cuts_wo(P, d, l, w, L, W, options)
 	verbose = options["verbose"] && !options["quiet"]
+	# Enumerate plates and cuts.
+	enumeration_time = @elapsed begin
+		bp = _gen_cuts_wo(P, d, l, w, L, W, options)
+	end
 	if verbose
+		@show enumeration_time
 		println("qt_pevars_after_preprocess = $(length(bp.np))")
 		println("qt_cmvars_after_preprocess = $(length(bp.cuts))")
 		println("qt_plates_after_preprocess = $(length(bp.pli_lwb))")
@@ -464,10 +467,15 @@ function _no_arg_check_build_model(
 		# procedure is responsible for building the model.
 		build_complete_model(model, p, bp, start, options)
 		if options["MIP-start"] == "guaranteed"
-			(heuristic_mip_start_value, _, _), _ = mip_start_by_heuristic!(
-				model, bp, p, options["heuristic-seed"], bm
-			)
-			@show heuristic_mip_start_value
+			heuristic_lb_time = @elapsed begin
+				(heuristic_lb, _, _), _ = mip_start_by_heuristic!(
+					model, bp, p, options["heuristic-seed"], bm
+				)
+			end
+			if verbose
+				@show heuristic_lb_time
+				@show heuristic_lb
+			end
 		end
 	end
 	if verbose
@@ -479,13 +487,16 @@ function _no_arg_check_build_model(
 
 	# Check if variables and constraints made useless by the deletion
 	# of other variables will be kept or not.
-	purge = !options["do-not-purge-unreachable"]
-	bp = _handle_unreachable!(bp, model, verbose, purge)
-	if verbose && purge
-		println("qt_pevars_after_purge = $(length(model[:picuts]))")
-		println("qt_cmvars_after_purge = $(length(model[:cuts_made]))")
-		println("qt_plates_after_purge = $(length(model[:plate_cons]))")
+	purge_unreachable_time = @elapsed begin
+		purge = !options["do-not-purge-unreachable"]
+		bp = _handle_unreachable!(bp, model, verbose, purge)
+		if verbose && purge
+			println("qt_pevars_after_purge = $(length(model[:picuts]))")
+			println("qt_cmvars_after_purge = $(length(model[:cuts_made]))")
+			println("qt_plates_after_purge = $(length(model[:plate_cons]))")
+		end
 	end
+	verbose && @show purge_unreachable_time
 	throw_if_timeout_now(start, limit) # after handle_unreachable!
 
 	return BUILT_MODEL, ModelByproduct(bp)

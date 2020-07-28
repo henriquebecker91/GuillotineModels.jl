@@ -538,4 +538,6 @@ function vector_summary(v :: AbstractVector)
 end
 export vector_summary
 
+include("timesection.jl")
+
 end # module
