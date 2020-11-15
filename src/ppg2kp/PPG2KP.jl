@@ -254,17 +254,16 @@ end
 		integer = !build_LP_not_MIP
 	)
 
-	# The objective function is to maximize the profit made by extracting
-	# pieces from subplates.
-	@objective(model, Max,
-		sum(p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
-	)
+	@variable(model, b >= 0, integer = !build_LP_not_MIP)
 
-	# c1: There is just one of the original plate, and so it can be only used
-	# to extract a single piece xor make a single cut that would make two new
-	# subplates available.
+	# The objective function is to minimize the number of original plates
+	# needed (all original plates have the same dimensions).
+	@objective(model, Min, b)
+
+	# c1: There are `b` copies of the the original plate, where `b` is the
+	# value we are trying to minimise.
 	plate_number_one = @constraint(model,
-		sum(picuts[pli2pair[1]]) + sum(cuts_made[parent2cut[1]]) <= 1
+		sum(picuts[pli2pair[1]]) + sum(cuts_made[parent2cut[1]]) <= b
 	)
 
 	# c2: for each subplate type that is not the original plate, such subplate
@@ -296,10 +295,10 @@ end
 	end
 
 	# c3: the amount of each piece type extracted from different plate types
-	# cannot surpass the demand for that piece type.
+	# must be exactly the demand for that piece type (CSP variant).
 	@constraint(model,
 		demand_con[pii=1:num_piece_types],
-		sum(picuts[pii2pair[pii]]) <= d[pii]
+		sum(picuts[pii2pair[pii]]) == d[pii]
 	)
 
 	lb = options["lower-bound"]
@@ -463,8 +462,9 @@ function _no_arg_check_build_model(
 			return bsr, mbp
 		end
 	else # in the case there is no pricing phase
-		# Needs to build the mode here, as when there is pricing the pricing
-		# procedure is responsible for building the model.
+		# Needs to build the model here if no pricing is selected.
+		# When there is pricing the pricing procedure is responsible
+		# for building the model.
 		build_complete_model(model, p, bp, start, options)
 		if options["MIP-start"] == "guaranteed"
 			heuristic_lb_time = @elapsed begin

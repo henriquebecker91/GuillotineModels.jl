@@ -56,14 +56,14 @@ end
 function _build_cut_idx_stack(
 	nz_cuts :: Vector{NTuple{3, P}},
 	qt_cuts :: Vector{D},
-	root_cut_idx :: Int #=P=#,
+	root_cut_idxs :: Vector{Int} #=P=#,
 	debug :: Bool = false
 ) :: Vector{Int#=P=#} where {D, P}
 	cut_idx_stack = Vector{Int#=P=#}()
-	push!(cut_idx_stack, root_cut_idx)
+	append!(cut_idx_stack, root_cut_idxs)
 	cuts_available = deepcopy(qt_cuts)
-	@assert isone(cuts_available[root_cut_idx])
-	cuts_available[root_cut_idx] -= one(D)
+	#@assert isone(cuts_available[root_cut_idx])
+	cuts_available[root_cut_idxs] .-= one(D)
 	next_cut = one(P)
 	while next_cut <= length(cut_idx_stack)
 		_, fc, sc = nz_cuts[cut_idx_stack[next_cut]]
@@ -155,7 +155,7 @@ end
 function _get_cut_pattern(
 	nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals,
 	bmr :: ByproductPPG2KP{D, S}, debug :: Bool
-) :: CutPattern{D, S} where {D, S}
+) :: Vector{CutPattern{D, S}} where {D, S}
 	# 1. Check if there can be an extraction from the original plate to a
 	#    single piece. If it may and it happens, then just return this single
 	#    piece solution; otherwise the first cut is in `cuts_made`, find it
@@ -179,10 +179,10 @@ function _get_cut_pattern(
 	# If the cut in `sel_cuts` is vertical or not.
 	ori_cuts = nzcm_idxs .>= bmr.first_vertical_cut_idx
 	# The index of the root cut (cut over the original plate) in `sel_cuts`.
-	root_idx = findfirst(cut -> isone(cut[1]), sel_cuts)
-	root_idx === nothing && return CutPattern(bmr.L, bmr.W, zero(D))
+	root_idxs = findall(cut -> isone(cut[1]), sel_cuts)
+	isempty(root_idxs) && return CutPattern(zero(S), zero(S), zero(D))
 
-	cut_idx_stack = _build_cut_idx_stack(sel_cuts, nzcm_vals, root_idx, debug)
+	cut_idx_stack = _build_cut_idx_stack(sel_cuts, nzcm_vals, root_idxs, debug)
 
 	# `patterns` translates a plate index (pli) into a list of all "uses" of that
 	# plate type. Such "uses" are CutPattern objects, either pieces or more
@@ -200,7 +200,7 @@ function _get_cut_pattern(
 
 	_bottom_up_tree_build!(patterns, cut_idx_stack, sel_cuts, ori_cuts, bmr, debug)
 
-	if !isone(length(patterns)) || !haskey(patterns, 1) || !isone(length(patterns[1]))
+	if !isone(length(patterns)) || !haskey(patterns, 1) #|| !isone(length(patterns[1]))
 		println("BUG AT GET_CUT_PATTERN")
 		for (key, subpatts) in patterns
 			@show key
@@ -212,16 +212,16 @@ function _get_cut_pattern(
 
 	@assert isone(length(patterns))
 	@assert haskey(patterns, 1)
-	@assert isone(length(patterns[1]))
+	#@assert isone(length(patterns[1]))
 
-	return patterns[1][1]
+	return patterns[1]
 end
 
 import ..get_cut_pattern
 @timeit TIMER function get_cut_pattern(
 	model_type :: Val{:PPG2KP}, model :: JuMP.Model, ::Type{D}, ::Type{S},
 	build_model_return :: ModelByproduct{D, S, P}
-) :: CutPattern{D, S} where {D, S, P}
+) :: Vector{CutPattern{D, S}} where {D, S, P}
 	# local constant to alternate debug mode (method will not take a debug flag)
 	debug = false
 

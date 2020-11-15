@@ -214,18 +214,19 @@ specific and are extracted and passed to their specific methods.
 		if primal_status(m) == MOI.FEASIBLE_POINT
 			get_cut_pattern(model_id, m, eltype(d), eltype(l), mbp)
 		else
-			CutPattern(L, W)
+			CutPattern{Int64, Int64}[]
 		end
 	elseif bsr == FOUND_OPTIMUM
 		get_cut_pattern(model_id, m, eltype(d), eltype(l), mbp)
 	end
 	@timeit TIMER "stringfy_solutions" begin
 		sol_str = "solution = $solution\n"
-		sol_pretty_str = "PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
-			"\nPRETTY_STR_SOLUTION_END\n"
-		sol_simple_pretty_sol = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
-			to_pretty_str(simplify!(deepcopy(solution))) *
-			"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
+		sol_pretty_str = "PRETTY_STR_SOLUTION_BEGIN\n" * join(
+			to_pretty_str.(solution), "\n"
+		) * "\nPRETTY_STR_SOLUTION_END\n"
+		sol_simple_pretty_sol = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" * join(
+			to_pretty_str.(simplify!.(deepcopy(solution))), "\n"
+		) * "\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
 	end
 
 	if verbose
@@ -236,8 +237,10 @@ specific and are extracted and passed to their specific methods.
 			write(iob, sol_simple_pretty_sol)
 			print(read(seekstart(iob), String))
 		end
-		solution_profit = cut_pattern_profit(solution, p)
-		@show solution_profit
+		#solution_profit = cut_pattern_profit(solution, p)
+		#@show solution_profit
+		solution_value = length(solution)
+		@show solution_value
 		close_and_print!(timings, "solution_print_time")
 	end
 
