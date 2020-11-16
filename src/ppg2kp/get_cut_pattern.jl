@@ -47,6 +47,39 @@ function _consume_cut!(
 	return nothing
 end
 
+# TODO: INSTEAD OF COPYING THIS FROM HEURISTIC PUT THIS INSIDE
+# THE COMMON UTILITIES MODULE AND IMPORT TO BOTH PLACES
+"""
+    expand(d :: [D], a :: [T]) :: [T]
+
+!!! **Internal use.**
+
+Given two vectors of the same size, create a copy of `a` that replaces each
+element `a[i]` by `d[i]` copies of it, and then flatten the copy.
+
+```julia
+expand([0, 1, 2, 3], [4, 5, 6, 7])
+[5, 6, 6, 7, 7, 7]
+```
+"""
+function expand(
+	d :: AbstractVector{D}, a :: AbstractVector{T}
+) where {D, T}
+	n = length(d)
+	@assert axes(d) == axes(a)
+	sum_d = sum(d)
+	b = Vector{T}(undef, sum_d)
+	next = 1
+	for k in eachindex(d)
+		a_k = a[k]
+		for _ = 1:d[k]
+			b[next] = a_k
+			next += 1
+		end
+	end
+	return b
+end
+
 # INTERNAL USE.
 # Given a list of the cuts used in a solution, the number of times their appear
 # in the solution, and the index of the root cut in such list, return a list of
@@ -60,10 +93,10 @@ function _build_cut_idx_stack(
 	debug :: Bool = false
 ) :: Vector{Int#=P=#} where {D, P}
 	cut_idx_stack = Vector{Int#=P=#}()
-	append!(cut_idx_stack, root_cut_idxs)
+	append!(cut_idx_stack, expand(qt_cuts[root_cut_idxs], root_cut_idxs))
 	cuts_available = deepcopy(qt_cuts)
 	#@assert isone(cuts_available[root_cut_idx])
-	cuts_available[root_cut_idxs] .-= one(D)
+	cuts_available[root_cut_idxs] .= zero(D)
 	next_cut = one(P)
 	while next_cut <= length(cut_idx_stack)
 		_, fc, sc = nz_cuts[cut_idx_stack[next_cut]]
