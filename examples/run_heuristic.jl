@@ -50,6 +50,7 @@ function main(args)
 		println("pat = $(pat1)")
 	else
 		println("The two mocks give distinct values. They follow:")
+		println("Note: two pieces of the same width changing positions is normal.")
 		println("iterated_greedy return:")
 		@show bkv1
 		@show sel1
@@ -84,6 +85,7 @@ function main(args)
 		println("pat = $(pat1)")
 	else
 		println("The two runs give distinct values. They follow:")
+		println("Note: two pieces of the same width changing positions is normal.")
 		println("iterated_greedy return:")
 		@show bkv1
 		@show sel1

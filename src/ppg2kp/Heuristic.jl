@@ -172,7 +172,7 @@ returns the best solution found by it).
 	ie = expand(d, collect(1:n)) # permutation used to keep the original order
 	ae = @. convert(P, le) * convert(P, we)
 	ee = @. pe / convert(Float64, ae)
-	oe = sortperm(ee)
+	oe = convert.(D, sortperm(ee; rev = true))
 
 	while curr_iter - iter_last_improv <= max_iter_since_last_improv
 		curr_iter += 1
@@ -311,7 +311,7 @@ end
 	ie = expand(d, collect(one(D):n)) # permutation used to keep the original order
 	ae = @. convert(P, le) * convert(P, we)
 	ee = @. pe / convert(Float64, ae)
-	oe = convert.(D, sortperm(ee))
+	oe = convert.(D, sortperm(ee; rev = true))
 
 	# Create unintialized copies of many structures above for using the
 	# technique of overwrite-and-swap-bindings, which avoid repeated allocation,
