@@ -13,7 +13,7 @@ makedocs(
 			"Utilities" => "Utilities.md",
 			"Utilities.Args" => "U-Args.md"
 		],
-		"GuillotineModels.InstanceReader" => "InstanceReader.md",
+		"GuillotineModels.Data" => "Data.md",
 		"GuillotineModels.CommandLine" => [
 			"CommandLine" => "CommandLine.md",
 			"CommandLine.SolversArgs" => "CL-SolversArgs.md"

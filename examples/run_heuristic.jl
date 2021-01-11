@@ -4,7 +4,7 @@
 exec julia --project=@. --color=yes --startup-file=no -e "include(popfirst!(ARGS))" "${BASH_SOURCE[0]}" "$@"
 =#
 
-import GuillotineModels.InstanceReader.read_from_file
+import GuillotineModels.Data.read_from_file
 using GuillotineModels.PPG2KP.Heuristic
 using TimerOutputs
 using RandomNumbers.Xorshifts # for Xoroshiro128Plus (for heuristic rng)
@@ -16,6 +16,7 @@ function main(args)
 	qt_args = length(args)
 	if qt_args < 1 || qt_args > 3
 		println("usage: ./run_heuristic instance_filename [rng_seed] [max_iter]")
+		println("For now the instance type is fixed to `Val{:Classic_G2KP}`.")
 		exit()
 	end
 	filename = args[1]
@@ -23,7 +24,9 @@ function main(args)
 	max_iter = (qt_args > 2 ? parse(Int, args[3]) : 1000000)
 
 	# Initializing.
-	N, L, W, l, w, p, d = read_from_file(filename)
+	instance = read_from_file(Val(:Classic_G2KP), filename)
+	N, L, W, l, w, p, d = length(instance.l), instance.L, instance.W,
+		instance.l, instance.w, instance.p, instance.d
 
 	#GC.enable(false)
 	# Running.

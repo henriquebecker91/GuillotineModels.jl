@@ -405,11 +405,11 @@ function get_cut_pattern(
 	)
 end
 
-include("utilities/Utilities.jl")
-include("InstanceReader.jl")
+include("Utilities/Utilities.jl")
+include("Data/Data.jl")
 #include("KnapsackPlates.jl") # not working, and no plans to fix it for now
-include("flow/Flow.jl")
-include("ppg2kp/PPG2KP.jl")
+include("Flow/Flow.jl")
+include("PPG2KP/PPG2KP.jl")
 include("CommandLine.jl")
 
 end # module

@@ -12,7 +12,8 @@ model = GuillotineModels.CommandLine.SolversArgs.empty_configured_model(
 		"raw-parameters" => "Pair{String, Any}[]"
 	])
 )
-N, L, W, l, w, p, d = GuillotineModels.InstanceReader.read_from_string(
+N, L, W, l, w, p, d = GuillotineModels.Data.read_from_string(
+Val(:Classic_G2KP),
 """
 132 100
 20

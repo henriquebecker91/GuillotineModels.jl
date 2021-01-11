@@ -96,7 +96,7 @@ const MOI = MathOptInterface
 import GLPK # to load glue code in GuillotineModels
 import Cbc
 using GuillotineModels: build_model, get_cut_pattern, to_pretty_str, simplify!
-using GuillotineModels.InstanceReader: read_from_string
+using GuillotineModels.Data: read_from_string
 using GuillotineModels.Utilities.Args: accepted_arg_list,
 	create_normalized_arg_subset
 using GuillotineModels.CommandLine.SolversArgs: empty_configured_model
@@ -104,7 +104,10 @@ using GuillotineModels.CommandLine.SolversArgs: empty_configured_model
 function test_obj_val(
 	model :: Symbol, solver :: Symbol, instance :: String, obj_val :: Int64
 )
-	N, L, W, l, w, p, d = read_from_string(instance)
+	instance = read_from_string(Val(:Classic_G2KP), instance)
+	N, L, W, l, w, p, d = length(instance.l), instance.L, instance.W,
+		instance.l, instance.w, instance.p, instance.d
+
 	solver_type = Val(solver)
 	solver_pp = create_normalized_arg_subset(
 		Dict{String, Any}("no-output" => true),

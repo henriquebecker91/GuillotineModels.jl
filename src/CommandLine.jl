@@ -17,7 +17,7 @@ include("./SolversArgs.jl") # empty_configured_model, *parse_settings()
 using .SolversArgs
 
 import ..TIMER # The global module timer.
-using ..InstanceReader
+using ..Data
 import ..build_model
 import ..cut_pattern_profit
 import ..BuildStopReason, ..BUILT_MODEL, ..FOUND_OPTIMUM
@@ -119,7 +119,10 @@ specific and are extracted and passed to their specific methods.
 
 	timings = TimeSection[]
 	verbose && push!(timings, "read_instance_time")
-	N, L_, W_, l_, w_, p, d = InstanceReader.read_from_file(instfname)
+  instance = Data.read_from_file(Val(:Classic_G2KP), instfname)
+	# TODO: use Unpack here?
+	N, L_, W_, l_, w_, p, d = length(instance.l), instance.L, instance.W,
+		instance.l, instance.w, instance.p, instance.d
 	verbose && close_and_print!(timings, "read_instance_time")
 
 	verbose && append!(timings, ["build_and_solve_time", "build_time"])
