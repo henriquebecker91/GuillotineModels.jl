@@ -9,16 +9,16 @@ However, "auto" formats can also be created, to simplify the user's life
 (in special during testing) paying for a little overhead (and risk
 of misdetection).
 
-The parsing function is extended for parametric types (e.g.,
-`CPG_SLOPP{D, S, P}`) so the data type returned (e.g., `SLOPP{D, S, P}`)
-has the demand/N/M (`D`), length/width (`S`), and profit/area (`P`) fields with
-the right types. The function is also extend to `Val` types for convenience.
-They often map to a parametric type with sensible safe defaults (e.g.
-`Val{:CPG_SLOPP}` -> `CPG_SLOPP{Int, Int, Int}`). But a finer-grained control
-is also possible, as you can define something like (`Val{:CPG_SLOPP_16}` ->
-`CPG_SLOPP{Int16, Int16, Int16}`). `Val` parameters are also important because
-module `CommandLine` currently takes `String`s that are passed to `(Val ∘
-Symbol)` in order to define the instance format to be used.
+The parsing function is extended for parametric types (e.g., `Classic_G2KP{D,
+S, P}`) so the data type returned (e.g., `G2KP{D, S, P}`) has the demand/N/M
+(`D`), length/width (`S`), and profit/area (`P`) fields with the right types.
+The function is also extend to `Val` types for convenience.  They often map to
+a parametric type with sensible safe defaults (e.g.  `Val{:Classic_G2KP}` ->
+`Classic_G2KP{Int, Int, Int}`). But a finer-grained control is also possible,
+as you can define something like (`Val{:Classic_G2KP_16}` ->
+`Classic_G2KP_16{Int16, Int16, Int16}`). `Val` parameters are also important
+because module `CommandLine` currently takes `String`s that are passed to `(Val
+∘ Symbol)` in order to define the instance format to be used.
 
 This module already extends the instance reading for many instance formats.
 From the 2DCPackGen (further abbreviated here as `CPG`, Cutting and Packing
@@ -28,6 +28,13 @@ Generator, because `struct`s cannot start with a digit), the module supports:
 clearly typed format type), and `Val{:CPG_SLOPP}` for the safe defaults (i.e.,
 the same as `CPG{Int, Int, Int}`, note this will be `32` in some machined and
 `64` in others). For details on these formats look at the 2DCPackGen tool.
+
+Some file formats aggregate multiple instances in a single file. To allow
+generic functions to deal with this possibility, it is recommended to
+specialize [`GuillotineModels.Data.is_collection`](@ref). This function should
+be specialized for the format type (not the return of the parsing).
+A format that does not specialize it is assumed to return a single instance
+upon parsing (i.e., [`GuillotineModels.Data.read_from_string`](@ref)).
 
 The `Classic_G2KP`/`G2KP` format/data is also provided in the same fashion.
 The format is described in the method documentation.
@@ -45,16 +52,20 @@ module Data
 
 import TimerOutputs.@timeit
 import ..TIMER
+using AutoHashEquals: @auto_hash_equals
 
-export read_from_string, read_from_file
+export read_from_string, read_from_file, is_collection
+export GenericParseError
 
+# From cpg
+export CPG_SLOPP, CPG_MHLOPPW, CPG_ODPW, CPG_SSSCSP
+export SLOPP, MHLOPPW, ODPW, SSSCSP
+include("cpg.jl")
+
+# From classic_g2kp
+export Classic_G2KP, G2KP
 include("classic_g2kp.jl")
 
-# TODO: restore the configuration Dict and allow:
-# 	to parse instances with an id column; out of order plate ids; save ids
-# TODO: SOME INSTANCES ASSUME THE READER IS COMPLETELY INSENSTIVE TO
-# 	WHITESPACE, CHANGE THE METHOD TO GET THE NEXT TOKEN AND NOT WORK
-# 	ORIENTED BY LINES BUT BY WORDS/TOKENS/NUMBERS
 """
     read_from_file(format, filepath :: AbstractString)
 
@@ -71,6 +82,55 @@ See also: [`read_from_string`](@ref)
 	return open(filepath) do f
 		read_from_string(format, read(f, String))
 	end
+end
+
+"""
+    is_collection(::Type{T}) :: Bool where {T}
+
+Indicate if a format is parsed to a single instance or to a collection.
+
+If the format may store a variable number of instances, then passing the
+format object to this function should return `true`; if the format always
+store a single instance, then it should return false.
+
+If this function is not specialized it assumes the format parses to a single
+instance.
+
+If the function returns `true` for some format, it is assumed that the
+value returned by [`read_from_string`](@ref) (and its file counterpart)
+respect the `Base.iterate` interface; if a file in this format has just a
+single instance, this single instance should be wrapped in the same container
+used when there are multiple instances (any overhead caused by wrapping will
+probably not be larger than the overhead caused by type unstability).
+
+"""
+is_collection(::Type{<:Any}) :: Bool = false
+
+"""
+    abstract type ParseError <: Exception end
+
+Supertype for parse errors.
+"""
+abstract type ParseError <: Exception end
+
+"""
+    GenericParseError(format, error_message)
+
+Most general error thrown by `parse_from_string` when it fails.
+
+Ideally, methods extending `parse_from_string` should use a subtype of
+`ParseError`, either custom or this one.
+"""
+struct GenericParseError <: ParseError
+	format :: Any
+	error_message :: String
+end
+
+function Base.showerror(io :: IO, e :: GenericParseError)
+	print(io,
+		"Trying to parse $(e.format) has resulted in the following error: " *
+		e.error_message
+	)
 end
 
 end # module

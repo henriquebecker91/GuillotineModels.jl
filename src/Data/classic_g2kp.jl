@@ -1,8 +1,6 @@
-export Classic_G2KP, G2KP
-
 struct Classic_G2KP{D, S, P} end
 
-struct G2KP{D, S, P}
+@auto_hash_equals struct G2KP{D, S, P}
 	"Length of the knapsack/'original plate'/'large object'."
 	L :: S
 	"Width of the knapsack/'original plate'/'large object'."
