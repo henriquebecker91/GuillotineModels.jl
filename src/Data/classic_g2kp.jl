@@ -1,5 +1,8 @@
 struct Classic_G2KP{D, S, P} end
 
+is_collection(_::Val{:Classic_G2KP}) = false
+is_collection(_::Classic_G2KP{D, S, P}) where {D, S, P} = false
+
 @auto_hash_equals struct G2KP{D, S, P}
 	"Length of the knapsack/'original plate'/'large object'."
 	L :: S

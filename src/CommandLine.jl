@@ -3,6 +3,7 @@ module CommandLine
 # TODO: accept command-line arguments to set the instance parsing configuration
 
 # External packages used.
+using UnPack: @unpack
 import TimerOutputs.@timeit
 using JuMP
 import MathOptInterface
@@ -54,91 +55,130 @@ function create_unprefixed_subset(prefix, p_args :: T) :: T where {T}
 end
 
 """
-    div_and_round_instance(L, W, l, w, p_args) -> L', W', l', w'
+    round_instance(instance, factor, roundmode)
+
+Return a new instance with all size-related fields multiplied by `factor`.
+
+The `roundmode` (a `Base.RoundingMode`) specifies how the instances should
+be rounded back to their original types (as the `factor` is expected to
+be a `Float64` and not an `Integer`).
+
+This function should be extended for new instance types; if you
+want to use `--round-{nearest,up,down}` flags of
+`GuillotineModels.CommandLine.run` for new instance types just create a
+method that takes an instance of the new type, a `Float64`, and a
+`Base.RoundingMode`).
+
+This function is called with this signature only if at least one option
+among `round-{nearest,up,down}` has a value different than one.
+
+!!! Unmodified arrays (like `d`) may be shared between old and new instances.
+"""
+function round_instance(
+	instance :: G2KP{D, S, P}, factor, roundmode
+) where {D, S, P}
+	@unpack L, W, l, w, d, p = instance
+	L_, W_, l_, w_ = _round_instance(L, W, l, w, factor, roundmode)
+	return G2KP{D, S, P}(L_, W_, l_, w_, d, p)
+end
+
+function round_instance(
+	instance :: SLOPP{D, S, P}, factor, roundmode
+) where {D, S, P}
+	@unpack L, W, l, w, dlb, dub, p = instance
+	L_, W_, l_, w_ = _round_instance(L, W, l, w, factor, roundmode)
+	return SLOPP{D, S, P}(L_, W_, l_, w_, dlb, dub, p)
+end
+
+function _round_instance(
+	L :: S, W :: S, l :: Vector{S}, w :: Vector{S}, factor, roundmode
+) where {S}
+	L_ = convert(S, round(L * factor, roundmode)) :: S
+	W_ = convert(S, round(W * factor, roundmode)) :: S
+	l_ = convert.(S, round.(l .* factor, roundmode)) :: Vector{S}
+	w_ = convert.(S, round.(w .* factor, roundmode)) :: Vector{S}
+	return L_, W_, l_, w_
+end
+
+"""
+    round_instance(instance, p_args) -> old_or_new_instance
 
 !!! **Internal use.**
 
-Given two integers and two integer arrays, uses `p_args` keys
-`div-and-round-{nearest,up,down}` to either: (1) return them unmodified
-if all keys have value one; (2) return a copy of them that is rounded
-the specified way (no two keys may have a value different than one).
-If a copy is returned, the type of the scalars and the element type of
-the arrays is converted to typeof(L).
+Given a recognized instance type, uses `p_args` keys
+`round-{nearest,up,down}` to either: (1) return them unmodified
+if all keys have value one; (2) return a copy of them that is multiplied
+by the ratio and rounded the specified way (no two keys may have a value
+different than one).
 """
-@timeit TIMER function div_and_round_instance(L, W, l, w, p_args)
+@timeit TIMER function round_instance(instance, p_args)
 	# assert explanation: at least two of the three flags are disabled (i.e.,
 	# have value one)
 	@assert sum(isone.((
-		p_args["div-and-round-nearest"],
-		p_args["div-and-round-up"],
-		p_args["div-and-round-down"]
+		p_args["round-nearest"],
+		p_args["round-up"],
+		p_args["round-down"]
 	))) >= 2
 
-	if p_args["div-and-round-nearest"] != 1
-		factor = p_args["div-and-round-nearest"]
+	if p_args["round-nearest"] != 1
+		factor = p_args["round-nearest"] :: Float64
 		roundmode = RoundNearest
-	elseif p_args["div-and-round-up"] != 1
-		factor = p_args["div-and-round-up"]
+	elseif p_args["round-up"] != 1
+		factor = p_args["round-up"] :: Float64
 		roundmode = RoundUp
-	elseif p_args["div-and-round-down"] != 1
-		factor = p_args["div-and-round-down"]
+	elseif p_args["round-down"] != 1
+		factor = p_args["round-down"] :: Float64
 		roundmode = RoundDown
 	else
 		factor = 1
 	end
 	if factor != 1
-		S = eltype(L)
-		L = convert(S, round(L / factor, roundmode))
-		W = convert(S, round(W / factor, roundmode))
-		l = convert.(S, round.(l ./ factor, roundmode))
-		w = convert.(S, round.(w ./ factor, roundmode))
+		instance = round_instance(
+			instance, factor, roundmode
+		) :: typeof(instance)
 	end
-	L, W, l, w
+	return instance
 end
 
-# Read the instance, build the model, solve the model, and print related stats.
-"""
-    read_build_solve_and_print(pp)
+# Fallback for unknown instance types.
+function print_instance_stats(instance, verbose :: Bool)
+	println("Start of the fallback output of `print_instance_stats`.")
+	show(IOContext(stdout, :limit => false), instance)
+	println("\nEnd of the fallback output of `print_instance_stats`.")
+	return
+end
 
-!!! **Internal use.**
-
-Given the parsed parameters (`pp`), read the instance file, build the model,
-solve the model (unless `pp['do-not-solve']` is true), and print statistics
-related to this process (unless `pp['no-csv-output']` is true).
-The list of options recognized and implemented by this method is the
-list returned by `generic_args()` (it also needs the required arguments
-in `core_argparse_settings()`). The other arguments are solver or model
-specific and are extracted and passed to their specific methods.
-"""
-@timeit TIMER function read_build_solve_and_print(pp) # pp stands for parsed parameters
-	start :: Float64 = time() # seconds since epoch
-	limit :: Float64 = pp["generic-time-limit"]
-	instfname = pp["instfname"]
-	verbose = !pp["no-csv-output"]
-	verbose && @show instfname
-
-	timings = TimeSection[]
-	verbose && push!(timings, "read_instance_time")
-  instance = Data.read_from_file(Val(:Classic_G2KP), instfname)
-	# TODO: use Unpack here?
-	N, L_, W_, l_, w_, p, d = length(instance.l), instance.L, instance.W,
-		instance.l, instance.w, instance.p, instance.d
-	verbose && close_and_print!(timings, "read_instance_time")
-
-	verbose && append!(timings, ["build_and_solve_time", "build_time"])
-	L, W, l, w = div_and_round_instance(L_, W_, l_, w_, pp)
+function print_instance_stats(
+	instance :: G2KP{D, S, P}, verbose :: Bool
+) where {D, S, P}
+	@unpack L, W, l, w, d = instance
 	p_ = max(L/minimum(l), W/minimum(w))
+	n_ = sum(d)
+	n = length(d)
 	if verbose
 		@show L
 		@show W
-		n_ = sum(d)
 		@show n_
-		n = length(d)
 		@show n
 		println("min_l = $(minimum(l))")
 		println("min_w = $(minimum(w))")
 		@show p_
+		show(IOContext(stdout, :limit => false), instance)
 	end
+	return
+end
+
+# Serves both as a function barrier and the step to be executed for each
+# instance in the instance(s) file.
+function build_solve_and_print(problem, formulation, instance_, pp, timings)
+	start = time() :: Float64 # seconds since epoch
+	limit = pp["generic-time-limit"] :: Float64
+	verbose = !(pp["no-csv-output"] :: Bool)
+
+	verbose && append!(timings, ["build_and_solve_time", "build_time"])
+	instance = round_instance(instance_, pp)
+	print_instance_stats(instance, verbose)
+
 	throw_if_timeout_now(start, limit)
 
 	solver_pp = create_unprefixed_subset(pp["solver"], pp)
@@ -146,9 +186,8 @@ specific and are extracted and passed to their specific methods.
 	throw_if_timeout_now(start, limit)
 
 	model_pp = create_unprefixed_subset(pp["model"], pp)
-	model_id = Val(Symbol(pp["model"]))
 	bsr, mbp = build_model(
-		model_id, m, d, p, l, w, L, W, model_pp
+		problem, formulation, instance, m, model_pp
 	)
 	if verbose
 		println("build_stop_reason = $(bsr)")
@@ -215,33 +254,37 @@ specific and are extracted and passed to their specific methods.
 	@assert bsr in (BUILT_MODEL, FOUND_OPTIMUM)
 	solution = if bsr == BUILT_MODEL
 		if primal_status(m) == MOI.FEASIBLE_POINT
-			get_cut_pattern(model_id, m, eltype(d), eltype(l), mbp)
+			get_cut_pattern(problem, formulation, m, mbp)
 		else
-			CutPattern(L, W)
+			nothing
 		end
 	elseif bsr == FOUND_OPTIMUM
-		get_cut_pattern(model_id, m, eltype(d), eltype(l), mbp)
+			get_cut_pattern(problem, formulation, m, mbp)
 	end
-	@timeit TIMER "stringfy_solutions" begin
-		sol_str = "solution = $solution\n"
-		sol_pretty_str = "PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
-			"\nPRETTY_STR_SOLUTION_END\n"
-		sol_simple_pretty_sol = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
-			to_pretty_str(simplify!(deepcopy(solution))) *
-			"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
-	end
-
-	if verbose
-		@timeit TIMER "print_solutions" begin
-			iob = IOBuffer()
-			write(iob, sol_str)
-			write(iob, sol_pretty_str)
-			write(iob, sol_simple_pretty_sol)
-			print(read(seekstart(iob), String))
+	if solution !== nothing
+		@timeit TIMER "stringfy_solutions" begin
+			sol_str = "solution = $solution\n"
+			sol_pretty_str = "PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
+				"\nPRETTY_STR_SOLUTION_END\n"
+			sol_simple_pretty_sol = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
+				to_pretty_str(simplify!(deepcopy(solution))) *
+				"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
 		end
-		solution_profit = cut_pattern_profit(solution, p)
-		@show solution_profit
-		close_and_print!(timings, "solution_print_time")
+
+		if verbose
+			@timeit TIMER "print_solutions" begin
+				iob = IOBuffer()
+				write(iob, sol_str)
+				write(iob, sol_pretty_str)
+				write(iob, sol_simple_pretty_sol)
+				print(read(seekstart(iob), String))
+			end
+			#= TODO: deal with the solution_value computation in a generic way.
+			solution_profit = cut_pattern_profit(solution, p)
+			@show solution_profit
+			=#
+			close_and_print!(timings, "solution_print_time")
+		end
 	end
 
 	# This is done just before returning because the version of
@@ -253,6 +296,52 @@ specific and are extracted and passed to their specific methods.
 		throw(TimeoutError(start, limit, time()))
 	end
 	throw_if_timeout_now(start, limit)
+
+	return
+end
+
+# Read the instance, build the model, solve the model, and print related stats.
+"""
+    read_build_solve_and_print(problem, format, pp)
+
+!!! **Internal use.**
+
+Given the parsed parameters (`pp`), read the instance file, build the model,
+solve the model (unless `pp['do-not-solve']` is true), and print statistics
+related to this process (unless `pp['no-csv-output']` is true).
+The list of options recognized and implemented by this method is the
+list returned by `generic_args()` (it also needs the required arguments
+in `core_argparse_settings()`). The other arguments are solver or model
+specific and are extracted and passed to their specific methods.
+"""
+@timeit TIMER function read_build_solve_and_print(
+	format, pp
+) # pp stands for parsed parameters
+	verbose = !(pp["no-csv-output"] :: Bool)
+	instfname = pp["instfname"] :: String
+	verbose && @show instfname
+	timings = TimeSection[]
+	verbose && push!(timings, "read_instance_time")
+  dataset = Data.read_from_file(format, instfname)
+	verbose && close_and_print!(timings, "read_instance_time")
+	problem = Val(Symbol(pp["problem"] :: String))
+	model_type = Val(Symbol(pp["model"] :: String))
+
+	if is_collection(format)
+		for (index, instance) in enumerate(dataset)
+			println("INSTANCE_START_MARKER_$index")
+			verbose && push!(timings, "total_instance_time")
+			build_solve_and_print(problem, model_type, instance, pp, timings)
+			verbose && close_and_print!(timings, "total_instance_time")
+			println("INSTANCE_CLOSE_MARKER_$index")
+		end
+	else
+		println("INSTANCE_START_MARKER_1")
+		verbose && push!(timings, "total_instance_time")
+		build_solve_and_print(problem, model_type, dataset, pp, timings)
+		verbose && close_and_print!(timings, "total_instance_time")
+		println("INSTANCE_CLOSE_MARKER_1")
+	end
 
 	return nothing
 end
@@ -302,6 +391,12 @@ function core_argparse_settings() :: ArgParseSettings
 	s = ArgParse.ArgParseSettings()
 	ArgParse.add_arg_group!(s, "Core Parameters", "core_parameters")
 	@add_arg_table! s begin
+		"problem"
+			help = "The type of problem to be solved (case sensitive, ex.: G2KP, G2CSP, G2ODP, G2MKP). Required."
+			arg_type = String
+		"format"
+			help = "The format of the instance(s) in the file (case sensitive, ex.: Classic_G2KP, CPG_SLOPP, CPG_SSSCSP, CPG_ODPW, CPG_MHLOPPW). Required."
+			arg_type = String
 		"model"
 			help = "Model or solution procedure to be used (case sensitive, ex.: Flow, KnapsackPlates, PPG2KP). Required."
 			arg_type = String
@@ -350,16 +445,16 @@ function generic_args() :: Vector{Arg}
 			"Integer and binary variables become continuous."
 		),
 		Arg(
-			"div-and-round-nearest", 1,
-			"Divide the instances lenght and width (but not profit) by the passed factor and round them to nearest (the model answer becomes a GUESS, not a valid primal heuristic, nor a valid bound)."
+			"round-nearest", 1.0,
+			"Multiplies the instances size-related fields by the passed factor and round them to nearest (the model answer becomes a GUESS, not a valid primal heuristic, nor a valid bound)."
 		),
 		Arg(
-			"div-and-round-up", 1,
-			"Divide the instances lenght and width (but not profit) by the passed factor and round them up (the model becomes a PRIMAL HEURISTIC)."
+			"round-up", 1.0,
+			"Multiplies the instances size-related fields by the passed factor and round them up (the model becomes a PRIMAL HEURISTIC)."
 		),
 		Arg(
-			"div-and-round-down", 1,
-			"Divide the instances lenght and width (but not profit) by the passed factor and round them down (the model becomes an OPTIMISTIC GUESS, A VALID BOUND)."
+			"round-down", 1.0,
+			"Multiplies the instance size-related fields by the passed factor and round them down (the model becomes an OPTIMISTIC GUESS, A VALID BOUND)."
 		)
 	]
 end
@@ -433,7 +528,9 @@ have their identifying symbol passed in either `models_list` or
 `solvers_list`.
 """
 function warn_if_changed_unused_values(p_args, models_list, solvers_list)
-	core_arg_names = ["solver", "model", "instfname"]
+	# Remember that for now, only solver and model support options/flags.
+	# problem and format do not support them yet.
+	core_arg_names = ["problem", "format", "solver", "model", "instfname"]
 	generic_arg_names = getfield.(generic_args(), :name)
 
 	model = p_args["model"]
@@ -497,10 +594,10 @@ with each other were used.
 function throw_if_incompatible_options(p_args)
 	# Generic Flags conflicts
 	num_rounds = sum(.! isone.(map(flag -> p_args[flag],
-		["div-and-round-nearest", "div-and-round-up", "div-and-round-down"]
+		["round-nearest", "round-up", "round-down"]
 	)))
 	num_rounds > 1 && @error(
-		"only one of --div-and-round-{nearest,up,down} may be passed at the" *
+		"only one of --round-{nearest,up,down} may be passed at the" *
 		" same time (what the fuck you expected?)"
 	)
 	# The flag conflicts of the specific model and solver.
@@ -547,18 +644,53 @@ an empty `Dict` is returned.
 end
 
 """
-    toy_instance() :: String
+    toy_instance(format):: String
 
 Just return a string representing a small instance to be used by `warm_jit`
 if `--warm-jit with-toy`.
 """
-function toy_instance() :: String
-	"""
-	100	200
-	2
-	50     100    1     2
-	50     200    1     1
-	"""
+function toy_instance(format)
+	error(
+		"If you want to mock a run with `--warm-jit with-toy` there need to" *
+		" exist an implementation of `GuillotineModels.CommandLine." *
+		"toy_instance` taking the instance format you passed."
+	)
+end
+
+function toy_instance(_ :: Val{:CPG_SLOPP}) :: String
+	return toy_instance(CPG_SLOPP{Int,Int,Int}())
+end
+
+function toy_instance(_ :: CPG_SLOPP{D, S, P}) :: String where {D, S, P}
+"""
+***2D Rectangular Problem***
+***Instances for the Single Large Object Placement Problem (SLOPP)***
+Input parameter file: SLOPP_parameters.txt
+***************************************************************************************************************
+Total number of instances
+LargeObject.Length      LargeObject.Width
+Number of different item types (i)
+Item[i].Length  Item[i].Width   Item[i].LowerBoundDemand        Item[i].UpperBoundDemand        Item[i].Value
+***************************************************************************************************************
+1
+100	200
+2
+50     100    0     1     2
+50     200    0     1     1
+"""
+end
+
+function toy_instance(_ :: Val{:Classic_G2KP}) :: String
+	return toy_instance(Classic_G2KP{Int,Int,Int}())
+end
+
+function toy_instance(_ :: Classic_G2KP{D, S, P}) :: String where {D, S, P}
+"""
+100	200
+2
+50     100    1     2
+50     200    1     1
+"""
 end
 
 """
@@ -573,13 +705,15 @@ See also: [`toy_instance`](@ref), [`read_build_solve_and_print`](@ref)
 """
 @timeit TIMER function warm_jit(p_args)
 	p_args["warm-jit"] == "no" && return
-	copyed_args = copy(p_args)
+	problem = Val(Symbol(p_args["problem"] :: String))
+	format = Val(Symbol(p_args["format"] :: String))
+	copyed_args = deepcopy(p_args)
 	# The temporary file is only needed if p_args["warm-jit"] == "with-toy",
 	# however, if it is needed, then it needs to be valid for the rest of
 	# this method scope.
 	mktemp() do path, io
 		if p_args["warm-jit"] == "with-toy"
-				write(io, toy_instance())
+				write(io, toy_instance(format) :: String)
 				close(io)
 				copyed_args["instfname"] = path
 		end
@@ -589,17 +723,20 @@ See also: [`toy_instance`](@ref), [`read_build_solve_and_print`](@ref)
 		if any(arg -> arg.name == "quiet", valid_model_args)
 			copyed_args[p_args["model"] * "-" * "quiet"] = true
 		end
-		read_build_solve_and_print(copyed_args)
+		read_build_solve_and_print(format, copyed_args)
 	end
 	return
 end
 
+# TODO: For now, there is no help support for which are possible values of
+# the problem and the format positional parameters. There is also no way
+# to support problem-specific (or format-specific) options/flags.
 """
     run(args = ARGS; implemented_models = [...], supported_solvers = [...])
 
 Parse the command-line arguments and take appropriate action: prints help
-or solves the problem instance using the specified solver, model, and
-their options.
+or solve instance(s) in the specified file of the specified format for
+the specified problem using the specified solver, model, and their options.
 
 The parameters available (listed in the help message and actually parsed)
 depend on the `implemented_models` and `supported_solvers`. The default values
@@ -628,15 +765,21 @@ you just need to remove the `["--help"]` from the call.
 )
 	p_args = parse_args(args, implemented_models, supported_solvers)
 	isempty(p_args) && return # Happens if called just for "--help".
-	!p_args["no-csv-output"] && @show args
-	!p_args["no-csv-output"] && @show p_args
+	verbose = !(p_args["no-csv-output"] :: Bool)
+	verbose && @show args
+	verbose && @show p_args
+	# Out of the `if verbose` because we want it to be compiled in mock runs.
 	date_now = Dates.format(Dates.now(), dateformat"yyyy-mm-ddTHH:MM:SS")
-	!p_args["no-csv-output"] && @show date_now
+	verbose && @show date_now
 	warm_jit(p_args) # It checks `p_args["warm-jit"]` to check if it will run.
 	# remaining code should not depend on this option
 	delete!(p_args, "warm-jit")
-	total_instance_time = @elapsed read_build_solve_and_print(p_args)
-	!p_args["no-csv-output"] && @show total_instance_time
+	# Now that is safe to extract some options, let us already call the
+	# read_build_solve_and_print function with the correct format,
+	# so it can be specialized for it.
+	format = Val(Symbol(p_args["format"] :: String))
+	total_file_time = @elapsed read_build_solve_and_print(format, p_args)
+	verbose && @show total_file_time
 
 	return
 end

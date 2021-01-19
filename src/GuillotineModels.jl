@@ -77,46 +77,30 @@ end
 @enum BuildStopReason BUILT_MODEL FOUND_OPTIMUM
 
 """
-    build_model(::Val{T}, model, d, p, l, w, L, W[, options])
+    build_model(problem, formulation, instance, model[, options])
 
-Given an instance of the demand-constrained unrestricted stage-unlimited
-knapsack 2D cutting problem without rotation (defined by `d`, `p`, `l`, `w`,
-`L`, `W`), add variables and constraints to `model` to make it a `::Val{T}`
-model for the specified instance.
+Given an `instance` of `problem`, build `formulation` inside `model`.
 
-A dict of options that are `::Val{T}`-specific may be also provided (otherwise
-defaults are used).
+A dict of options that are `problem`- and `formulation`-specific may
+be also provided (otherwise defaults are used).
 
 Should always return two values: the first is always an element of
-BuildStopReason; the second is `::Val{T}`-specific.
+`BuildStopReason`; the second is `problem`- and `formulation`-specific.
 
 # Arguments
 
-1. `::Val{T}`: Must be a `value-type` of a symbol identifying the mathematical to be built.
-2. `model`: Something that behaves as a JuMP model, it wil have variables and constraints added to it.
-3. `d::Vector{D}`: The demand of the pieces.
-4. `p::Vector{D}`: The profit of the pieces.
-5. `l::Vector{D}`: The length of the pieces.
-6. `w::Vector{D}`: The width of the pieces.
-7. `L::S`: The length of the original plate.
-8. `W::S`: The width of the original plate.
-9. `options::Dict{String, Any}`: Model-specific options.
+1. `problem`: An object that identifies the problem being solved, e.g., `Val(:G2KP)`. Each problem often requires a different `instance` type but sometimes an instance of a more general problem (that is not using the extra generality) may be passed to a more specific problem.
+2. `formulation`: An object that identifies the formulation used to model the `problem`, e.g., `Val(:PPG2KP)`. Often same formulation can be adapted to multiple different `problem`s with minimal changes.
+3. `instance`: An object containing the `problem` data, e.g., `G2KP` or `SLOPP`.
+4. `model`: An object that behaves as a JuMP model, it will have variables and constraints added to it.
+5. `options::Dict{String, Any}`: Problem- and formulation-specific options.
 
 # Returns
 
 1. `::BuildStopReason`: The reason for which the method returned. It can be: BUILT_MODEL (the model was built successfully) or FOUND_OPTIMUM (in the process of building the model, the optimal solution was already found, so the building process was abandoned). See [`get_cut_pattern`](@ref) for more information.
-2. `::Any`: the specific type of the second returned value depends on `T` (and other Type parameters), however it should always exist (even if it is `nothing`). It is passed as last argument of `get_cut_pattern` to assemble a solution (CutPattern) from the variables values of a model.
+2. `::Any`: the specific type of the second returned value depends on the `problem` and `formulation`, however it should always exist (even if it is `nothing`). It is passed as an argument to `get_cut_pattern` in order to assemble a solution (CutPattern) from the variables values of a model.
 """
-function build_model(
-	::Val{T}, model, d :: Vector{D}, p :: Vector{P},
-	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
-	options :: Dict{String, Any} = Dict{String, Any}()
-) where {T, D, S, P}
-	@error(
-		"A specialized method for $(T) should exist, but instead this " *
-		" generic error fallback was called."
-	)
-end
+function build_model end
 
 """
 A guillotine stage-unlimited unrestricted cutting pattern.
@@ -369,21 +353,21 @@ function to_pretty_str(
 end
 
 """
-    get_cut_pattern(model_type, model, ::D, ::S, build_model_return)
+    get_cut_pattern(problem, formulation, model, ::D, ::S, build_model_return)
 
-Given a `model` built with `build_model(model_type, ...)` and its respective
-`build_model_return` (i.e., the second return of `build_model`), returns a
-CutPattern representing the optimal solution found. If the first return of
-`build_model` is `BUILT_MODEL`, then the model needs to be
-solved before calling this method; however, if it is
-`FOUND_OPTIMUM` then the model does not need to be solved.
+Given a `model` built with `build_model(problem, formulation, ...)` and its
+respective `build_model_return` (i.e., the second return of `build_model`),
+returns a CutPattern representing the optimal solution found. If the first
+return of `build_model` is `BUILT_MODEL`, then the model needs to be solved
+before calling this method; however, if it is `FOUND_OPTIMUM` then the model
+does not need to be solved.
 
 The implementation of this method is responsability of
 whoever implemented the corresponding `build_model` method.
 
 The `::Type{D}` and `::Type{S}` parameters define the integer type used for
 denoting demand/'piece indexes' and the size of the pieces/plates dimensions,
-the method is free to fail if those are different (especially if they are
+the method is free to fail if those are different (in particular if they are
 smaller) from the `D` and `S` used for building the model.
 
 If `build_model` returns `nothing` then `model` somehow needs to contain
@@ -395,15 +379,7 @@ the problem instance and the auxiliary tables used to build the model
 
 See also: [`build_model`](@ref)
 """
-function get_cut_pattern(
-	model_type :: Val{T},  model :: JuMP.Model, ::Type{D}, ::Type{S},
-	build_model_return :: Any
-) :: CutPattern{D, S} where {T, D, S}
-	@error(
-		"A specialized method for $(T) should exist, but instead this " *
-		" generic error fallback was called."
-	)
-end
+function get_cut_pattern end
 
 include("Utilities/Utilities.jl")
 include("Data/Data.jl")

@@ -75,8 +75,12 @@ struct CPG_SLOPP{D, S, P} <: CPG_Format{D, S, P} end
 struct CPG_MHLOPPW{D, S, P} <: CPG_Format{D, S, P} end
 struct CPG_ODPW{D, S, P} <: CPG_Format{D, S, P} end
 struct CPG_SSSCSP{D, S, P} <: CPG_Format{D, S, P} end
+is_collection(_ :: T) where {T <: CPG_Format} = true
 
-is_collection(::Type{<:CPG_Format}) = true
+const CPG_VALS = Union{
+	Val{:CPG_SLOPP}, Val{:CPG_MHLOPPW}, Val{:CPG_ODPW}, Val{:CPG_SSSCSP}
+}
+is_collection(_ :: T) where {T <: CPG_VALS} = true
 
 # === `parse_from_string` ===
 

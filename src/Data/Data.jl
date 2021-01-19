@@ -85,7 +85,7 @@ See also: [`read_from_string`](@ref)
 end
 
 """
-    is_collection(::Type{T}) :: Bool where {T}
+    is_collection(format) :: Bool
 
 Indicate if a format is parsed to a single instance or to a collection.
 
@@ -103,8 +103,10 @@ single instance, this single instance should be wrapped in the same container
 used when there are multiple instances (any overhead caused by wrapping will
 probably not be larger than the overhead caused by type unstability).
 
+Ideally, the value returned should not depend on the value of the
+argument, but only the type of the argument.
 """
-is_collection(::Type{<:Any}) :: Bool = false
+is_collection(format) = false
 
 """
     abstract type ParseError <: Exception end

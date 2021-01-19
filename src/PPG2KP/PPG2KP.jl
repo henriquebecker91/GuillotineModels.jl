@@ -503,23 +503,53 @@ function _no_arg_check_build_model(
 end
 
 # Only used to define `build_model(Val{:PPG2KP}, ...)`.
+import ..Data.SLOPP
+import ..Data.G2KP
 import ..Utilities.Args.create_normalized_arg_subset
 import ..Utilities.Args.accepted_arg_list
 import ..build_model
 """
-    build_model(::Val{:PPG2KP}, model, d, p, l, w, L, W[, options])
+    build_model(::Val{:G2KP}, ::Val{:PPG2KP}, instance::G2KP, model[, options])
 
-TODO: Document.
+Build a PPG2KP-style model for a G2KP `instance` inside `model`.
+
+Changes `model` by adding variables and constraints. `options` takes
+arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
 """
 @timeit TIMER function build_model(
-	::Val{:PPG2KP}, model, d :: Vector{D}, p :: Vector{P},
-	l :: Vector{S}, w :: Vector{S}, L :: S, W :: S,
+	::Val{:G2KP}, ::Val{:PPG2KP}, instance :: G2KP{D, S, P}, model,
 	options :: Dict{String, Any} = Dict{String, Any}()
 ) :: Tuple{BuildStopReason, ModelByproduct{D, S, P}} where {D, S, P}
 	norm_options = create_normalized_arg_subset(
 		options, accepted_arg_list(Val(:PPG2KP))
 	)
+	@unpack d, p, l, w, L, W = instance
 	return _no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
+end
+
+"""
+    build_model(::Val{:G2KP}, ::Val{:PPG2KP}, instance::SLOPP, model[, options])
+
+Build a PPG2KP-style model for a G2KP `instance` inside `model`.
+
+Changes `model` by adding variables and constraints. `options` takes
+arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
+
+This is a convenience method that takes a SLOPP instance. It errors if
+the `SLOPP` object has a non-zero value in the `dlb` field. It is
+the same as calling with a `G2KP` instance but with the `dub` field
+being used as the `d` field (of `G2KP`).
+"""
+@timeit TIMER function build_model(
+	::Val{:G2KP}, ::Val{:PPG2KP}, instance :: SLOPP{D, S, P}, m,
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: Tuple{BuildStopReason, ModelByproduct{D, S, P}} where {D, S, P}
+	@assert all(iszero, instance.dlb)
+	@unpack p, l, w, L, W = instance
+	d = instance.dub
+	return build_model(
+		Val(:G2KP), Val(:PPG2KP), G2KP(L, W, l, w, d, p), m, options
+	)
 end
 
 end # module

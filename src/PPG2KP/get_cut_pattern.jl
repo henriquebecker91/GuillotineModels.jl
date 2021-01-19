@@ -218,8 +218,14 @@ function _get_cut_pattern(
 end
 
 import ..get_cut_pattern
+#=
 @timeit TIMER function get_cut_pattern(
 	model_type :: Val{:PPG2KP}, model :: JuMP.Model, ::Type{D}, ::Type{S},
+	build_model_return :: ModelByproduct{D, S, P}
+) :: CutPattern{D, S} where {D, S, P}
+=#
+@timeit TIMER function get_cut_pattern(
+	problem :: Val{:G2KP}, formulation :: Val{:PPG2KP}, model :: JuMP.Model,
 	build_model_return :: ModelByproduct{D, S, P}
 ) :: CutPattern{D, S} where {D, S, P}
 	# local constant to alternate debug mode (method will not take a debug flag)
