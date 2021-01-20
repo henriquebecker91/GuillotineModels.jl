@@ -353,7 +353,7 @@ function to_pretty_str(
 end
 
 """
-    get_cut_pattern(problem, formulation, model, ::D, ::S, build_model_return)
+    get_cut_pattern(problem, formulation, model, build_model_return)
 
 Given a `model` built with `build_model(problem, formulation, ...)` and its
 respective `build_model_return` (i.e., the second return of `build_model`),
@@ -365,10 +365,8 @@ does not need to be solved.
 The implementation of this method is responsability of
 whoever implemented the corresponding `build_model` method.
 
-The `::Type{D}` and `::Type{S}` parameters define the integer type used for
-denoting demand/'piece indexes' and the size of the pieces/plates dimensions,
-the method is free to fail if those are different (in particular if they are
-smaller) from the `D` and `S` used for building the model.
+The `D` and `S` type parameters from `CutPattern{D, S}` are inferred from
+`build_model_return` as of now.
 
 If `build_model` returns `nothing` then `model` somehow needs to contain
 all information needed to build the CutPattern. Note that the problem instance
@@ -376,6 +374,10 @@ all information needed to build the CutPattern. Note that the problem instance
 common pattern is to have `build_model` return a struct containing
 the problem instance and the auxiliary tables used to build the model
 (especially the ones associating variables with dimensions or piece indexes).
+
+The solutions of some problems are not a single `CutPattern` but instead
+multiple `CutPatterns` inside an iterable collection of them (often a
+`Vector`).
 
 See also: [`build_model`](@ref)
 """
