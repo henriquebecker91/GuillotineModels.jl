@@ -284,7 +284,7 @@ const SIMILAR_4 = Union{Val{:G2KP}, Val{:G2MKP}, Val{:G2OPP}, Val{:G2CSP}}
 		# need to always subtract one of the plate index (when it is G2CSP,
 		# otherwise not, therefore a mess). This seems to be the better design,
 		# no code (even G2CSP-specific) really need to be aware of this variable.
-		@variable(model, b; integer = !build_LP_not_MIP)
+		@variable(model, b, integer = !build_LP_not_MIP)
 		@objective(model, Min, b)
 	end
 
@@ -300,7 +300,7 @@ const SIMILAR_4 = Union{Val{:G2KP}, Val{:G2MKP}, Val{:G2OPP}, Val{:G2CSP}}
 			sum(picuts[pli2pair[1]]) + sum(cuts_made[parent2cut[1]]) <= b
 		)
 	else
-		qt_original :: Int = problem === Val(:G2MKP) ? instance.available : 1
+		qt_original :: Int = problem === Val(:G2MKP) ? only(inst.available) : 1
 		plate_number_one = @constraint(model,
 			sum(picuts[pli2pair[1]]) + sum(cuts_made[parent2cut[1]]) <= qt_original
 		)
@@ -591,7 +591,7 @@ end
 =#
 
 const HOMO_PAIRS = [
-	(:G2KP, :G2KP), (:G2MKP, :MHLOPPW), (:G2CSP, :SSSCSP), (:G2OPP, :SSSCSP)
+	(:G2KP, :G2KP), (:G2CSP, :SSSCSP), (:G2OPP, :SSSCSP)
 ]
 
 for (problem, instance) in HOMO_PAIRS
@@ -626,12 +626,46 @@ being used as the `d` field (of `G2KP`).
 @timeit TIMER function build_model(
 	::Val{:G2KP}, ::Val{:PPG2KP}, instance :: SLOPP{D, S, P}, m,
 	options :: Dict{String, Any} = Dict{String, Any}()
-) :: Tuple{BuildStopReason, ModelByproduct{D, S, P}} where {D, S, P}
+) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
 	@assert all(iszero, instance.dlb)
 	@unpack p, l, w, L, W = instance
 	d = instance.dub
 	return build_model(
 		Val(:G2KP), Val(:PPG2KP), G2KP(L, W, l, w, d, p), m, options
+	)
+end
+
+"""
+    build_model(::Val{:G2MKP}, ::Val{:PPG2KP}, instance::MHLOPPW, model[, options])
+
+Build a PPG2KP-style model for a G2MKP `instance` inside `model`.
+
+Changes `model` by adding variables and constraints. `options` takes
+arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
+
+For now, this is the only format accepted by G2MKP, even if the G2MKP
+refers to the homogeneous variant and, therefore, does not accept
+large objects of different dimensions (just multiple copies of the
+same large objects). A method accepting a more adequate format
+(i.e., that only allow a single type of large object) could be
+implemented.
+"""
+@timeit TIMER function build_model(
+	::Val{:G2MKP}, ::Val{:PPG2KP}, instance :: MHLOPPW{D, S, P}, m,
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
+	if (length(instance.L), length(instance.W)) != (1, 1)
+		error(
+			"The G2MKP problem refers to the homogeneous variant." *
+			" Multiple original plates (i.e., large objects) of distinct" *
+			" dimensions are not allowed."
+		)
+	end
+	norm_options = create_normalized_arg_subset(
+		options, accepted_arg_list(Val(:PPG2KP))
+	)
+	return _no_arg_check_build_model(
+		Val(:G2MKP), instance, m, norm_options
 	)
 end
 

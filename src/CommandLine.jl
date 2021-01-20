@@ -685,6 +685,78 @@ Item[i].Length  Item[i].Width   Item[i].LowerBoundDemand        Item[i].UpperBou
 """
 end
 
+function toy_instance(::Val{:G2MKP}, ::Val{:CPG_MHLOPPW}) :: String
+	return toy_instance(Val(:G2MKP), CPG_MHLOPPW{Int, Int, Int}())
+end
+function toy_instance(
+	::Val{:G2MKP}, ::CPG_MHLOPPW{D, S, P}
+) :: String where {D, S, P}
+"""
+***2D Rectangular Problem***
+***Instances for the Multiple Heterogeneous Large Object Placement Problem (MHLOPP/W)***
+Input parameter file: written_by_hand
+***************************************************************************************************************
+Total number of instances
+Number of different large objects (j)
+LargeObject[j].Length	LargeObject[j].Width	LargeObject[j].Available
+Number of different item types (i)
+Item[i].Length	Item[i].Width	Item[i].LowerBoundDemand	Item[i].UpperBoundDemand	Item[i].Value
+***************************************************************************************************************
+1
+1
+100	200	2
+4
+100	200	0	3	20000
+50	150	0	1	7501
+50	200	0	2	10001
+50	50	0	2	2501"""
+end
+
+const CPG_SSSCSP_HEADER = """
+***2D Rectangular Problem***
+***Instances for the Single Stock Size Cutting Stock Problem (SSSCSP)***
+Input parameter file: written_by_hand
+****************************************************************************************************
+Total number of instances 
+LargeObject.Length	LargeObject.Width
+Number of different item types (i)
+Item[i].Length	Item[i].Width	Item[i].Demand
+*****************************************************************************************************"""
+
+function toy_instance(::Val{:G2OPP}, ::Val{:CPG_SSSCSP}) :: String
+	return toy_instance(Val(:G2OPP), CPG_SSSCSP{Int, Int, Int}())
+end
+function toy_instance(
+	::Val{:G2OPP}, ::CPG_SSSCSP{D, S, P}
+) :: String where {D, S, P}
+"""
+$CPG_SSSCSP_HEADER
+1
+100	200
+3
+100	50	2
+25	100	2
+50	100	1"""
+end
+
+# Same as G2OPP, but with the double of the items and therefore needing
+# two original plates (i.e., large objects).
+function toy_instance(::Val{:G2CSP}, ::Val{:CPG_SSSCSP}) :: String
+	return toy_instance(Val(:G2CSP), CPG_SSSCSP{Int, Int, Int}())
+end
+function toy_instance(
+	::Val{:G2CSP}, ::CPG_SSSCSP{D, S, P}
+) :: String where {D, S, P}
+"""
+$CPG_SSSCSP_HEADER
+1
+100	200
+3
+100	50	4
+25	100	4
+50	100	2"""
+end
+
 function toy_instance(::Val{:G2KP}, ::Val{:Classic_G2KP}) :: String
 	return toy_instance(Val(:G2KP), Classic_G2KP{Int,Int,Int}())
 end
