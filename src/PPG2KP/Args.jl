@@ -30,6 +30,7 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"pricing-beta", 0.25,
 			"Used to compute the number of variables addded in each iteration of the iterative pricing (only used if furini pricing is selected, see pricing flag). Must be non-negative, and makes most sense to be at most one. Explained in 10.1287/ijoc.2016.0710, p. 13 (747) (last paragraph before section 4.3). Default value is the one used in the experiments of the original paper."
 		),
+		#= This needs to be reworked in a problem-agnostic fashion.
 		Arg(
 			"lower-bound", 0.0,
 			"The use of these values is dependent on the other options selected, check code."
@@ -38,6 +39,7 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"upper-bound", Inf,
 			"The use of these values is dependent on the other options selected, check code."
 		),
+		=#
 		Arg(
 			"round2disc", false,
 			"Round the second child size to a discretized position."

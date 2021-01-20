@@ -25,6 +25,10 @@ import ..to_pretty_str # for debug
 import ..CutPattern # type returned by get_cut_pattern
 import ..BuildStopReason, ..BUILT_MODEL, ..FOUND_OPTIMUM
 using ..Utilities
+import ..Data.G2KP
+import ..Data.SLOPP
+import ..Data.MHLOPPW
+import ..Data.SSSCSP
 
 struct ModelByproduct{D, S, P}
 	preprocess_byproduct :: ByproductPPG2KP{D, S, P}
@@ -220,9 +224,11 @@ end
 	)
 end
 
+const SIMILAR_4 = Union{Val{:G2KP}, Val{:G2MKP}, Val{:G2OPP}, Val{:G2CSP}}
+
 @timeit TIMER function _build_base_model!(
-	model, p :: Vector{P},
-	bp :: ByproductPPG2KP{D, S, P}, inv_idxs :: VarInvIndexes{P},
+	problem :: SIMILAR_4, inst, model, bp :: ByproductPPG2KP{D, S, P},
+	inv_idxs :: VarInvIndexes{P},
 	options :: Dict{String, Any} = Dict{String, Any}();
 	build_LP_not_MIP = false
 ) where {D, S, P}
@@ -242,35 +248,69 @@ end
 			@variable(model, picuts[1:length(np)], Bin)
 		end
 	else
-		#@variable(model, picuts[1:length(np)] >= 0, Int)
 		@variable(model,
-			0 <= picuts[i = 1:length(np)] <= min(pli_lwb[np[i][1]][3], d[np[i][2]]),
+			0 <= picuts[i = 1:length(np)] <= d[np[i][2]],
 			integer = !build_LP_not_MIP
 		)
+		#=@variable(model,
+			0 <= picuts[i = 1:length(np)] <= min(pli_lwb[np[i][1]][3], d[np[i][2]]),
+			integer = !build_LP_not_MIP
+		)=#
 	end
 
+	# TODO: maybe create an upper bound for each problem type?
 	@variable(model,
-		0 <= cuts_made[i = 1:length(cuts)] <= pli_lwb[cuts[i][PARENT]][3],
+		cuts_made[i = 1:length(cuts)] >= 0, #<= pli_lwb[cuts[i][PARENT]][3],
 		integer = !build_LP_not_MIP
 	)
 
-	# The objective function is to maximize the profit made by extracting
-	# pieces from subplates.
-	@objective(model, Max,
-		sum(p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
-	)
+	# If the problem is a knapsack problem, then the objective is to maximize
+	# the profit from the packed/extracted pieces.
+	# If the problem is CSP, then the objective is to minimize the number of
+	# original plates used (all pieces must be packed).
+	# If it is OPP, then there is no objective function.
+	if problem === Val(:G2KP) || problem === Val(:G2MKP)
+		@objective(model, Max,
+			sum(inst.p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
+		)
+	elseif problem === Val(:G2CSP)
+		# We create a variable to represent the number of original plates used:
+		# `b`. This variable is not strictly necessary, we could instead minimize
+		# the cuts and extractions made over plates of plate type #1. However,
+		# without the variable we will have one less constraint compared to the
+		# other problems (there will not be the `plate_cons` #1 constraint). This
+		# would add some unfortunate assymetry; either the list of constraint would
+		# start at the second index, or to map a plate to its constraint we would
+		# need to always subtract one of the plate index (when it is G2CSP,
+		# otherwise not, therefore a mess). This seems to be the better design,
+		# no code (even G2CSP-specific) really need to be aware of this variable.
+		@variable(model, b; integer = !build_LP_not_MIP)
+		@objective(model, Min, b)
+	end
 
-	# c1: There is just one of the original plate, and so it can be only used
-	# to extract a single piece xor make a single cut that would make two new
-	# subplates available.
-	plate_number_one = @constraint(model,
-		sum(picuts[pli2pair[1]]) + sum(cuts_made[parent2cut[1]]) <= 1
-	)
+	# c1: # Either there is a limited amount of original plates available
+	# (one if it is KP or OPP, and 'n' if it is MKP), or there is an
+	# unlimited amount of original plates available (CSP) but we are minimizing
+	# the amount actually used (variable `b`).
+	#
+	# The original plates may be used either to extract pieces directly
+	# or to be cut into two new subplates.
+	if problem === Val(:G2CSP)
+		plate_number_one = @constraint(model,
+			sum(picuts[pli2pair[1]]) + sum(cuts_made[parent2cut[1]]) <= b
+		)
+	else
+		qt_original :: Int = problem === Val(:G2MKP) ? instance.available : 1
+		plate_number_one = @constraint(model,
+			sum(picuts[pli2pair[1]]) + sum(cuts_made[parent2cut[1]]) <= qt_original
+		)
+	end
 
 	# c2: for each subplate type that is not the original plate, such subplate
 	# type will be available the number of times it was the child of a cut,
 	# subtracted the number of times it had a piece extracted or used for
-	# further cutting.
+	# further cutting. This constraint is the basis of the model and similar
+	# for all problems it supports.
 	# NOTE: the range is 1:(num_plate_types-1) and not 2:num_plate_types
 	# because if the range does not start at 1, the returned type is not
 	# a vector but a special JuMP type.
@@ -278,30 +318,28 @@ end
 		sum(picuts[pli2pair[ppli+1]]) + sum(cuts_made[parent2cut[ppli+1]]) <=
 		sum(cuts_made[child2cut[ppli+1]])
 	)
+	# give the constraints a name
 	set_name.(plate_numbers_2_to_m, "plate_cons" .* string.(2:num_plate_types))
-	# NOTE: we use a ppli that is pli-1 above because if we start the array at
-	# 2 then we do not get an array but another container type. Also, these
-	# constraints are not named, if we want to name them we can make a loop
-	# below the next line, iterating the constraints and naming them.
+	# put them in the expected key inside the model
 	model[:plate_cons] = pushfirst!(plate_numbers_2_to_m, plate_number_one)
 
-	if options["use-c25"]
-		# c2.5: The amount of each subplate type generated by cuts (and used either
-		# as a piece or as a intermediary plate) is bounded by the amount that can be
-		# cut from the original plate.
-		@constraint(model, c25[pli=2:num_plate_types],
-			sum(picuts[pli2pair[pli]]) + sum(cuts_made[parent2cut[pli]]) <=
-			pli_lwb[pli][3]
+	# c3: the demand constraint. For knapsack problems it means an upper bound
+	# on how many of each piece type may be extracted/packed, for OPP and CSP
+	# it means the number of each piece type that *must* be extracted/packed.
+	# TODO: there is a better way than using this `if`?
+	if problem === Val(:G2KP) || problem === Val(:G2MKP)
+		@constraint(model,
+			demand_con[pii=1:num_piece_types],
+			sum(picuts[pii2pair[pii]]) <= d[pii]
+		)
+	elseif problem === Val(:G2OPP) || problem === Val(:G2CSP)
+		@constraint(model,
+			demand_con[pii=1:num_piece_types],
+			sum(picuts[pii2pair[pii]]) == d[pii]
 		)
 	end
 
-	# c3: the amount of each piece type extracted from different plate types
-	# cannot surpass the demand for that piece type.
-	@constraint(model,
-		demand_con[pii=1:num_piece_types],
-		sum(picuts[pii2pair[pii]]) <= d[pii]
-	)
-
+	#= Disabled while we rework it in a problem-agnostic fashion.
 	lb = options["lower-bound"]
 	if !iszero(lb)
 		@constraint(model, obj_lb_con,
@@ -315,6 +353,9 @@ end
 			sum(p[pii]*sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types) <= ub
 		)
 	end
+	=#
+
+	return
 end
 
 # HIGH LEVEL EXPLANATION OF THE MODEL
@@ -371,7 +412,7 @@ function build_complete_model(
 end
 
 function build_complete_model(
-	model, p :: Vector{P}, bp :: ByproductPPG2KP{D, S, P},
+	problem, instance, model, bp :: ByproductPPG2KP{D, S, P},
 	start :: Float64 = time(), options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	inv_idxs = VarInvIndexes(bp)
@@ -385,7 +426,7 @@ function build_complete_model(
 		@view bp.cuts[bp.first_vertical_cut_idx:end];
 		by = c -> c[PARENT]
 	)
-	_build_base_model!(model, p, bp, inv_idxs, options)
+	_build_base_model!(problem, instance, model, bp, inv_idxs, options)
 
 	return bp
 end
@@ -393,10 +434,20 @@ end
 # Include all the code implementing the pricings referred below.
 include("./pricing.jl")
 
+# Auxiliar function to get the geometric info from the homogeneous
+# problems and pass it to the enumeration.
+function _homo_geometry(
+	i :: Union{G2KP{D, S, P}, SSSCSP{D, S, P}}
+) where {D, S, P}
+	return P, i.d, i.l, i.w, i.L, i.W
+end
+function _homo_geometry(i :: MHLOPPW{D, S, P}) where {D, S, P}
+	return P, i.dub, i.l, i.w, only(i.L), only(i.W)
+end
+
 function _no_arg_check_build_model(
-	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
-	L :: S, W :: S, options :: Dict{String, Any}
-) :: Tuple{BuildStopReason, ModelByproduct{D, S, P}} where {D, S, P}
+	problem, instance, model, options :: Dict{String, Any}
+) :: Tuple{BuildStopReason, <: Any}
 	# Define 'start', this is the point where the building-time-limit
 	# starts to be counted.
 	start :: Float64 = time()
@@ -404,7 +455,7 @@ function _no_arg_check_build_model(
 	verbose = options["verbose"] && !options["quiet"]
 	# Enumerate plates and cuts.
 	enumeration_time = @elapsed begin
-		bp = _gen_cuts_wo(P, d, l, w, L, W, options)
+		bp = _gen_cuts_wo(_homo_geometry(instance)..., options)
 	end
 	if verbose
 		@show enumeration_time
@@ -438,6 +489,10 @@ function _no_arg_check_build_model(
 	end
 	bm = (options["faithful2furini2016"] ? FURINI : BECKER) :: BaseModel
 	if pricing != "none"
+		problem !== Val(:G2KP) && @error(
+			"The pricing was only implemented for the G2KP problem. Other" *
+			" problems have no implementation of the pricing."
+		)
 		# It is important to note that the pricing and the bm (BaseModel) have the
 		# same two values ("becker"/BECKER and "furini"/FURINI) but they are
 		# orthogonal/independent. You can have a FURINI model with "becker" pricing
@@ -465,8 +520,12 @@ function _no_arg_check_build_model(
 	else # in the case there is no pricing phase
 		# Needs to build the mode here, as when there is pricing the pricing
 		# procedure is responsible for building the model.
-		build_complete_model(model, p, bp, start, options)
+		build_complete_model(problem, instance, model, bp, start, options)
 		if options["MIP-start"] == "guaranteed"
+			problem !== Val(:G2KP) && @error(
+				"The MIP-start was only implemented for the G2KP problem. Other" *
+				" problems have no implementation of the MIP-start."
+			)
 			heuristic_lb_time = @elapsed begin
 				(heuristic_lb, _, _), _ = mip_start_by_heuristic!(
 					model, bp, p, options["heuristic-seed"], bm
@@ -503,28 +562,52 @@ function _no_arg_check_build_model(
 end
 
 # Only used to define `build_model(Val{:PPG2KP}, ...)`.
-import ..Data.SLOPP
-import ..Data.G2KP
 import ..Utilities.Args.create_normalized_arg_subset
 import ..Utilities.Args.accepted_arg_list
 import ..build_model
+#=
 """
     build_model(::Val{:G2KP}, ::Val{:PPG2KP}, instance::G2KP, model[, options])
+    build_model(::Val{:G2MKP}, ::Val{:PPG2KP}, instance::MHLOPPW, model[, options])
+    build_model(::Val{:G2CSP}, ::Val{:PPG2KP}, instance::SSSCSP, model[, options])
+    build_model(::Val{:G2OPP}, ::Val{:PPG2KP}, instance::SSSCSP, model[, options])
 
 Build a PPG2KP-style model for a G2KP `instance` inside `model`.
 
 Changes `model` by adding variables and constraints. `options` takes
 arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
 """
+=#
+#=
 @timeit TIMER function build_model(
-	::Val{:G2KP}, ::Val{:PPG2KP}, instance :: G2KP{D, S, P}, model,
+	HOMO_PROBLEMS, ::Val{:PPG2KP}, instance :: G2KP{D, S, P}, model,
 	options :: Dict{String, Any} = Dict{String, Any}()
-) :: Tuple{BuildStopReason, ModelByproduct{D, S, P}} where {D, S, P}
+) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
 	norm_options = create_normalized_arg_subset(
 		options, accepted_arg_list(Val(:PPG2KP))
 	)
-	@unpack d, p, l, w, L, W = instance
-	return _no_arg_check_build_model(model, d, p, l, w, L, W, norm_options)
+	return _no_arg_check_build_model(model, norm_options)
+end
+=#
+
+const HOMO_PAIRS = [
+	(:G2KP, :G2KP), (:G2MKP, :MHLOPPW), (:G2CSP, :SSSCSP), (:G2OPP, :SSSCSP)
+]
+
+for (problem, instance) in HOMO_PAIRS
+	eval(quote
+		@timeit TIMER function build_model(
+			::Val{$(QuoteNode(problem))}, ::Val{:PPG2KP}, instance :: $instance{D, S, P}, model,
+			options :: Dict{String, Any} = Dict{String, Any}()
+		) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
+			norm_options = create_normalized_arg_subset(
+				options, accepted_arg_list(Val(:PPG2KP))
+			)
+			return _no_arg_check_build_model(
+				Val($(QuoteNode(problem))), instance, model, norm_options
+			)
+		end
+	end)
 end
 
 """

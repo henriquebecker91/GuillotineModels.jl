@@ -433,8 +433,8 @@ function generic_args() :: Vector{Arg}
 			"Save the model of the passed instance to the given filename (use the extension to define the format, allowed formats are described by the enumeration MathOptInterface.FileFormats.FileFormat)."
 		),
 		Arg(
-			"warm-jit", "with-toy",
-			"There are three valid options: 'no', 'with-toy', and 'yes'. If 'yes', the instance is solved two times, but the first time the arguments are changed to disable output (i.e., '--no-csv-output' and '--SOLVER-no-output' are passed, and if supported, '--MODEL-quiet' is passed too; in the GuillotineModels.TIMER the timings of this first run are under 'warm-jit'). If 'with-toy', it behaves similarly to 'yes' but instead of using the instance itself it uses a very small hardcoded instance (this helps a lot, but many procedures only called when the model has specific properties are not called, and therefore, not compiled). If 'no', the code is just run a single time."
+			"warm-jit", "no",
+			"There are three valid options: 'no', 'with-toy', and 'yes'. If 'yes', the instance is solved two times, but the first time the arguments are changed to disable output (i.e., '--no-csv-output' and '--SOLVER-no-output' are passed, and if supported, '--MODEL-quiet' is passed too; in the GuillotineModels.TIMER the timings of this first run are under 'warm_jit'). If 'with-toy', it behaves similarly to 'yes' but instead of using the instance itself it uses a very small hardcoded instance (this helps a lot, but many procedures only called when the model has specific properties are not called, and therefore, not compiled). If 'no', the code is just run a single time."
 		),
 		Arg(
 			"no-csv-output", false,
@@ -644,24 +644,29 @@ an empty `Dict` is returned.
 end
 
 """
-    toy_instance(format):: String
+    toy_instance(problem, format):: String
 
-Just return a string representing a small instance to be used by `warm_jit`
-if `--warm-jit with-toy`.
+Return a `String` representing an instance of problem in `format`.
+
+This is the function that should be extended in order to be able to call `run`
+with the `--warm-jit with-toy`.
 """
-function toy_instance(format)
+function toy_instance(problem, format)
 	error(
 		"If you want to mock a run with `--warm-jit with-toy` there need to" *
 		" exist an implementation of `GuillotineModels.CommandLine." *
-		"toy_instance` taking the instance format you passed."
+		"toy_instance` taking the instance format you passed. You have passed" *
+		" problem `$problem` and format `$format`."
 	)
 end
 
-function toy_instance(_ :: Val{:CPG_SLOPP}) :: String
-	return toy_instance(CPG_SLOPP{Int,Int,Int}())
+function toy_instance(::Val{:G2KP}, ::Val{:CPG_SLOPP}) :: String
+	return toy_instance(Val(:G2KP), CPG_SLOPP{Int,Int,Int}())
 end
 
-function toy_instance(_ :: CPG_SLOPP{D, S, P}) :: String where {D, S, P}
+function toy_instance(
+	::Val{:G2KP}, ::CPG_SLOPP{D, S, P}
+) :: String where {D, S, P}
 """
 ***2D Rectangular Problem***
 ***Instances for the Single Large Object Placement Problem (SLOPP)***
@@ -680,11 +685,13 @@ Item[i].Length  Item[i].Width   Item[i].LowerBoundDemand        Item[i].UpperBou
 """
 end
 
-function toy_instance(_ :: Val{:Classic_G2KP}) :: String
-	return toy_instance(Classic_G2KP{Int,Int,Int}())
+function toy_instance(::Val{:G2KP}, ::Val{:Classic_G2KP}) :: String
+	return toy_instance(Val(:G2KP), Classic_G2KP{Int,Int,Int}())
 end
 
-function toy_instance(_ :: Classic_G2KP{D, S, P}) :: String where {D, S, P}
+function toy_instance(
+	::Val{:G2KP}, ::Classic_G2KP{D, S, P}
+) :: String where {D, S, P}
 """
 100	200
 2
@@ -713,7 +720,7 @@ See also: [`toy_instance`](@ref), [`read_build_solve_and_print`](@ref)
 	# this method scope.
 	mktemp() do path, io
 		if p_args["warm-jit"] == "with-toy"
-				write(io, toy_instance(format) :: String)
+				write(io, toy_instance(problem, format) :: String)
 				close(io)
 				copyed_args["instfname"] = path
 		end
