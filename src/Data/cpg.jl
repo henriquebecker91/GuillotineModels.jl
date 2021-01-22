@@ -400,3 +400,47 @@ function read_from_string(
 ) where {D, S, P}
 	return read_from_string(CPG_SSSCSP{Int, Int, Int}(), s)
 end
+
+# === `GuillotineModels.solution_value` implementations
+
+import ..CutPattern
+function solution_value(
+	:: Val{:G2KP}, i :: SLOPP{D, S, P}, cp :: CutPattern{D, S}
+) where {D, S, P}
+	@assert iszero(sum(i.dlb))
+	g2kp_instance = G2KP{D, S, P}(i.L, i.W, i.l, i.w, i.dub, i.p)
+	return solution_value(Val(:G2KP), g2kp_instance, cp)
+end
+
+# G2OPP does not have a solution value, because it is not an optimization
+# problem but instead a decision problem. Ideally, a formulation that solves
+# it will have no objective function set (or better, all coefficients of the
+# objective function will bet set to the default, that is zero) and therefore
+# we always return zero to match what the solver will return.
+function solution_value(
+	:: Val{:G2OPP}, instance, cp :: CutPattern{D, S}
+) where {D, S}
+	return 0
+end
+
+# The instance is taken to adhere to the signature but it is unneeded
+# to compute the solution value.
+function solution_value(
+	:: Val{:G2CSP}, instance, bins :: Vector{CutPattern{D, S}}
+) where {D, S}
+	return length(bins)
+end
+
+function solution_value(
+	:: Val{:G2MKP}, i :: MHLOPPW{D, S, P}, cps :: Vector{CutPattern{D, S}}
+) where {D, S, P}
+	@assert iszero(sum(i.dlb))
+	g2kp_instance = G2KP{D, S, P}(only(i.L), only(i.W), i.l, i.w, i.dub, i.p)
+	value = zero(P)
+	for cp in cps
+		value += solution_value(Val(:G2KP), g2kp_instance :: G2KP{D, S, P}, cp)
+	end
+
+	return value
+end
+

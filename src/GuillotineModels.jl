@@ -202,18 +202,26 @@ function CutPattern(
 	CutPattern(L, W, zero(D), cuts_are_vertical, subpatterns)
 end
 
-# TODO: document
-function cut_pattern_profit(cp :: CutPattern{D, S}, p) where {D, S}
-	if iszero(cp.piece_idx)
-		z = zero(eltype(p))
-		for sp in cp.subpatterns
-			z += cut_pattern_profit(sp, p)
-		end
-		return z
-	else
-		return p[cp.piece_idx]
-	end
-end
+"""
+    solution_value(problem, instance, solution)
+
+Return the value of `solution` for `problem` and `instance`.
+
+The returned value is often an `Int`. If the solution (i) was extracted
+from a model with a valid primal solution and (ii) the model correctly
+computed the objective function, then the value returned by this function
+should match the value of the objective function in the model from which
+the solution was extracted. Basically, this function serves as a
+formulation-agnostic double-check of the obtained solution value.
+
+`solution` is something returned by `get_cut_pattern` so often it is
+either a `Vector{CutPattern{D, S}}` or a single `CutPattern{D, S}`.
+
+!!! This function does not check the validity of the given solution,
+it assumes a valid solution and just compute the value it would have
+if it was valid.
+"""
+function solution_value end
 
 # INTERNAL USE. See `remove_waste!`.
 function inner_rec_remove_waste!(p :: CutPattern{D, S}) :: Bool where {D, S}
@@ -391,4 +399,3 @@ include("PPG2KP/PPG2KP.jl")
 include("CommandLine.jl")
 
 end # module
-

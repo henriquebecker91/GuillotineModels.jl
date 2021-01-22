@@ -20,15 +20,14 @@ using .SolversArgs
 import ..TIMER # The global module timer.
 using ..Data
 import ..build_model
-import ..CutPattern
-import ..cut_pattern_profit
+import ..CutPattern, ..get_cut_pattern
 import ..BuildStopReason, ..BUILT_MODEL, ..FOUND_OPTIMUM
 using ..Utilities
 using ..Utilities.Args
 using ..PPG2KP, ..PPG2KP.Args
 using ..Flow, ..Flow.Args
 #using ..KnapsackPlates, ..KnapsackPlates.Args
-import ..get_cut_pattern, ..to_pretty_str, ..simplify!
+import ..solution_value, ..to_pretty_str, ..simplify!
 # Used inside read_build_solve_and_print in tandem with generic-time-limit.
 import ..throw_if_timeout_now, ..TimeoutError
 
@@ -292,10 +291,8 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 				write(iob, pretty_simple_sol_str)
 				print(read(seekstart(iob), String))
 			end
-			#= TODO: deal with the solution_value computation in a generic way.
-			solution_profit = cut_pattern_profit(solution, p)
-			@show solution_profit
-			=#
+			sol_val = solution_value(problem, instance, solution)
+			println("solution_value = $sol_val")
 			close_and_print!(timings, "solution_print_time")
 		end
 	end

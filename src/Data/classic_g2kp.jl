@@ -89,3 +89,22 @@ function read_from_string(
 )
 	return read_from_string(Classic_G2KP{Int, Int, Int}(), s)
 end
+
+# === `GuillotineModels.solution_value` implementations
+
+import ..CutPattern
+function solution_value(
+	:: Val{:G2KP}, instance :: G2KP{D, S, P}, cp :: CutPattern{D, S}
+) where {D, S, P}
+	p = instance.p
+	if iszero(cp.piece_idx)
+		z = zero(eltype(p))
+		for sp in cp.subpatterns
+			z += solution_value(Val(:G2KP), instance, sp)
+		end
+		return z
+	else
+		return p[cp.piece_idx]
+	end
+end
+

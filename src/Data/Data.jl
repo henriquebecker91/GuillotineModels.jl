@@ -52,19 +52,20 @@ module Data
 
 import TimerOutputs.@timeit
 import ..TIMER
+import ..solution_value
 using AutoHashEquals: @auto_hash_equals
 
 export read_from_string, read_from_file, is_collection
 export GenericParseError
 
+# From classic_g2kp
+export Classic_G2KP, G2KP
+include("classic_g2kp.jl")
+
 # From cpg
 export CPG_SLOPP, CPG_MHLOPPW, CPG_ODPW, CPG_SSSCSP
 export SLOPP, MHLOPPW, ODPW, SSSCSP
 include("cpg.jl")
-
-# From classic_g2kp
-export Classic_G2KP, G2KP
-include("classic_g2kp.jl")
 
 """
     read_from_file(format, filepath :: AbstractString)
