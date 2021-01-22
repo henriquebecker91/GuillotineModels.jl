@@ -20,6 +20,7 @@ using .SolversArgs
 import ..TIMER # The global module timer.
 using ..Data
 import ..build_model
+import ..CutPattern
 import ..cut_pattern_profit
 import ..BuildStopReason, ..BUILT_MODEL, ..FOUND_OPTIMUM
 using ..Utilities
@@ -263,20 +264,32 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 	end
 	if solution !== nothing
 		@timeit TIMER "stringfy_solutions" begin
-			sol_str = "solution = $solution\n"
-			sol_pretty_str = "PRETTY_STR_SOLUTION_BEGIN\n" * to_pretty_str(solution) *
+			solution_str = "solution = $solution\n"
+			local pretty_sol_str :: String
+			local pretty_simple_sol_str :: String
+			if isa(solution, CutPattern)
+				pretty_sol_str = to_pretty_str(solution)
+				pretty_simple_sol_str = to_pretty_str(simplify!(deepcopy(solution)))
+			else
+				pretty_sol_str = join(to_pretty_str.(solution), "\n")
+				pretty_simple_sol_str = join(
+					to_pretty_str.(simplify!.(deepcopy.(solution))), "\n"
+				)
+			end
+
+			pretty_sol_str = "PRETTY_STR_SOLUTION_BEGIN\n" * pretty_sol_str *
 				"\nPRETTY_STR_SOLUTION_END\n"
-			sol_simple_pretty_sol = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
-				to_pretty_str(simplify!(deepcopy(solution))) *
+			pretty_simple_sol_str = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
+				pretty_simple_sol_str *
 				"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
 		end
 
 		if verbose
 			@timeit TIMER "print_solutions" begin
 				iob = IOBuffer()
-				write(iob, sol_str)
-				write(iob, sol_pretty_str)
-				write(iob, sol_simple_pretty_sol)
+				write(iob, solution_str)
+				write(iob, pretty_sol_str)
+				write(iob, pretty_simple_sol_str)
 				print(read(seekstart(iob), String))
 			end
 			#= TODO: deal with the solution_value computation in a generic way.

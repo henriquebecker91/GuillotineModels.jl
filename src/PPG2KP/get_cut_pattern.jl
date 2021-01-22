@@ -14,19 +14,27 @@ function _extraction_pattern(
 end
 
 # INTERNAL USE.
-# Check if a single piece is extracted from the original plate.
-# TODO: fix the types, as we are using Julia 1.4
-function _check_if_single_piece_solution(
-	np :: Vector{Tuple{P, D}}, nzpe_idxs :: Vector{Int}
-) :: Int where {D, P}
-	single_extraction_idx = 0
-	for e_idx in nzpe_idxs
-		pli = np[e_idx][1]
+# For each large object that has a single piece extracted directly from it,
+# i.e., no intermediary plates or cuts, return the indexes in `np` of such
+# extractions; also, mutate nzpe_idxs and nzcm_vals to remove the positions
+# refering to extractions directly from the large object.
+function _single_so_from_lo_extractions!(
+	np :: Vector{Tuple{P, D}}, nzpe_idxs :: Vector{P}, nzpe_vals :: Vector{D}
+) :: Vector{P} where {D, P}
+	to_delete = D[]
+	extractions = P[]
+	for (nzpe_idx, np_idx) in pairs(nzpe_idxs)
+		pli = np[np_idx][1]
 		!isone(pli) && continue
-		single_extraction_idx = e_idx
+		for _ = 1:nzpe_vals[nzpe_idx]
+			push!(extractions, np_idx)
+		end
+		push!(to_delete, nzpe_idx)
 	end
+	deleteat!(nzpe_idxs, to_delete)
+	deleteat!(nzpe_vals, to_delete)
 
-	return single_extraction_idx
+	return extractions
 end
 
 # INTERNAL USE.
@@ -56,14 +64,18 @@ end
 function _build_cut_idx_stack(
 	nz_cuts :: Vector{NTuple{3, P}},
 	qt_cuts :: Vector{D},
-	root_cut_idx :: Int #=P=#,
+	root_cut_idxs :: Vector{P},
 	debug :: Bool = false
-) :: Vector{Int#=P=#} where {D, P}
-	cut_idx_stack = Vector{Int#=P=#}()
-	push!(cut_idx_stack, root_cut_idx)
+) :: Vector{P} where {D, P}
+	cut_idx_stack = Vector{P}()
+	if isone(length(root_cut_idxs))
+		push!(cut_idx_stack, only(root_cut_idxs))
+	else
+		append!(cut_idx_stack, expand(qt_cuts[root_cut_idxs], root_cut_idxs))
+	end
 	cuts_available = deepcopy(qt_cuts)
-	@assert isone(cuts_available[root_cut_idx])
-	cuts_available[root_cut_idx] -= one(D)
+	cuts_available[root_cut_idxs] .= zero(D)
+
 	next_cut = one(P)
 	while next_cut <= length(cut_idx_stack)
 		_, fc, sc = nz_cuts[cut_idx_stack[next_cut]]
@@ -155,34 +167,48 @@ end
 function _get_cut_pattern(
 	nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals,
 	bmr :: ByproductPPG2KP{D, S}, debug :: Bool
-) :: CutPattern{D, S} where {D, S}
-	# 1. Check if there can be an extraction from the original plate to a
-	#    single piece. If it may and it happens, then just return this single
-	#    piece solution; otherwise the first cut is in `cuts_made`, find it
-	#    (i.e., traverse non-zero cuts_made variables checking for a hcut or
-	#    vcut that has the original plate as the parent plate).
-	# 2. Create a topological ordering of the cuts starting from the root cut.
-	# 3. Initialize a pool of plate type "uses"/patterns with the piece
+) :: Vector{CutPattern{D, S}} where {D, S}
+	# 1. If there are extractions of small objects from large objects,
+	#    we keep them in a separate array and remove these extractions from
+	#    the data (the rest of the code then can safely assume the large
+	#    objects are either cut or unused, not directly extracted).
+	# 2. If not all extractions were made directly from large objects, then the
+	#    cuts made over large objects are in `cuts_made`, find them (i.e.,
+	#    traverse non-zero cuts_made variables checking for a hcut or vcut that
+	#    has the original plate as the parent plate).
+	# 3. Create a topological ordering of the cuts starting from the root cuts.
+	# 4. Initialize a pool of plate type "uses"/patterns with the piece
 	#    extractions in the solution (i.e., leaf nodes).
-	# 4. Traverse the reverse of the topological ordering and build the
+	# 5. Traverse the reverse of the topological ordering and build the
 	#    'pattern tree' in a bottom-up fashion. The children of each pattern
 	#    are queryed from the pool of plate type "uses", and removed from it
 	#    to be only present inside their parent pattern. At the end of the
-	#    process there should remain a single pattern in the pool that is the
-	#    root pattern.
-	sps_idx = _check_if_single_piece_solution(bmr.np, nzpe_idxs)
-	!iszero(sps_idx) && return _extraction_pattern(bmr, sps_idx)
+	#    process there should remain only patterns starting from an original
+	#    plate (i.e., large object) in the pool.
+	lo2so_idxs = _single_so_from_lo_extractions!(bmr.np, nzpe_idxs, nzpe_vals)
+	lo2so_patterns = _extraction_pattern.(
+		(bmr,), lo2so_idxs
+	) :: Vector{CutPattern{D, S}}
+	@assert all(!isequal(zero(eltype(nzpe_idxs))), nzpe_idxs)
+	@assert all(!isequal(zero(D)), nzpe_vals)
+	# If the call to _single_so_from_lo_extractions has exhausted the
+	# list of extractions, then there is nothing else to do (i.e.,
+	# lo2so_patterns has the solution already).
+	if isempty(nzpe_idxs)
+		@assert isempty(nzpe_vals)
+		return lo2so_patterns
+	end
 
 	# The cuts actually used in the solution.
 	sel_cuts = bmr.cuts[nzcm_idxs]
 	debug && @show sel_cuts
 	# If the cut in `sel_cuts` is vertical or not.
 	ori_cuts = nzcm_idxs .>= bmr.first_vertical_cut_idx
-	# The index of the root cut (cut over the original plate) in `sel_cuts`.
-	root_idx = findfirst(cut -> isone(cut[1]), sel_cuts)
-	root_idx === nothing && return CutPattern(bmr.L, bmr.W, zero(D))
+	# The index of the root cuts (cut over the original plates) in `sel_cuts`.
+	root_idxs = findall(cut -> isone(cut[1]), sel_cuts)
+	isempty(root_idxs) && return CutPattern{D, S}[]
 
-	cut_idx_stack = _build_cut_idx_stack(sel_cuts, nzcm_vals, root_idx, debug)
+	cut_idx_stack = _build_cut_idx_stack(sel_cuts, nzcm_vals, root_idxs, debug)
 
 	# `patterns` translates a plate index (pli) into a list of all "uses" of that
 	# plate type. Such "uses" are CutPattern objects, either pieces or more
@@ -200,7 +226,7 @@ function _get_cut_pattern(
 
 	_bottom_up_tree_build!(patterns, cut_idx_stack, sel_cuts, ori_cuts, bmr, debug)
 
-	if !isone(length(patterns)) || !haskey(patterns, 1) || !isone(length(patterns[1]))
+	if !isone(length(patterns)) || !haskey(patterns, 1)# || !isone(length(patterns[1]))
 		println("BUG AT GET_CUT_PATTERN")
 		for (key, subpatts) in patterns
 			@show key
@@ -212,9 +238,9 @@ function _get_cut_pattern(
 
 	@assert isone(length(patterns))
 	@assert haskey(patterns, 1)
-	@assert isone(length(patterns[1]))
+	#@assert isone(length(patterns[1]))
 
-	return patterns[1][1]
+	return vcat(lo2so_patterns, patterns[1])
 end
 
 import ..get_cut_pattern
@@ -225,9 +251,9 @@ import ..get_cut_pattern
 ) :: CutPattern{D, S} where {D, S, P}
 =#
 @timeit TIMER function get_cut_pattern(
-	problem :: Val{:G2KP}, formulation :: Val{:PPG2KP}, model :: JuMP.Model,
+	problem :: SIMILAR_4, formulation :: Val{:PPG2KP}, model :: JuMP.Model,
 	build_model_return :: ModelByproduct{D, S, P}
-) :: CutPattern{D, S} where {D, S, P}
+) where {D, S, P}
 	# local constant to alternate debug mode (method will not take a debug flag)
 	debug = false
 
@@ -242,16 +268,34 @@ import ..get_cut_pattern
 	nzpe_idxs, nzpe_vals = gather_nonzero(pe, D)
 	nzcm_idxs, nzcm_vals = gather_nonzero(cm, D)
 	if debug
+		println("Start of: formulation info before _get_cut_pattern.")
 		@show nzpe_idxs
 		@show nzpe_vals
 		@show nzcm_idxs
 		@show nzcm_vals
 		@show value.(pe[nzpe_idxs])
 		@show value.(cm[nzcm_idxs])
+		println("End of: formulation info before _get_cut_pattern.")
+	end
+
+	# NOTE: this can alter the arrays above.
+	patterns = _get_cut_pattern(
+		nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, bmr.preprocess_byproduct, debug
+	)
+
+	if debug
+		println("Start of: formulation info before _get_cut_pattern.")
+		@show nzpe_idxs
+		@show nzpe_vals
+		@show nzcm_idxs
+		@show nzcm_vals
+		@show value.(pe[nzpe_idxs])
+		@show value.(cm[nzcm_idxs])
+		println("End of: formulation info after _get_cut_pattern.")
 	end
 
 	# Call the method that deals only with the data, and not with the JuMP.Model.
-	return _get_cut_pattern(
-		nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, bmr.preprocess_byproduct, debug
-	)
+	is_single_pattern = isa(problem, Val{:G2KP}) || isa(problem, Val{:G2OPP})
+	is_single_pattern && return only(patterns)
+	return patterns
 end

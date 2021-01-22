@@ -1,4 +1,9 @@
 module PPG2KP
+
+# Constant used for the problems that need no change in the enumeration
+# process (and often share the same method bodies).
+const SIMILAR_4 = Union{Val{:G2KP}, Val{:G2MKP}, Val{:G2OPP}, Val{:G2CSP}}
+
 # Include submodules. Even if not used here, they need to be here to be
 # avaliable for users to access/import.
 include("./Heuristic.jl")
@@ -29,6 +34,7 @@ import ..Data.G2KP
 import ..Data.SLOPP
 import ..Data.MHLOPPW
 import ..Data.SSSCSP
+using ..Utilities: expand # for get_cut_pattern
 
 struct ModelByproduct{D, S, P}
 	preprocess_byproduct :: ByproductPPG2KP{D, S, P}
@@ -223,8 +229,6 @@ end
 		quiet = options["quiet"], verbose = options["verbose"]
 	)
 end
-
-const SIMILAR_4 = Union{Val{:G2KP}, Val{:G2MKP}, Val{:G2OPP}, Val{:G2CSP}}
 
 @timeit TIMER function _build_base_model!(
 	problem :: SIMILAR_4, inst, model, bp :: ByproductPPG2KP{D, S, P},

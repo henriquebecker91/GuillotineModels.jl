@@ -19,6 +19,7 @@ using Random#: shuffle!
 import ...CutPattern
 import ...TIMER # Global module timer for use with TimerOutputs.@timeit.
 import TimerOutputs.@timeit
+using ...Utilities: expand
 
 export first_fit_decr, iterated_greedy
 export Levels, fast_first_fit_decr, fast_iterated_greedy
@@ -54,37 +55,6 @@ function promising_kfirst(
 	end
 	# the line below is only executed if sum(p) <= bkv
 	return zero(D)
-end
-
-"""
-    expand(d :: [D], a :: [T]) :: [T]
-
-!!! **Internal use.**
-
-Given two vectors of the same size, create a copy of `a` that replaces each
-element `a[i]` by `d[i]` copies of it, and then flatten the copy.
-
-```julia
-expand([0, 1, 2, 3], [4, 5, 6, 7])
-[5, 6, 6, 7, 7, 7]
-```
-"""
-function expand(
-	d :: AbstractVector{D}, a :: AbstractVector{T}
-) where {D, T}
-	n = length(d)
-	@assert axes(d) == axes(a)
-	sum_d = sum(d)
-	b = Vector{T}(undef, sum_d)
-	next = 1
-	for k in eachindex(d)
-		a_k = a[k]
-		for _ = 1:d[k]
-			b[next] = a_k
-			next += 1
-		end
-	end
-	return b
 end
 
 """
