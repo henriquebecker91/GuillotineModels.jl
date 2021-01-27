@@ -36,10 +36,17 @@ import ..Data.MHLOPPW
 import ..Data.SSSCSP
 using ..Utilities: expand # for get_cut_pattern
 
+# Included at the start because ModelByproduct has a RotationAwareData field.
+include("rotation.jl")
+
 struct ModelByproduct{D, S, P}
 	preprocess_byproduct :: ByproductPPG2KP{D, S, P}
 	found_optimum :: Bool
+	# TODO: `optimum_if_found` will need to become a `Vector` of
+	# `CutPattern`s in the future if this feature is to be supported by
+	# G2CSP and G2MKP.
 	optimum_if_found :: CutPattern{D, S}
+	rad :: Union{Nothing, RotationAwareData{D, S}}
 end
 
 # Convenience in case of FOUND_OPTIMUM. `found_optimum` is set
@@ -53,7 +60,13 @@ end
 # Convenience in case of BUILT_MODEL. `found_optimum` is set
 # to `false` and `optimum_if_found` stores an empty (but valid) solution.
 function ModelByproduct(bp :: ByproductPPG2KP{D, S, P}) where {D, S, P}
-	return ModelByproduct{D, S, P}(bp, false, CutPattern(bp.L, bp.W))
+	return ModelByproduct{D, S, P}(bp, false, CutPattern(bp.L, bp.W), nothing)
+end
+# Convenience in case of BUILT_MODEL and rotation was allowed.
+function ModelByproduct(
+	bp :: ByproductPPG2KP{D, S, P}, rad :: RotationAwareData{D, S}
+) where {D, S, P}
+	return ModelByproduct{D, S, P}(bp, false, CutPattern(bp.L, bp.W), rad)
 end
 
 @enum Dimension begin
@@ -230,9 +243,39 @@ end
 	)
 end
 
+@timeit TIMER function _gen_cuts_wo(
+	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S},
+	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
+) where {D, S, P}
+	return gen_cuts(P, d, sllw, L, W;
+		ignore_2th_dim = options["ignore-2th-dim"],
+		ignore_d = options["ignore-d"],
+		round2disc = options["round2disc"],
+		no_cut_position = options["no-cut-position"],
+		no_redundant_cut = options["no-redundant-cut"],
+		no_furini_symmbreak = options["no-furini-symmbreak"],
+		faithful2furini2016 = options["faithful2furini2016"],
+		quiet = options["quiet"], verbose = options["verbose"]
+	)
+end
+
+# INTERNAL USE.
+#
+# (Only used in _build_base_model! to make the shared demand constraint.)
+#
+# Helper functions that make it easier to index collections using the
+# Vector{Union{D, Tuple{D, D}}} index lists.
+function _flatten_index(a, i :: Integer, f)
+	return a[i]
+end
+function _flatten_index(a, i :: Tuple{I, I}, f) where {I <: Integer}
+	return f(a[first(i)], a[last(i)])
+end
+
 @timeit TIMER function _build_base_model!(
 	problem :: SIMILAR_4, inst, model, bp :: ByproductPPG2KP{D, S, P},
 	inv_idxs :: VarInvIndexes{P},
+	rad :: Union{Nothing, RotationAwareData{D, S}},
 	options :: Dict{String, Any} = Dict{String, Any}();
 	build_LP_not_MIP = false
 ) where {D, S, P}
@@ -241,6 +284,20 @@ end
 	@unpack pii2pair, pli2pair, child2cut, parent2cut = inv_idxs
 	num_piece_types = convert(D, length(d))
 	num_plate_types = length(pli_lwb)
+
+	if problem == Val(:G2KP) || problem == Val(:G2MKP)
+		if options["allow-rotation"]
+				# If a rotation-aware piece (i.e., dummy) maps to two original
+				# pieces (only happens if both are perfect rotations of each other)
+				# then we can map the dummy index to the any of the original pieces
+				# (here we choose the first) because both share the same profit value
+				# (this is a requirement to be a perfect rotation).
+				rai2opi = first.(rad.sdi2opi[rad.rai2sdi]) :: Vector{D}
+				p = inst.p[rai2opi] :: Vector{P}
+		else
+				p = inst.p :: Vector{P}
+		end
+	end
 
 	# If all pieces have demand one, a binary variable will suffice to make the
 	# connection between a piece type and the plate it is extracted from.
@@ -275,7 +332,7 @@ end
 	# If it is OPP, then there is no objective function.
 	if problem === Val(:G2KP) || problem === Val(:G2MKP)
 		@objective(model, Max,
-			sum(inst.p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
+			sum(p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
 		)
 	elseif problem === Val(:G2CSP)
 		# We create a variable to represent the number of original plates used:
@@ -332,15 +389,31 @@ end
 	# it means the number of each piece type that *must* be extracted/packed.
 	# TODO: there is a better way than using this `if`?
 	if problem === Val(:G2KP) || problem === Val(:G2MKP)
-		@constraint(model,
-			demand_con[pii=1:num_piece_types],
-			sum(picuts[pii2pair[pii]]) <= d[pii]
-		)
+		if options["allow-rotation"]
+			@constraint(model,
+				demand_con[sdi=1:length(rad.shared_demand)],
+				sum(picuts[_flatten_index(pii2pair, rad.sdi2rai[sdi], vcat)]) <=
+					rad.shared_demand[sdi]
+			)
+		else
+			@constraint(model,
+				demand_con[pii=1:num_piece_types],
+				sum(picuts[pii2pair[pii]]) <= d[pii]
+			)
+		end
 	elseif problem === Val(:G2OPP) || problem === Val(:G2CSP)
-		@constraint(model,
-			demand_con[pii=1:num_piece_types],
-			sum(picuts[pii2pair[pii]]) == d[pii]
-		)
+		if options["allow-rotation"]
+			@constraint(model,
+				demand_con[sdi=1:length(rad.shared_demand)],
+				sum(picuts[_flatten_index(pii2pair, rad.sdi2rai[sdi], vcat)]) ==
+					rad.shared_demand[sdi]
+			)
+		else
+			@constraint(model,
+				demand_con[pii=1:num_piece_types],
+				sum(picuts[pii2pair[pii]]) == d[pii]
+			)
+		end
 	end
 
 	#= Disabled while we rework it in a problem-agnostic fashion.
@@ -405,6 +478,7 @@ the plate types (i.e., it will be the same length as ByproductPPG2KP.pli_lwb
 and each position in `model[:plate_cons]` will correspond to the plate
 described in the same position of `ByproductPPG2KP.pli_lwb`).
 """
+#=
 function build_complete_model(
 	model, d :: Vector{D}, p :: Vector{P}, l :: Vector{S}, w :: Vector{S},
 	L :: S, W :: S, start :: Float64 = time(),
@@ -414,9 +488,10 @@ function build_complete_model(
 	build_complete_model(model, p, bp, start, options)
 	return bp
 end
-
+=#
 function build_complete_model(
 	problem, instance, model, bp :: ByproductPPG2KP{D, S, P},
+	rad :: Union{Nothing, RotationAwareData{D, S}},
 	start :: Float64 = time(), options :: Dict{String, Any} = Dict{String, Any}()
 ) :: ByproductPPG2KP{D, S, P} where {D, S, P}
 	inv_idxs = VarInvIndexes(bp)
@@ -430,7 +505,7 @@ function build_complete_model(
 		@view bp.cuts[bp.first_vertical_cut_idx:end];
 		by = c -> c[PARENT]
 	)
-	_build_base_model!(problem, instance, model, bp, inv_idxs, options)
+	_build_base_model!(problem, instance, model, bp, inv_idxs, rad, options)
 
 	return bp
 end
@@ -443,10 +518,20 @@ include("./pricing.jl")
 function _homo_geometry(
 	i :: Union{G2KP{D, S, P}, SSSCSP{D, S, P}}
 ) where {D, S, P}
-	return P, i.d, i.l, i.w, i.L, i.W
+	return D, S, P, i.d, i.l, i.w, i.L, i.W
 end
 function _homo_geometry(i :: MHLOPPW{D, S, P}) where {D, S, P}
-	return P, i.dub, i.l, i.w, only(i.L), only(i.W)
+	return D, S, P, i.dub, i.l, i.w, only(i.L), only(i.W)
+end
+function _get_profit(
+	i :: Union{G2KP{D, S, P}, MHLOPPW{D, S, P}}
+) :: Vector{P} where {D, S, P}
+	return i.p
+end
+function _get_profit(
+	i :: Union{SSSCSP{D, S, P}}
+) :: Vector{P} where {D, S, P}
+	return zeros(P, length(i.d))
 end
 
 function _no_arg_check_build_model(
@@ -459,7 +544,18 @@ function _no_arg_check_build_model(
 	verbose = options["verbose"] && !options["quiet"]
 	# Enumerate plates and cuts.
 	enumeration_time = @elapsed begin
-		bp = _gen_cuts_wo(_homo_geometry(instance)..., options)
+		D, _, P, d, l, w, L, W = _homo_geometry(instance)
+		sllw = SortedLinkedLW(D, l, w)
+		if options["allow-rotation"]
+			rad = build_RAD(L, W, sllw, d, _get_profit(instance))
+			# Here we expand the shared demand to all dummy pieces it applies,
+			# so it is invisible to _gen_cuts_wo that we are dealing with
+			# a rotation variant.
+			unshared_demand = rad.shared_demand[rad.rai2sdi]
+			bp = _gen_cuts_wo(P, unshared_demand, rad.ra_sllw, L, W, options)
+		else
+			bp = _gen_cuts_wo(P, d, sllw, L, W, options)
+		end
 	end
 	if verbose
 		@show enumeration_time
@@ -497,6 +593,11 @@ function _no_arg_check_build_model(
 			"The pricing was only implemented for the G2KP problem. Other" *
 			" problems have no implementation of the pricing."
 		)
+		options["allow-rotation"] && @error(
+			"The pricing code was not yet examined to check if it supports" *
+			" rotation. The combination of any pricing method plus rotation" *
+			" is disabled for now."
+		)
 		# It is important to note that the pricing and the bm (BaseModel) have the
 		# same two values ("becker"/BECKER and "furini"/FURINI) but they are
 		# orthogonal/independent. You can have a FURINI model with "becker" pricing
@@ -524,11 +625,18 @@ function _no_arg_check_build_model(
 	else # in the case there is no pricing phase
 		# Needs to build the mode here, as when there is pricing the pricing
 		# procedure is responsible for building the model.
-		build_complete_model(problem, instance, model, bp, start, options)
+		build_complete_model(
+			problem, instance, model, bp,
+			(options["allow-rotation"] ? rad : nothing), start, options
+		)
 		if options["MIP-start"] == "guaranteed"
 			problem !== Val(:G2KP) && @error(
 				"The MIP-start was only implemented for the G2KP problem. Other" *
 				" problems have no implementation of the MIP-start."
+			)
+			options["allow-rotation"] && @error(
+				"The MIP-start was not yet examined to check if it supports" *
+				" rotation. Using MIP-start plus rotation is disabled for now."
 			)
 			heuristic_lb_time = @elapsed begin
 				(heuristic_lb, _, _), _ = mip_start_by_heuristic!(
@@ -550,6 +658,10 @@ function _no_arg_check_build_model(
 
 	# Check if variables and constraints made useless by the deletion
 	# of other variables will be kept or not.
+	# TODO: if we ever start dealing with multiple original plates, we may
+	# need to update _handle_unreachable! (the exception is if we go with
+	# some maximum.((L, W)) workaround were the original plates are all
+	# cut from a dummy root plate).
 	purge_unreachable_time = @elapsed begin
 		purge = !options["do-not-purge-unreachable"]
 		bp = _handle_unreachable!(bp, model, verbose, purge)
@@ -561,6 +673,8 @@ function _no_arg_check_build_model(
 	end
 	verbose && @show purge_unreachable_time
 	throw_if_timeout_now(start, limit) # after handle_unreachable!
+
+	options["allow-rotation"] && return BUILT_MODEL, ModelByproduct(bp, rad)
 
 	return BUILT_MODEL, ModelByproduct(bp)
 end

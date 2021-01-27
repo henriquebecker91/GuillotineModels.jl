@@ -102,6 +102,13 @@ Should always return two values: the first is always an element of
 """
 function build_model end
 
+#=
+The list item below was removed because for now there seems to be no value
+in having a field indicating the piece was rotated or not.
+ * `piece_is_rotated` is only relevant if `piece_idx` is not zero; it
+  should always be `false` if `piece_idx` is zero. If `true` then the piece
+	dimensions are considered swapped in the context of the pattern.
+=#
 """
 A guillotine stage-unlimited unrestricted cutting pattern.
 
@@ -129,8 +136,10 @@ struct CutPattern{D, S}
 	length :: S
 	"The width of the pattern."
 	width :: S
-	"If the pattern is sold as a piece, then the piece index; otherwise zero."
+	"If the pattern represents a piece, then the piece index; otherwise zero."
 	piece_idx :: D
+	#"If the piece the pattern represents was rotated (90 degrees)."
+	#piece_is_rotated :: Bool
 	"The common orientation of the cuts between the plates in `subpatterns`."
 	cuts_are_vertical :: Bool
 	"The subpatterns that constitute the pattern."

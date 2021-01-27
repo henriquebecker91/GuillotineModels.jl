@@ -68,11 +68,7 @@ function _build_cut_idx_stack(
 	debug :: Bool = false
 ) :: Vector{P} where {D, P}
 	cut_idx_stack = Vector{P}()
-	if isone(length(root_cut_idxs))
-		push!(cut_idx_stack, only(root_cut_idxs))
-	else
-		append!(cut_idx_stack, expand(qt_cuts[root_cut_idxs], root_cut_idxs))
-	end
+	append!(cut_idx_stack, expand(qt_cuts[root_cut_idxs], root_cut_idxs))
 	cuts_available = deepcopy(qt_cuts)
 	cuts_available[root_cut_idxs] .= zero(D)
 
@@ -243,6 +239,43 @@ function _get_cut_pattern(
 	return vcat(lo2so_patterns, patterns[1])
 end
 
+function _inner_cp_rai2opi!(
+	patterns :: AbstractVector{CutPattern{D, S}},
+	rai2opi :: AbstractVector{Union{D, Tuple{D, D}}},
+	remaining_original_demand :: AbstractVector{D}
+) :: Nothing where {D, S}
+	for (i, e) in pairs(patterns)
+		if iszero(e.piece_idx) # not a piece extraction
+			_inner_cp_rai2opi!(e.subpatterns, rai2opi, remaining_original_demand)
+			continue
+		end
+
+		opis = rai2opi[e.piece_idx] # original piece index(es)
+		opi :: D = if isa(opis, D) # The dummy maps to a single original piece.
+			opis
+		else # The dummy maps to two original pieces (need to manage demand).
+			iszero(remaining_original_demand[opis[1]]) ? opis[2] : opis[1]
+		end
+
+		@assert !iszero(remaining_original_demand[opi])
+		remaining_original_demand[opi] -= 1
+		patterns[i] = CutPattern(e.length, e.width, opi)
+	end
+
+	return nothing
+end
+
+function _cp_rai2opi!(
+	patterns :: AbstractVector{CutPattern{D, S}},
+	rad :: RotationAwareData{D, S}
+) :: Nothing where {D, S}
+	rai2opi = rad.sdi2opi[rad.rai2sdi]
+	d = deepcopy(rad.original_demand)
+	_inner_cp_rai2opi!(patterns, rai2opi, d)
+
+	return nothing
+end
+
 import ..get_cut_pattern
 #=
 @timeit TIMER function get_cut_pattern(
@@ -284,7 +317,7 @@ import ..get_cut_pattern
 	)
 
 	if debug
-		println("Start of: formulation info before _get_cut_pattern.")
+		println("Start of: formulation info after _get_cut_pattern.")
 		@show nzpe_idxs
 		@show nzpe_vals
 		@show nzcm_idxs
@@ -293,6 +326,11 @@ import ..get_cut_pattern
 		@show value.(cm[nzcm_idxs])
 		println("End of: formulation info after _get_cut_pattern.")
 	end
+
+	# All the CutPattern extraction procedure is rotation-unaware. If rotation
+	# is allowed, the piece indexes in the leaf nodes of CutPattern need to be
+	# changed to the original piece indexes.
+	bmr.rad !== nothing && _cp_rai2opi!(patterns, bmr.rad)
 
 	# Call the method that deals only with the data, and not with the JuMP.Model.
 	is_single_pattern = isa(problem, Val{:G2KP}) || isa(problem, Val{:G2OPP})

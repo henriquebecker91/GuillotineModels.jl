@@ -3,6 +3,15 @@ module Utilities
 using DocStringExtensions # for TYPEDFIELDS
 
 """
+    allsame(x) :: Bool
+
+Returns `true` if all elements inside `x` are the same (uses `==`);
+`false` otherwise.
+"""
+allsame(x) = all(y -> y == x[1], x)
+export allsame
+
+"""
     expand(d :: [D], a :: [T]) :: [T]
 
 Given two vectors of the same size, create a copy of `a` that replaces each

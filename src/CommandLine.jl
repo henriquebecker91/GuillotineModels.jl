@@ -219,7 +219,11 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 		end
 	end
 
-	pp["do-not-solve"] && return nothing
+	if pp["do-not-solve"]
+		close_and_print!(timings, "build_and_solve_time")
+		return nothing
+	end
+
 	throw_if_timeout_now(start, limit)
 
 	if bsr == BUILT_MODEL
@@ -238,10 +242,6 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 			@show stop_reason
 			stop_code = Int64(stop_reason)
 			@show stop_code
-			obj_value = objective_value(m)
-			@show obj_value
-			obj_bound = objective_bound(m)
-			@show obj_bound
 		end
 	end
 	if verbose
@@ -291,11 +291,15 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 				write(iob, pretty_simple_sol_str)
 				print(read(seekstart(iob), String))
 			end
+			obj_value = objective_value(m)
+			@show obj_value
+			obj_bound = objective_bound(m)
+			@show obj_bound
 			sol_val = solution_value(problem, instance, solution)
 			println("solution_value = $sol_val")
-			close_and_print!(timings, "solution_print_time")
 		end
 	end
+	verbose && close_and_print!(timings, "solution_print_time")
 
 	# This is done just before returning because the version of
 	# `optimize_within_time_limit!` called above does not throw. The

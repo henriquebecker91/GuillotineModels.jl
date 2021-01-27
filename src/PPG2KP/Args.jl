@@ -102,7 +102,10 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 		),
 		Arg("MIP-start", "expected",
 			"Three values are allowed: \"expected\", \"none\", and \"guaranteed\". If \"expected\" is passed, then the model will not be MIP-started unless some sort of pricing (that already generates a complete feasible solution in the process) is used. If it is Becker's pricing, then the model is just MIP-started with the simple iterated greedy 2-staged heuristic; if it is Furini's pricing, then two MIP-starts occur: the first one using the same heuristic in a restricted model; the second one using the solution of the restricted model in the returned non-restricted model. If \"none\" is passed, then the model is never MIP-started, even temporarily (as the first MIP-start that can occur in the middle of Furini's pricing). If \"guaranteed\" is passed, it behaves as \"expected\" if pricing is enabled, but if pricing is disabled, it calls the iterated greedy 2-staged heuristic just to MIP-start the model before returning it. The MIP-start is done by means of `MOI.set(model, VariablePrimalStart(), var_index, value)`."
-		)
+		),
+		Arg("allow-rotation", false,
+			"The formulation will allow the pieces to rotate. Dummy rotated pieces are created and feeded to the discretization and model building. The only explicit difference in the formulation is that the demand is shared between the two rotations of a piece. Pieces that meet any of the following conditions do not have rotated counterparts: (i) the piece is a square; (ii) after rotation the piece does not fit into the 'original plate'/'large object'; (iii) the instance has another piece that is exactly the same as the rotated piece (other attributes like profit need to match too), in this case the demand of both (non-rotated) pieces is summed and shared." # (Not sure if CutPattern really needs this field.) The CutPattern returned by `get_cut_pattern` should use only the indexes of the pieces originally in the instance (and mark the field `piece_is_rotated` as `true` when a rotated dummy is used)."
+		),
 	]
 end
 
