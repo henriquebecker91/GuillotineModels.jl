@@ -346,7 +346,8 @@ end
 		# otherwise not, therefore a mess). This seems to be the better design,
 		# no code (even G2CSP-specific) really need to be aware of this variable.
 		@variable(model, b, integer = !build_LP_not_MIP)
-		@objective(model, Min, b)
+		@objective(model, Min, sum([b])) # the sum prevents erros with GLPK
+		# @objective(model, Min, b) # TODO: go back to this in the future
 	end
 
 	# c1: # Either there is a limited amount of original plates available
@@ -569,9 +570,6 @@ function _no_arg_check_build_model(
 	# plates and cuts (or a subset of them).
 	switch_method = options["Gurobi-LP-method-inside-furini-pricing"]
 	pricing = options["pricing"]
-	if pricing == "expected"
-		pricing = (options["faithful2furini2016"] ? "furini" : "becker")
-	end
 	# The warnings are done here to avoid putting them inside a method
 	# that will not be called anyway.
 	current_solver_name = solver_name(model)

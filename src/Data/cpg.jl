@@ -121,7 +121,8 @@ function _find_header_end(format :: T, lines) where {T}
 	last_line :: Int = length(lines)
 
 	while qt_delims_found < 2 && current_line <= last_line
-		if match(CPG_DELIM_REGEX, lines[current_line]) !== nothing
+		# strip is needed because \r\n newlines keep the \r after eachline
+		if match(CPG_DELIM_REGEX, strip(lines[current_line])) !== nothing
 			qt_delims_found += 1
 		end
 		current_line += 1

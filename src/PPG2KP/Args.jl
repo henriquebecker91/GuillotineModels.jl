@@ -61,8 +61,8 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"Disables Furini2016 symmetry breaking: as trim cuts are needed in faithful2furini2016 mode, the symmetry-breaking is less restrictive than 'do not cut after midplate', it just removes each cut y > midplate in which plate_size - y is an existing cut; enabling this flag makes the code just use all discretized positions as cuts."
 		),
 		Arg(
-			"pricing", "expected",
-			"Define if a pricing procedure will be used, and which one. The default value is 'expected', which will apply a different pricing procedure depending on other flags (mostly, 'furini' if 'faithful2furini2016' is passed and 'becker' otherwise). The accepted values are: 'expected', 'furini', 'becker', and 'none'. Combining 'pricing none' with 'faithful2furini2016' will give the Complete PP-G2KP Model with Cut-Position and Redundant-Cut reductions (pass no-redundant-cut and no-cut-position to have the pure Complete PP-G2KP Model)."
+			"pricing", "none",
+			"Define if a pricing procedure will be used, and which one. The default value is 'none'. The accepted values are: 'furini', 'becker', and 'none'. Combining '--PPG2KP-pricing none' with '--PPG2KP-faithful2furini2016' will give the Complete PP-G2KP Model with Cut-Position and Redundant-Cut reductions (pass no-redundant-cut and no-cut-position to have the pure Complete PP-G2KP Model)."
 		),
 		Arg(
 			"ignore-d", false,

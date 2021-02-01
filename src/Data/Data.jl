@@ -75,13 +75,16 @@ Reads the given file and apply `read_from_string` to its contents.
 The (already provided) generic body of this function should be enough for most
 formats without the need of explicit specialization.
 
+Note: this function remove all '\\r' characters from the obtained `String` to
+avoid 'dos' vs 'unix' format inconsistencies.
+
 See also: [`read_from_string`](@ref)
 """
 @timeit TIMER function read_from_file(
 	format, filepath :: AbstractString
 )
 	return open(filepath) do f
-		read_from_string(format, read(f, String))
+		read_from_string(format, replace(read(f, String), '\r' => ""))
 	end
 end
 

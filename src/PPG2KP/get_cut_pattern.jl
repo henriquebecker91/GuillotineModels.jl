@@ -314,7 +314,7 @@ import ..get_cut_pattern
 	# NOTE: this can alter the arrays above.
 	patterns = _get_cut_pattern(
 		nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, bmr.preprocess_byproduct, debug
-	)
+	) :: Vector{CutPattern{D, S}}
 
 	if debug
 		println("Start of: formulation info after _get_cut_pattern.")
@@ -330,7 +330,7 @@ import ..get_cut_pattern
 	# All the CutPattern extraction procedure is rotation-unaware. If rotation
 	# is allowed, the piece indexes in the leaf nodes of CutPattern need to be
 	# changed to the original piece indexes.
-	bmr.rad !== nothing && _cp_rai2opi!(patterns, bmr.rad)
+	bmr.rad !== nothing && _cp_rai2opi!(patterns, bmr.rad :: RotationAwareData{D, S})
 
 	# Call the method that deals only with the data, and not with the JuMP.Model.
 	is_single_pattern = isa(problem, Val{:G2KP}) || isa(problem, Val{:G2OPP})
