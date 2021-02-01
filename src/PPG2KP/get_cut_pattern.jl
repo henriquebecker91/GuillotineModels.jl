@@ -241,8 +241,8 @@ end
 
 function _inner_cp_rai2opi!(
 	patterns :: AbstractVector{CutPattern{D, S}},
-	rai2opi :: AbstractVector{Union{D, Tuple{D, D}}},
-	remaining_original_demand :: AbstractVector{D}
+	rai2opi :: Vector{Union{D, Tuple{D, D}}},
+	remaining_original_demand :: Vector{D}
 ) :: Nothing where {D, S}
 	for (i, e) in pairs(patterns)
 		if iszero(e.piece_idx) # not a piece extraction
@@ -266,7 +266,7 @@ function _inner_cp_rai2opi!(
 end
 
 function _cp_rai2opi!(
-	patterns :: AbstractVector{CutPattern{D, S}},
+	patterns :: Vector{CutPattern{D, S}},
 	rad :: RotationAwareData{D, S}
 ) :: Nothing where {D, S}
 	rai2opi = rad.sdi2opi[rad.rai2sdi]
