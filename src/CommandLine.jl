@@ -195,6 +195,9 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 	end
 
 	if bsr == BUILT_MODEL
+		if pp["relax2lp"]
+			JuMP.relax_integrality(m)
+		end
 		num_vars = num_variables(m)
 		num_constrs = num_all_constraints(m)
 		if verbose
@@ -254,7 +257,16 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 	@assert bsr in (BUILT_MODEL, FOUND_OPTIMUM)
 	solution = if bsr == BUILT_MODEL
 		if primal_status(m) == MOI.FEASIBLE_POINT
-			get_cut_pattern(problem, formulation, m, mbp)
+			obj_value = objective_value(m)
+			@show obj_value
+			obj_bound = objective_bound(m)
+			@show obj_bound
+			# If the model was solved relaxed we try not to obtain a solution from
+			# it (because it would not be a valid CutPattern). Also, we do not
+			# print any info because we are formulation agnostic, and without
+			# knowledge of the formulation, the value of the variables is of little
+			# relevance.
+			pp["relax2lp"] ? nothing : get_cut_pattern(problem, formulation, m, mbp)
 		else
 			nothing
 		end
@@ -291,10 +303,6 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 				write(iob, pretty_simple_sol_str)
 				print(read(seekstart(iob), String))
 			end
-			obj_value = objective_value(m)
-			@show obj_value
-			obj_bound = objective_bound(m)
-			@show obj_bound
 			sol_val = solution_value(problem, instance, solution)
 			println("solution_value = $sol_val")
 		end
@@ -343,18 +351,26 @@ specific and are extracted and passed to their specific methods.
 
 	if is_collection(format)
 		for (index, instance) in enumerate(dataset)
-			println("INSTANCE_START_MARKER_$index")
-			verbose && push!(timings, "total_instance_time")
+			if verbose
+				println("INSTANCE_START_MARKER_$index")
+				push!(timings, "total_instance_time")
+			end
 			build_solve_and_print(problem, model_type, instance, pp, timings)
-			verbose && close_and_print!(timings, "total_instance_time")
-			println("INSTANCE_CLOSE_MARKER_$index")
+			if verbose
+				close_and_print!(timings, "total_instance_time")
+				println("INSTANCE_CLOSE_MARKER_$index")
+			end
 		end
 	else
-		println("INSTANCE_START_MARKER_1")
-		verbose && push!(timings, "total_instance_time")
+		if verbose
+			println("INSTANCE_START_MARKER_1")
+			verbose && push!(timings, "total_instance_time")
+		end
 		build_solve_and_print(problem, model_type, dataset, pp, timings)
-		verbose && close_and_print!(timings, "total_instance_time")
-		println("INSTANCE_CLOSE_MARKER_1")
+		if verbose
+			verbose && close_and_print!(timings, "total_instance_time")
+			println("INSTANCE_CLOSE_MARKER_1")
+		end
 	end
 
 	return nothing
@@ -415,7 +431,7 @@ function core_argparse_settings() :: ArgParseSettings
 			help = "Model or solution procedure to be used (case sensitive, ex.: Flow, KnapsackPlates, PPG2KP). Required."
 			arg_type = String
 		"solver"
-			help = "Solver to be used if necessary (case-sensitive, ex.: Cbc, CPLEX, Gurobi). Required, even if --do-not-solve is specified."
+			help = "Solver to be used if necessary (case-sensitive, ex.: NoSolver, Cbc, CPLEX, Gurobi). Required, even if --do-not-solve is specified. NoSolver use `JuMP.Model()` which allows building and saving the model, but not solving it."
 			arg_type = String
 		"instfname"
 			help = "The path to the instance to be solved."

@@ -381,6 +381,9 @@ end
 export reduced_cost
 =#
 
+# TODO: All SavedVarConf/relax!/restore! can theoretically be removed now
+# because as of 0.21.6 JuMP has a `relax_integrality` function based on
+# this code.
 """
 Stores the type and bounds of a variable so they may be restored.
 

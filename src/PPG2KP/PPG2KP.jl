@@ -278,6 +278,10 @@ end
 	rad :: Union{Nothing, RotationAwareData{D, S}},
 	options :: Dict{String, Any} = Dict{String, Any}();
 	build_LP_not_MIP = false
+	# `build_LP_not_MIP` is used internally by the pricing (the relaxation needs
+	# to be solved to solve the problem as a MIP).
+	# `options["relax2lp"]` is a generic option to be handled in the generic
+	# (i.e., formulation-agnostic) part of the code.
 ) where {D, S, P}
 	# shorten the names
 	@unpack d, l, w, L, W, np, cuts, pli_lwb = bp
@@ -346,8 +350,8 @@ end
 		# otherwise not, therefore a mess). This seems to be the better design,
 		# no code (even G2CSP-specific) really need to be aware of this variable.
 		@variable(model, b, integer = !build_LP_not_MIP)
-		@objective(model, Min, sum([b])) # the sum prevents erros with GLPK
-		# @objective(model, Min, b) # TODO: go back to this in the future
+		#@objective(model, Min, sum([b])) # the sum prevents errors with GLPK
+		@objective(model, Min, b)
 	end
 
 	# c1: # Either there is a limited amount of original plates available

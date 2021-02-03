@@ -354,4 +354,18 @@ function empty_configured_model(
 	)
 end
 
+function empty_configured_model(
+	::Val{:NoSolver}, p_args
+) where {T}
+	return JuMP.Model()
+end
+
+function Utilities.Args.accepted_arg_list(::Val{:NoSolver}) :: Vector{Arg}
+	return Arg[]
+end
+
+function Utilities.Args.throw_if_incompatible_options(::Val{:NoSolver}, p_args)
+	return nothing
+end
+
 end # module

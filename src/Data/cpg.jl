@@ -77,6 +77,15 @@ struct CPG_ODPW{D, S, P} <: CPG_Format{D, S, P} end
 struct CPG_SSSCSP{D, S, P} <: CPG_Format{D, S, P} end
 is_collection(_ :: T) where {T <: CPG_Format} = true
 
+# The Simple_CPG_SLOPP is not a real CPG format and does not return
+# collections, is a simplified format that only has one instance inside
+# and no header.
+# TODO: in the future expand the simplified format to all supported
+# CPG formats and create an abstract supertype for Simple_CPG formats.
+struct Simple_CPG_SLOPP{D, S, P} end
+is_collection(_ :: Val{:Simple_CPG_SLOPP}) = false
+is_collection(_ :: T) where {T <: Simple_CPG_SLOPP} = false
+
 const CPG_VALS = Union{
 	Val{:CPG_SLOPP}, Val{:CPG_MHLOPPW}, Val{:CPG_ODPW}, Val{:CPG_SSSCSP}
 }
@@ -379,26 +388,52 @@ function read_from_string(
 end
 
 function read_from_string(
-	_ :: Val{:CPG_SLOPP}, s :: AbstractString
+	format :: Simple_CPG_SLOPP{D, S, P}, s :: AbstractString
 ) where {D, S, P}
+	lines = split(s, isequal('\n'); keepempty = false)
+	last_line_number = length(lines)
+
+	curr_line_number, instance =
+		_read_instance(CPG_SLOPP{D, S, P}(), lines, 1, last_line_number) ::
+			Tuple{Int, _cpg_eltype(CPG_SLOPP{D, S, P})}
+
+	if curr_line_number <= last_line_number
+		@warn "After consuming all lines of the instance" *
+			" some lines remained. Ignoring any further lines." *
+			" The last parsed line was \"$(lines[curr_line_number - 1])\"" *
+			" (line $(curr_line_number - 1) considering only non-empty lines)."
+	end
+
+	return instance
+end
+
+function read_from_string(
+	_ :: Val{:Simple_CPG_SLOPP}, s :: AbstractString
+)
+	return read_from_string(Simple_CPG_SLOPP{Int, Int, Int}(), s)
+end
+
+function read_from_string(
+	_ :: Val{:CPG_SLOPP}, s :: AbstractString
+)
 	return read_from_string(CPG_SLOPP{Int, Int, Int}(), s)
 end
 
 function read_from_string(
 	_ :: Val{:CPG_ODPW}, s :: AbstractString
-) where {D, S, P}
+)
 	return read_from_string(CPG_ODPW{Int, Int, Int}(), s)
 end
 
 function read_from_string(
 	_ :: Val{:CPG_MHLOPPW}, s :: AbstractString
-) where {D, S, P}
+)
 	return read_from_string(CPG_MHLOPPW{Int, Int, Int}(), s)
 end
 
 function read_from_string(
 	_ :: Val{:CPG_SSSCSP}, s :: AbstractString
-) where {D, S, P}
+)
 	return read_from_string(CPG_SSSCSP{Int, Int, Int}(), s)
 end
 
