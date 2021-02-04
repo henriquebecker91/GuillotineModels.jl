@@ -54,6 +54,7 @@ import TimerOutputs.@timeit
 import ..TIMER
 import ..solution_value
 using AutoHashEquals: @auto_hash_equals
+using UnPack: @unpack
 
 export read_from_string, read_from_file, is_collection
 export GenericParseError
@@ -67,6 +68,10 @@ export CPG_SLOPP, CPG_MHLOPPW, CPG_ODPW, CPG_SSSCSP
 export SLOPP, MHLOPPW, ODPW, SSSCSP
 include("cpg.jl")
 
+# TODO: consider the assymetry that `read_from_file`/`read_from_string`
+# has the real code inside `read_from_string` but `write_to_file`
+# has a `filepath` and a `io` versions and it is the io version that do
+# the real work.
 """
     read_from_file(format, filepath :: AbstractString)
 
@@ -85,6 +90,39 @@ See also: [`read_from_string`](@ref)
 )
 	return open(filepath) do f
 		read_from_string(format, replace(read(f, String), '\r' => ""))
+	end
+end
+
+"""
+    write_to_file(format, instance, filepath :: AbstractString[, mode])
+    write_to_file(format, instance, io)
+
+Applies `write_to_string` to `instance` and write it to `filepath`/`io`.
+
+NOTE: this function is not yet implemented for most format and instance
+types.
+
+`mode` is passed to `open`, by default it is: "w+".
+
+New `format`/`instance` combinations should implement a method taking an
+`io::IO` third parameter (otherwise ambiguity problems may arise).  The generic
+method taking a `filename` just open the file and call the `io`-like version
+over it.
+
+Note: the `write_to_string` methods implemented by this package does not
+use '\\r\\n' (carriage return line endings) just '\\n'.
+
+To write to a `String`, pass an empty `IOBuffer` object and after the call
+execute `read(seekstart(iob), String)` to extract the `String` (this is the
+most efficient way).
+
+See also: [`read_from_file`, `read_from_string`](@ref)
+"""
+@timeit TIMER function write_to_file(
+	format, instance, filepath :: AbstractString, mode :: AbstractString = "w+"
+)
+	return open(filepath, mode) do io
+		write_to_file(format, instance, io)
 	end
 end
 

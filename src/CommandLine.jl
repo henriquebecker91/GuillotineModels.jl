@@ -164,6 +164,7 @@ function print_instance_stats(
 		println("min_w = $(minimum(w))")
 		@show p_
 		show(IOContext(stdout, :limit => false), instance)
+		println()
 	end
 	return
 end

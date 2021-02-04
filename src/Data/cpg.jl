@@ -437,6 +437,54 @@ function read_from_string(
 	return read_from_string(CPG_SSSCSP{Int, Int, Int}(), s)
 end
 
+# === `write_to_file` implementations ===
+
+function write_to_file(
+	format :: Val{:Simple_CPG_SLOPP},
+	instance :: SLOPP{D, S, P},
+	io :: IO
+) where {D, S, P}
+	return write_to_file(Simple_CPG_SLOPP{Int, Int, Int}(), instance, io)
+end
+
+@timeit TIMER function write_to_file(
+	format :: Simple_CPG_SLOPP{D, S, P},
+	instance :: SLOPP{D, S, P},
+	io :: IO
+) where {D, S, P}
+	@unpack L, W, l, w, dlb, dub, p = instance
+	write(io, "$L $W\n")
+	write(io, "$(length(p))\n")
+	for (pl, pw, pdlb, pdub, pp) in zip(l, w, dlb, dub, p)
+		write(io, "$pl $pw $pdlb $pdub $pp\n")
+	end
+	flush(io)
+	return io
+end
+
+function write_to_file(
+	format :: Val{:Simple_CPG_SLOPP},
+	instance :: G2KP{D, S, P},
+	io :: IO
+) where {D, S, P}
+	return write_to_file(Simple_CPG_SLOPP{Int, Int, Int}(), instance, io)
+end
+
+@timeit TIMER function write_to_file(
+	format :: Simple_CPG_SLOPP{D, S, P},
+	instance :: G2KP{D, S, P},
+	io :: IO
+) where {D, S, P}
+	@unpack L, W, l, w, d, p = instance
+	write(io, "$L $W\n")
+	write(io, "$(length(d))\n")
+	for (pl, pw, pd, pp) in zip(l, w, d, p)
+		write(io, "$pl $pw 0 $pd $pp\n")
+	end
+	flush(io)
+	return io
+end
+
 # === `GuillotineModels.solution_value` implementations
 
 import ..CutPattern
