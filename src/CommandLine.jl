@@ -169,12 +169,49 @@ function print_instance_stats(
 	return
 end
 
+# Get every $<something> in which the $ is not preceded by @
+const TEMPLATE_REGEX = r"(?<!@)\$<([^>]+)>"
+const ESCAPED_REGEX = r"@(\$<[^>]+>)"
+
+# Treats `instance_file` specially.
+function expand_template(
+	template :: AbstractString, dict :: Dict{<:AbstractString, <:Any}
+)
+	expanded = replace(template, TEMPLATE_REGEX => function(s)
+		# The below is byte indexing, not character indexing, but it is safe for
+		# UFT-8 strings because '$<' are two bytes and '>' is another byte.
+		key = s[3:end-1]
+		if key == "instance_file"
+			basename(dict["instance_path"])
+		elseif haskey(dict, key)
+			value = dict[key]
+			if isa(value, Bool)
+				string(convert(Int, value))
+			else
+				string(value)
+			end
+		else
+			error("The template '\$<$key>' is invalid. There is no such parameter.")
+		end
+	end)
+	cleaned = replace(expanded, ESCAPED_REGEX => s"\1")
+
+	return cleaned
+end
+
 # Serves both as a function barrier and the step to be executed for each
 # instance in the instance(s) file.
 function build_solve_and_print(problem, formulation, instance_, pp, timings)
 	start = time() :: Float64 # seconds since epoch
 	limit = pp["generic-time-limit"] :: Float64
 	verbose = !(pp["no-csv-output"] :: Bool)
+
+	# We replace any $<parameter> pattern in `pp[save-model]` as soon as
+	# possible, so if `parameter` is written wrong, the error is thrown early.
+	if !isempty(pp["save-model"]) && verbose
+		save_model_expanded = expand_template(pp["save-model"], pp)
+		@show save_model_expanded
+	end
 
 	verbose && append!(timings, ["build_and_solve_time", "build_time"])
 	instance = round_instance(instance_, pp)
@@ -207,18 +244,23 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 		end
 	end
 
-	verbose && close_and_print!(timings, "build_time")
+	if verbose
+		build_time_start = last(timings).start
+		build_time_end = close_and_print!(timings, "build_time")
+		# for compatibility with Martin
+		println("model_building_time = $(build_time_end - build_time_start)")
+	end
 	throw_if_timeout_now(start, limit)
 
 	if !isempty(pp["save-model"]) && verbose
 		if bsr == BUILT_MODEL
 			save_model_time = @elapsed begin
-				@timeit TIMER "save_model" JuMP.write_to_file(m, pp["save-model"])
+				@timeit TIMER "save_model" JuMP.write_to_file(m, save_model_expanded)
 			end
 			@show save_model_time
 		else
-			@warn "No model saved to '$(pp["save-model"])' because the reason for" *
-				" stopping the model building was not $(BUILT_MODEL)" *
+			@warn "No model saved to '$(save_model_expanded)' because the" *
+				" reason for stopping the model building was not $(BUILT_MODEL)" *
 				" but instead $(bsr)."
 		end
 	end
@@ -341,11 +383,11 @@ specific and are extracted and passed to their specific methods.
 	format, pp
 ) # pp stands for parsed parameters
 	verbose = !(pp["no-csv-output"] :: Bool)
-	instfname = pp["instfname"] :: String
-	verbose && @show instfname
+	instance_path = pp["instance_path"] :: String
+	verbose && @show instance_path
 	timings = TimeSection[]
 	verbose && push!(timings, "read_instance_time")
-  dataset = Data.read_from_file(format, instfname)
+  dataset = Data.read_from_file(format, instance_path)
 	verbose && close_and_print!(timings, "read_instance_time")
 	problem = Val(Symbol(pp["problem"] :: String))
 	model_type = Val(Symbol(pp["model"] :: String))
@@ -414,7 +456,7 @@ end
 !!! **Internal use.**
 
 An ArgParseSettings with the three core positional arguments `model`,
-`solver`, and `instfname`. They cannot be modeled as `Arg` objects because,
+`solver`, and `instance_path`. They cannot be modeled as `Arg` objects because,
 by design, all extra arguments must be options (i.e., be optional and preceded
 by dashes).
 """
@@ -434,7 +476,7 @@ function core_argparse_settings() :: ArgParseSettings
 		"solver"
 			help = "Solver to be used if necessary (case-sensitive, ex.: NoSolver, Cbc, CPLEX, Gurobi). Required, even if --do-not-solve is specified. NoSolver use `JuMP.Model()` which allows building and saving the model, but not solving it."
 			arg_type = String
-		"instfname"
+		"instance_path"
 			help = "The path to the instance to be solved."
 			arg_type = String
 	end
@@ -461,7 +503,7 @@ function generic_args() :: Vector{Arg}
 		),
 		Arg(
 			"save-model", "",
-			"Save the model of the passed instance to the given filename (use the extension to define the format, allowed formats are described by the enumeration MathOptInterface.FileFormats.FileFormat)."
+			"Save the model of the passed instance to the given filename. The format used depends on the extension of the filename, allowed formats are described by the enumeration `MathOptInterface.FileFormats.FileFormat` from package `MathOptInterface`). The filename also allows using \$<parameter_name> patterns inside the name, these will be replaced by the value of the parameter (if it was not passed, the default value will be used). For convenience, a pseudo-parameter instance_name is also available (it is the same as `basename(instance_path)`), and `Bool` parameters (i.e., flags with no argument) are replaced by 0 or 1. Putting an @ in front of \$<some_string> will disable the substitution (and remove the @ from the final string). There is no way to express an @ followed by a substitution that actually occurs (this is a limitation of the code)."
 		),
 		Arg(
 			"warm-jit", "no",
@@ -561,7 +603,7 @@ have their identifying symbol passed in either `models_list` or
 function warn_if_changed_unused_values(p_args, models_list, solvers_list)
 	# Remember that for now, only solver and model support options/flags.
 	# problem and format do not support them yet.
-	core_arg_names = ["problem", "format", "solver", "model", "instfname"]
+	core_arg_names = ["problem", "format", "solver", "model", "instance_path"]
 	generic_arg_names = getfield.(generic_args(), :name)
 
 	model = p_args["model"]
@@ -825,7 +867,7 @@ See also: [`toy_instance`](@ref), [`read_build_solve_and_print`](@ref)
 		if p_args["warm-jit"] == "with-toy"
 				write(io, toy_instance(problem, format) :: String)
 				close(io)
-				copyed_args["instfname"] = path
+				copyed_args["instance_path"] = path
 		end
 		copyed_args["no-csv-output"] = true
 		copyed_args[p_args["solver"] * "-" * "no-output"] = true
