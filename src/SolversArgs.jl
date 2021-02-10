@@ -361,7 +361,13 @@ function empty_configured_model(
 end
 
 function Utilities.Args.accepted_arg_list(::Val{:NoSolver}) :: Vector{Arg}
-	return Arg[]
+	return Arg[
+		Arg(
+			"no-output", false,
+			"Provided to avoid breaking the assumption every solver provides this" *
+			" flag. Does notthing, as NoSolver should not print anything anyway."
+		),
+	]
 end
 
 function Utilities.Args.throw_if_incompatible_options(::Val{:NoSolver}, p_args)

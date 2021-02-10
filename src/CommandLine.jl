@@ -244,12 +244,7 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 		end
 	end
 
-	if verbose
-		build_time_start = last(timings).start
-		build_time_end = close_and_print!(timings, "build_time")
-		# for compatibility with Martin
-		println("model_building_time = $(build_time_end - build_time_start)")
-	end
+	verbose && close_and_print!(timings, "build_time")
 	throw_if_timeout_now(start, limit)
 
 	if !isempty(pp["save-model"]) && verbose
@@ -266,7 +261,7 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 	end
 
 	if pp["do-not-solve"]
-		close_and_print!(timings, "build_and_solve_time")
+		verbose && close_and_print!(timings, "build_and_solve_time")
 		return nothing
 	end
 
