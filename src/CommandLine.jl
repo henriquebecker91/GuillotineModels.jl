@@ -908,7 +908,9 @@ you just need to remove the `["--help"]` from the call.
 @timeit TIMER function run(
 	args = ARGS;
 	implemented_models :: Vector{Symbol} = [:Flow, :PPG2KP],#, :KnapsackPlates],
-	supported_solvers :: Vector{Symbol} = [:CPLEX, :Gurobi, :Cbc, :GLPK]
+	supported_solvers :: Vector{Symbol} = [
+		:CPLEX, :Gurobi, :Cbc, :GLPK, :NoSolver
+	]
 )
 	p_args = parse_args(args, implemented_models, supported_solvers)
 	isempty(p_args) && return # Happens if called just for "--help".
