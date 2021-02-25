@@ -303,30 +303,25 @@ end
 		end
 	end
 
-	# If all pieces have demand one, a binary variable will suffice to make the
-	# connection between a piece type and the plate it is extracted from.
-	naturally_only_binary = all(di -> di == 1, d)
-	if naturally_only_binary
-		if build_LP_not_MIP
-			@variable(model, 0 <= picuts[1:length(np)] <= 1)
-		else
-			@variable(model, picuts[1:length(np)], Bin)
-		end
-	else
-		@variable(model,
-			0 <= picuts[i = 1:length(np)] <= d[np[i][2]],
-			integer = !build_LP_not_MIP
-		)
-		#=@variable(model,
-			0 <= picuts[i = 1:length(np)] <= min(pli_lwb[np[i][1]][3], d[np[i][2]]),
-			integer = !build_LP_not_MIP
-		)=#
-	end
-
-	# TODO: maybe create an upper bound for each problem type?
+	# Note: using `d` as upper bound of `picuts` and `packed_pieces` works even
+	# with rotation enabled because `d` is the `rad.shared_d` expanded for the
+	# dummies.
 	@variable(model,
-		cuts_made[i = 1:length(cuts)] >= 0, #<= pli_lwb[cuts[i][PARENT]][3],
-		integer = !build_LP_not_MIP
+		0 <= packed_pieces[i = 1:length(d)] <= d[i], integer = !build_LP_not_MIP
+	)
+	@variable(model,
+		0 <= picuts[i = 1:length(np)] <= d[np[i][2]], integer = !build_LP_not_MIP
+	)
+
+	@constraint(model,
+		packing_cons[i = 1:length(d)],
+		packed_pieces[i] <= sum(picuts[pii2pair[i]])
+	)
+
+	# We prefer to leave `cuts_made` without an upper bound to risk
+	# making a bound that will not work for some combination of parameters.
+	@variable(model,
+		cuts_made[i = 1:length(cuts)] >= 0, integer = !build_LP_not_MIP
 	)
 
 	# If the problem is a knapsack problem, then the objective is to maximize
@@ -336,7 +331,7 @@ end
 	# If it is OPP, then there is no objective function.
 	if problem === Val(:G2KP) || problem === Val(:G2MKP)
 		@objective(model, Max,
-			sum(p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
+			sum(p[pii] * packed_pieces[pii] for pii = 1:num_piece_types)
 		)
 	elseif problem === Val(:G2CSP)
 		# We create a variable to represent the number of original plates used:
@@ -372,6 +367,8 @@ end
 		)
 	end
 
+	# CONTINUE HERE: sum(picuts[pii2pair[pii]]) is the value of packed_pieces
+
 	# c2: for each subplate type that is not the original plate, such subplate
 	# type will be available the number of times it was the child of a cut,
 	# subtracted the number of times it had a piece extracted or used for
@@ -391,8 +388,34 @@ end
 
 	# c3: the demand constraint. For knapsack problems it means an upper bound
 	# on how many of each piece type may be extracted/packed, for OPP and CSP
-	# it means the number of each piece type that *must* be extracted/packed.
+	# it means a lower bound on the number of each piece type that *must* be
+	# extracted/packed.
 	# TODO: there is a better way than using this `if`?
+	if problem === Val(:G2KP) || problem === Val(:G2MKP)
+		if options["allow-rotation"]
+			@constraint(model,
+				demand_con[sdi=1:length(rad.shared_demand)],
+				sum(packed_pieces[[rad.sdi2rai[sdi]...]]) <= rad.shared_demand[sdi]
+			)
+		else
+			@constraint(model,
+				demand_con[pii=1:num_piece_types], packed_pieces[pii] <= d[pii]
+			)
+		end
+	elseif problem === Val(:G2OPP) || problem === Val(:G2CSP)
+		if options["allow-rotation"]
+			@constraint(model,
+				demand_con[sdi=1:length(rad.shared_demand)],
+				sum(packed_pieces[[rad.sdi2rai[sdi]...]]) >= rad.shared_demand[sdi]
+			)
+		else
+			@constraint(model,
+				demand_con[pii=1:num_piece_types], packed_pieces[pii] >= d[pii]
+			)
+		end
+	end
+
+	#=
 	if problem === Val(:G2KP) || problem === Val(:G2MKP)
 		if options["allow-rotation"]
 			@constraint(model,
@@ -410,16 +433,17 @@ end
 		if options["allow-rotation"]
 			@constraint(model,
 				demand_con[sdi=1:length(rad.shared_demand)],
-				sum(picuts[_flatten_index(pii2pair, rad.sdi2rai[sdi], vcat)]) ==
+				sum(picuts[_flatten_index(pii2pair, rad.sdi2rai[sdi], vcat)]) >=
 					rad.shared_demand[sdi]
 			)
 		else
 			@constraint(model,
 				demand_con[pii=1:num_piece_types],
-				sum(picuts[pii2pair[pii]]) == d[pii]
+				sum(picuts[pii2pair[pii]]) >= d[pii]
 			)
 		end
 	end
+	=#
 
 	#= Disabled while we rework it in a problem-agnostic fashion.
 	lb = options["lower-bound"]
