@@ -367,8 +367,6 @@ end
 		)
 	end
 
-	# CONTINUE HERE: sum(picuts[pii2pair[pii]]) is the value of packed_pieces
-
 	# c2: for each subplate type that is not the original plate, such subplate
 	# type will be available the number of times it was the child of a cut,
 	# subtracted the number of times it had a piece extracted or used for
@@ -414,36 +412,6 @@ end
 			)
 		end
 	end
-
-	#=
-	if problem === Val(:G2KP) || problem === Val(:G2MKP)
-		if options["allow-rotation"]
-			@constraint(model,
-				demand_con[sdi=1:length(rad.shared_demand)],
-				sum(picuts[_flatten_index(pii2pair, rad.sdi2rai[sdi], vcat)]) <=
-					rad.shared_demand[sdi]
-			)
-		else
-			@constraint(model,
-				demand_con[pii=1:num_piece_types],
-				sum(picuts[pii2pair[pii]]) <= d[pii]
-			)
-		end
-	elseif problem === Val(:G2OPP) || problem === Val(:G2CSP)
-		if options["allow-rotation"]
-			@constraint(model,
-				demand_con[sdi=1:length(rad.shared_demand)],
-				sum(picuts[_flatten_index(pii2pair, rad.sdi2rai[sdi], vcat)]) >=
-					rad.shared_demand[sdi]
-			)
-		else
-			@constraint(model,
-				demand_con[pii=1:num_piece_types],
-				sum(picuts[pii2pair[pii]]) >= d[pii]
-			)
-		end
-	end
-	=#
 
 	#= Disabled while we rework it in a problem-agnostic fashion.
 	lb = options["lower-bound"]
