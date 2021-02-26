@@ -419,6 +419,8 @@ struct ByproductPPG2KP{D, S, P}
 	# pp (parent plate), fc (first child), sc (second child)
 	"If `(pp, fc, sc)` is in `cuts`, then `pp` may be cut into `fc` and `sc`."
 	cuts :: Vector{NTuple{3, P}}
+	"If hybridize-with-restricted, has the extracted piece for each `cuts` elem."
+	cut_extraction :: Vector{D}
 	"Every cut before this position is horizontal, the rest are vertical."
 	first_vertical_cut_idx :: P
 	"If `(n, p)` is in `np` then plate `n` may be sold as piece `p`."
@@ -482,6 +484,7 @@ All keyword arguments are of type `Bool`.
 function gen_cuts(
 	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
 	ignore_2th_dim = false, ignore_d = false, round2disc = true,
+	hybridize_with_restricted = false,
 	faithful2furini2016 = false,
 	no_redundant_cut = false, no_cut_position = false,
 	no_furini_symmbreak = false, quiet = false, verbose = false
@@ -518,6 +521,13 @@ function gen_cuts(
 	# model is not restricted to Furini's description, then it may cut even more.
 	hnnn = Vector{NTuple{3, P}}()
 	vnnn = Vector{NTuple{3, P}}()
+	# dce (double cut extractions): if !hybridize_with_restricted these are kept
+	# as empty Vectors; otherwise, some cuts are double cuts, that generate
+	# up to two child plates as usual, but also a piece extraction. If vdce[i]
+	# is zero, then hnnn[i] is not a double cut, otherwise hnnn[i] is a double
+	# cut and hdci[i] indicate the piece extracted. Analogue for vnnn and vdce.
+	hdce = Vector{D}()
+	vdce = Vector{D}()
 	# The np vector has the pairs plate-piece for which the respective plate is
 	# allowed to be sold as the respective piece.
 	# If the model is faithful to Furini, it just has a single plate for each
@@ -556,6 +566,19 @@ function gen_cuts(
 	# The discretized widths for every plate length.
 	dls = [Vector{S}() for _ = 1:W]
 	dws = [Vector{S}() for _ = 1:L]
+	# piece only length/width -- for use with hybridize_with_restricted,
+	# has the length and widths that only appear on pieces and not on
+	# piece combinations. We start simple, without the optimization below.
+	# TODO: `pol` and `pow` could be a set of discretizations like `dls`/`dws`
+	# because in smaller plates some piece length/width may stop being
+	# attainable by combinations of smaller plates (e.g., a set of pieces
+	# matched another piece length, but in the smaller plate some piece of
+	# the set does not fit because of the width, while the piece that had
+	# the length matched yet fits at that width).
+	if hybridize_with_restricted
+		pol = discretize(d, l, w, L, W; only_single_pieces = true)
+		pow = discretize(d, w, l, W, L; only_single_pieces = true)
+	end
 	# There are two discretizations for each dimension: dl1/dw1 and dl2/dw2.
 	# They are only different if the Cut-Position reduction is being used. In
 	# this case, dl1/dw1, which is used for cutting the plate, may be a
@@ -573,6 +596,8 @@ function gen_cuts(
 	)
 	#fpr_count = 0
 	#@show length(dw1)
+	hybridizations = 0
+	first_borns_killed_by_hybridization = 0
 	while next_idx <= length(next)
 		#@show next_idx
 		#@show length(next)
@@ -669,11 +694,45 @@ function gen_cuts(
 			trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, pll, plw - x)
 			# The trim_cut flag is used below outside of 'if faithful2furini2016'
 			# because a true value implicates that 'faithful2furini2016 == true'.
-			#if iszero(get(plis, (pll, x), 0)) # If the first child does not yet exist.
-			if iszero(plis[pll, x]) # If the first child does not yet exist.
-				push!(next, (pll, x, n += 1)) # Create the first child.
+
+			# `fcl` is the first child length. It is used instead of `pll` because
+			# if `hybridize_with_restricted` is enabled, then `fcl` may be
+			# different from `pll`.
+			fcl = pll
+			if hybridize_with_restricted
+				# TODO: we can transform pow and pol in reverse indexes, and already
+				# remove these repeated calls to binary search from here.
+				x_pow_idx = searchsortedfirst(pow, x)
+				if x_pow_idx <= length(pow)
+					swi_of_width_x = searchsorted(sllw.sw, x)
+					if isone(length(swi_of_width_x))
+						pii_of_width_x = sllw.swi2pii[only(swi_of_width_x)]
+						# TODO: when we change pow and pol to be a set of discretizations
+						# we will probably not need this `if` anymore.
+						if sllw.l[pii_of_width_x] <= pll && fits_at_least_one(sllw, pll - sllw.l[pii_of_width_x], x)
+							fcl = pll - sllw.l[pii_of_width_x]
+							hybridizations += 1
+						end
+					end
+				end
+			end
+			#=
+			# For now, the only reason for a first child to be unable to pack
+			# any piece is the hybridize_with_restricted optimization.
+			killed_first_born = false
+			if hybridize_with_restricted && !fits_at_least_one(sllw, fcl, x)
+				first_borns_killed_by_hybridization += 1
+				killed_first_born = true
+			else
+			=#
+			if iszero(plis[fcl, x]) # If the first child does not yet exist.
+			#elseif iszero(get(plis, (fcl, x), 0))
+				push!(next, (fcl, x, n += 1)) # Create the first child.
 				if !no_redundant_cut
-					if trim_cut
+					# For now, we do not know if hybridize_with_restricted is
+					# entirely compatible with Redundant-Cut, so we only consider
+					# a trim_cut if it does not clash with hybridize_with_restricted.
+					if trim_cut && !hybridize_with_restricted
 						# From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
 						# from j through a trim cut with orientation v:"
 						fchild_sfhv = (0, -1, sh_j, sv_j)
@@ -684,22 +743,25 @@ function gen_cuts(
 					end
 					push!.(sfhv, fchild_sfhv)
 				end
-				#plis[(pll, x)] = n # Mark plate existence.
-				plis[pll, x] = n # Mark plate existence.
+				#plis[(fcl, x)] = n # Mark plate existence.
+				plis[fcl, x] = n # Mark plate existence.
 			elseif !no_redundant_cut
-				# If plate already exists, and we are implementing Redundant-Cut
+				# If plate already exists, and we are implementing Redundant-Cut.
+				# Here we do not care for hybridize_with_restricted because
+				# setting positions to positive (i.e., `1`) is disabling
+				# Redundant-Cut optimizations not enabling them.
 				if trim_cut
 					# From Furini2016 supplement: "if an existing plate j_1 ∈ J is
 					# obtained from j through a trim cut:"
-					#sh_j > -1 && (fh[plis[(pll, x)]] = 1)
-					#sv_j > -1 && (fv[plis[(pll, x)]] = 1)
-					sh_j > -1 && (fh[plis[pll, x]] = 1)
-					sv_j > -1 && (fv[plis[pll, x]] = 1)
+					#sh_j > -1 && (fh[plis[(fcl, x)]] = 1)
+					#sv_j > -1 && (fv[plis[(fcl, x)]] = 1)
+					sh_j > -1 && (fh[plis[fcl, x]] = 1)
+					sv_j > -1 && (fv[plis[fcl, x]] = 1)
 				else
 					# From Furini2016 supplement: "if a plate (new or EXISTING) j_1 is
 					# obtained from j without a trim cut: set all flags of j_1 to 1."
-					#setindex!.(sfhv, (1, 1, 1, 1), plis[(pll, x)])
-					setindex!.(sfhv, (1, 1, 1, 1), plis[pll, x])
+					#setindex!.(sfhv, (1, 1, 1, 1), plis[(fcl, x)])
+					setindex!.(sfhv, (1, 1, 1, 1), plis[fcl, x])
 				end
 			end
 			# If the second child size is rounded down to a discretized point:
@@ -736,8 +798,20 @@ function gen_cuts(
 			end
 			# Add the cut to the cut list. Check if the second child plate is waste
 			# before trying to get its plate index.
-			#push!(vnnn, (pli, plis[(pll, x)], trim_cut ? 0 : plis[(pll, dw_sc)]))
-			push!(vnnn, (pli, plis[pll, x], trim_cut ? 0 : plis[pll, dw_sc]))
+			#push!(vnnn, (pli, plis[(fcl, x)], trim_cut ? 0 : plis[(pll, dw_sc)]))
+			push!(vnnn, (pli, plis[fcl, x], trim_cut ? 0 : plis[pll, dw_sc]))
+			#=
+			push!(vnnn, (pli,
+				killed_first_born ? 0 : plis[pll, x],
+				trim_cut ? 0 : plis[pll, dw_sc]
+			))
+			=#
+			# Finally, if hybridize_with_restricted is enabled, and the current cut
+			# was transformed by this optimization in a double cut, we need to save
+			# the extracted piece in vdce (otherwise zero is our sentinel).
+			if hybridize_with_restricted
+				push!(vdce, fcl != pll ? pii_of_width_x : 0)
+			end
 		end
 
 		for y in dl1
@@ -888,10 +962,15 @@ function gen_cuts(
 	end
 	=#
 
+	@show hybridizations
+	@show first_borns_killed_by_hybridization
+
 	first_vertical_cut_idx = length(hnnn) + 1
 	return ByproductPPG2KP(
-		append!(hnnn, vnnn), first_vertical_cut_idx, np, pli_lwb,
-		deepcopy(d), deepcopy(l), deepcopy(w), deepcopy(L), deepcopy(W)
+		append!(hnnn, vnnn), append!(zeros(D, first_vertical_cut_idx - 1), vdce),
+		first_vertical_cut_idx,
+		np, pli_lwb, deepcopy(d), deepcopy(l), deepcopy(w),
+		deepcopy(L), deepcopy(W)
 	)
 end
 

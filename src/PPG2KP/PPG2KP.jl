@@ -251,6 +251,7 @@ end
 		ignore_2th_dim = options["ignore-2th-dim"],
 		ignore_d = options["ignore-d"],
 		round2disc = options["round2disc"],
+		hybridize_with_restricted = options["hybridize-with-restricted"],
 		no_cut_position = options["no-cut-position"],
 		no_redundant_cut = options["no-redundant-cut"],
 		no_furini_symmbreak = options["no-furini-symmbreak"],
@@ -284,10 +285,19 @@ end
 	# (i.e., formulation-agnostic) part of the code.
 ) where {D, S, P}
 	# shorten the names
-	@unpack d, l, w, L, W, np, cuts, pli_lwb = bp
+	@unpack d, l, w, L, W, np, cuts, cut_extraction, pli_lwb = bp
 	@unpack pii2pair, pli2pair, child2cut, parent2cut = inv_idxs
 	num_piece_types = convert(D, length(d))
 	num_plate_types = length(pli_lwb)
+
+	# This probably should not be here (but in an outer function)
+	# but for now this will suffice.
+	pii2dci = Vector{D}[Vector{D}() for i in 1:num_piece_types]
+	for (dci, pii) in pairs(cut_extraction)
+		!iszero(pii) && push!(pii2dci[pii], dci)
+	end
+	@show length(cuts)
+	@show length(cut_extraction)
 
 	if problem == Val(:G2KP) || problem == Val(:G2MKP)
 		if options["allow-rotation"]
@@ -313,15 +323,15 @@ end
 		0 <= picuts[i = 1:length(np)] <= d[np[i][2]], integer = !build_LP_not_MIP
 	)
 
-	@constraint(model,
-		packing_cons[i = 1:length(d)],
-		packed_pieces[i] <= sum(picuts[pii2pair[i]])
-	)
-
 	# We prefer to leave `cuts_made` without an upper bound to risk
 	# making a bound that will not work for some combination of parameters.
 	@variable(model,
 		cuts_made[i = 1:length(cuts)] >= 0, integer = !build_LP_not_MIP
+	)
+
+	@constraint(model,
+		packing_cons[i = 1:length(d)],
+		packed_pieces[i] <= sum(picuts[pii2pair[i]]) + sum(cuts_made[pii2dci[i]])
 	)
 
 	# If the problem is a knapsack problem, then the objective is to maximize

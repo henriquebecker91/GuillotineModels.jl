@@ -45,6 +45,10 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 			"Round the second child size to a discretized position."
 		),
 		Arg(
+			"hybridize-with-restricted", false,
+			"If a cut matches the length or width of a piece, and this length/width cannot be obtained by any combination of smaller pieces, then the cut already immediatelly extracts the matching piece. Should preserve optimality but it is experimental."
+		),
+		Arg(
 			"faithful2furini2016", false,
 			"Tries to be the most faithful possible to the description on the Furini2016 paper of the PPG2KP (i.e., the model with the CutPosition and RedundantCut reductions BUT NOT the multistep pricing procedure); the flags --no-cut-position, --no-redundant-cut, --no-furini-symmbreak, can disable parts of this reimplementation. Passing '--pricing furini' will enable the pricing making the model the Priced PPG2KP."
 		),
