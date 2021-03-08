@@ -197,7 +197,7 @@ Utility constructor that creates the struct from a ByproductPPG2KP.
 	for i in eachindex(cuts)
 		parent, fchild, schild = cuts[i]
 		push!(parent2cut[parent], i)
-		push!(child2cut[fchild], i)
+		!iszero(fchild) && push!(child2cut[fchild], i)
 		!iszero(schild) && push!(child2cut[schild], i)
 	end
 

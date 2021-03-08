@@ -441,6 +441,109 @@ struct ByproductPPG2KP{D, S, P}
 end
 Base.broadcastable(x :: ByproductPPG2KP{D, S, P}) where {D, S, P} = Ref(x)
 
+function guarantee_discretization!(
+	dls, dws, pll :: S, plw :: S, L :: S, W :: S, d, l, w,
+	round2disc, ignore_2th_dim, ignore_d, level :: UInt8 = UInt8(1)
+) :: Tuple{S, S} where {S}
+	# If our understanding of the discretization is correct, it is impossible
+	# for this method to recurse more than one time in a row.
+	@assert level == 1 || level == 2
+	(iszero(pll) || iszero(plw)) && return zero(S), zero(S)
+
+	# First of all, let us get the two discretizations, memoized or not.
+	dls_plw = if isassigned(dls, plw)
+		dls[plw]
+	else
+		discretize(d, l, w, L, plw; ignore_W = ignore_2th_dim, ignore_d = ignore_d)
+	end
+	dws_pll = if isassigned(dws, pll)
+		dws[pll]
+	else
+		discretize(d, w, l, W, pll; ignore_W = ignore_2th_dim, ignore_d = ignore_d)
+	end
+
+	# The code for fully initializing `dls[plw]` needs partially
+	# initializing `dws[L]`, if we also wanted to fully initialize
+	# `dws[L]` then we need to save the information that it is not
+	# fully initialized (to remember initializing it after).
+	dws_L_full_init_pending = pll == L && !isassigned(dws, L)
+
+	# The following two `if`s do essentially the same thing but one is for `dlw`
+	# and the other for `dlw`. They find a range of the second (non-discretized)
+	# dimension for which the discretization (of the first dimension) is valid.
+	# Then assign the same discretization to all positions in the range, possibly
+	# saving the effort for new calls (an eager memoization).
+	if !isassigned(dls, plw)
+		dws_L_full_init_pending && (dws[L] = dws_pll)
+		idx_lte_plw_in_dws_L = searchsortedlast(dws[L], plw)
+		if iszero(idx_lte_plw_in_dws_L)
+			# `searchsortedlast` returns zero if the first value in `dws[L]` is
+			# already greater than `plw`, i.e., there is no piece or piece set
+			# that fit in so little width (the minimum width, or first
+			# discretized position, is after `plw`).
+			@assert isempty(dls_plw) # can only be an empty discretization set
+			# Assign the empty set to these positions so we to not lose time
+			# recomputing them. Those are the first spaces no piece fits.
+			!isempty(dws[L]) && (dls[1:(first(dws[L]) - 1)] .= (dls_plw,))
+		elseif idx_lte_plw_in_dws_L == length(dws[L])
+			# If `idx_lte_plw_in_dws_L` is the last discretization in `dws[L]`
+			# this means that from there to `W` all positions can only pack the
+			# same pieces/'piece sets'.
+			first_valid_width = dws[L][idx_lte_plw_in_dws_L]
+			dls[first_valid_width:W] .= (dls_plw,)
+		else
+			# If `idx_lte_plw_in_dws_L` is nor zero, nor the last discretization,
+			# then `dls_plw` is valid for the range `dws[L][idx_lte_plw_in_dws_L]`
+			# to `dws[L][idx_lte_plw_in_dws_L + 1] - 1` (i.e., one width unit
+			# before the next discretized width position).
+			first_valid_width = dws[L][idx_lte_plw_in_dws_L]
+			last_valid_width = dws[L][idx_lte_plw_in_dws_L + 1] - 1
+			dls[first_valid_width:last_valid_width] .= (dls_plw,)
+		end
+	end
+	if !isassigned(dws, pll) || dws_L_full_init_pending
+		@assert plw != W || isassigned(dls, W)
+		idx_lte_pll_in_dls_W = searchsortedlast(dls[W], pll)
+		# See comments of the similar `if` block above.
+		if iszero(idx_lte_pll_in_dls_W)
+			@assert isempty(dws_pll)
+			!isempty(dls[W]) && (dws[1:(first(dls[W]) - 1)] .= (dws_pll,))
+		elseif idx_lte_pll_in_dls_W == length(dls[W])
+			first_valid_length = dls[W][idx_lte_pll_in_dls_W]
+			dws[first_valid_length:L] .= (dws_pll,)
+		else
+			first_valid_length = dls[W][idx_lte_pll_in_dls_W]
+			last_valid_length = dls[W][idx_lte_pll_in_dls_W + 1] - 1
+			dws[first_valid_length:last_valid_length] .= (dws_pll,)
+		end
+	end
+
+	if round2disc
+		r2d_pll_idx = searchsortedlast(dls[plw], pll)
+		r2d_plw_idx = searchsortedlast(dws[pll], plw)
+		r2d_pll = iszero(r2d_pll_idx) ? zero(S) : dls[plw][r2d_pll_idx]
+		r2d_plw = iszero(r2d_plw_idx) ? zero(S) : dws[pll][r2d_plw_idx]
+		if iszero(r2d_pll) || iszero(r2d_plw)
+			r2d_pll = r2d_plw = zero(S)
+		end
+		#println("Before recursion")
+		#@show plw, pll, r2d_plw, r2d_pll
+		r2d_not_guaranteed = (!iszero(r2d_pll) && !isassigned(dws, r2d_pll)) ||
+			(!iszero(r2d_plw) && !isassigned(dls, r2d_plw))
+		if r2d_not_guaranteed
+			r2d_pll, r2d_plw = guarantee_discretization!(
+				dls, dws, r2d_pll, r2d_plw, L, W, d, l, w,
+				round2disc, ignore_2th_dim, ignore_d, level + one(level)
+			)
+		end
+		@assert iszero(r2d_pll) || isassigned(dws, r2d_pll)
+		@assert iszero(r2d_plw) || isassigned(dls, r2d_plw)
+		return r2d_pll, r2d_plw
+	else
+		return pll, plw
+	end
+end
+
 """
     gen_cuts(::Type{P}, d, sllw, L, W; [kword_args])
 
@@ -564,8 +667,8 @@ function gen_cuts(
 	n = one(P) # there is already the original plate
 	# Memoized discretizations. The discretized lengths for every plate width.
 	# The discretized widths for every plate length.
-	dls = [Vector{S}() for _ = 1:W]
-	dws = [Vector{S}() for _ = 1:L]
+	dls = Vector{Vector{S}}(undef, W)
+	dws = Vector{Vector{S}}(undef, L)
 	# piece only length/width -- for use with hybridize_with_restricted,
 	# has the length and widths that only appear on pieces and not on
 	# piece combinations. We start simple, without the optimization below.
@@ -587,15 +690,9 @@ function gen_cuts(
 	# and may be needed (even if Cut-Position is used) for reducing the size of
 	# the second child to the last discretized position (if round2disc is
 	# enabled).
-	dl1 = dl2 = dls[W] = discretize(
-		d, l, w, L, W; ignore_W = ignore_2th_dim, ignore_d = ignore_d
+	L, W = guarantee_discretization!(
+		dls, dws, L, W, L, W, d, l, w, round2disc, ignore_2th_dim, ignore_d
 	)
-	#@show length(dl1)
-	dw1 = dw2 = dws[L] = discretize(
-		d, w, l, W, L; ignore_W = ignore_2th_dim, ignore_d = ignore_d
-	)
-	#fpr_count = 0
-	#@show length(dw1)
 	hybridizations = 0
 	first_borns_killed_by_hybridization = 0
 	while next_idx <= length(next)
@@ -623,14 +720,10 @@ function gen_cuts(
 			dl1 = dl2 = dls[W]
 			dw1 = dw2 = dws[L]
 		else
-			isempty(dls[plw]) && (dls[plw] = discretize(
-				d, l, w, L, plw; ignore_d = ignore_d
-			))
+			pll, plw = guarantee_discretization!(
+				dls, dws, pll, plw, L, W, d, l, w, round2disc, ignore_2th_dim, ignore_d
+			)
 			dl1 = dl2 = dls[plw]
-
-			isempty(dws[pll]) && (dws[pll] = discretize(
-				d, w, l, W, pll; ignore_d = ignore_d
-			))
 			dw1 = dw2 = dws[pll]
 		end
 
@@ -698,36 +791,43 @@ function gen_cuts(
 			# `fcl` is the first child length. It is used instead of `pll` because
 			# if `hybridize_with_restricted` is enabled, then `fcl` may be
 			# different from `pll`.
+			# `fcw` is similar, but can only be different when both
+			# hybridize_with_restricted and round2disc are enabled,
+			# and the width of the first child may be changed.
 			fcl = pll
+			fcw = x
 			if hybridize_with_restricted
 				# TODO: we can transform pow and pol in reverse indexes, and already
 				# remove these repeated calls to binary search from here.
-				x_pow_idx = searchsortedfirst(pow, x)
-				if x_pow_idx <= length(pow)
-					swi_of_width_x = searchsorted(sllw.sw, x)
-					if isone(length(swi_of_width_x))
-						pii_of_width_x = sllw.swi2pii[only(swi_of_width_x)]
+				fcw_pow_idx = searchsorted(pow, fcw)
+				if !isempty(fcw_pow_idx)
+					swi_of_width_fcw = searchsorted(sllw.sw, fcw)
+					if isone(length(swi_of_width_fcw))
+						pii_of_width_fcw = sllw.swi2pii[only(swi_of_width_fcw)]
 						# TODO: when we change pow and pol to be a set of discretizations
 						# we will probably not need this `if` anymore.
-						if sllw.l[pii_of_width_x] <= pll && fits_at_least_one(sllw, pll - sllw.l[pii_of_width_x], x)
-							fcl = pll - sllw.l[pii_of_width_x]
+						if sllw.l[pii_of_width_fcw] <= pll
+							fcl = pll - sllw.l[pii_of_width_fcw]
+							if round2disc
+								fcl, fcw = guarantee_discretization!(
+									dls, dws, fcl, fcw, L, W, d, l, w,
+									round2disc, ignore_2th_dim, ignore_d
+								)
+							end
 							hybridizations += 1
 						end
 					end
 				end
 			end
-			#=
 			# For now, the only reason for a first child to be unable to pack
 			# any piece is the hybridize_with_restricted optimization.
 			killed_first_born = false
-			if hybridize_with_restricted && !fits_at_least_one(sllw, fcl, x)
+			if hybridize_with_restricted && !fits_at_least_one(sllw, fcl, fcw)
 				first_borns_killed_by_hybridization += 1
 				killed_first_born = true
-			else
-			=#
-			if iszero(plis[fcl, x]) # If the first child does not yet exist.
+			elseif iszero(plis[fcl, fcw]) # If the first child does not yet exist.
 			#elseif iszero(get(plis, (fcl, x), 0))
-				push!(next, (fcl, x, n += 1)) # Create the first child.
+				push!(next, (fcl, fcw, n += 1)) # Create the first child.
 				if !no_redundant_cut
 					# For now, we do not know if hybridize_with_restricted is
 					# entirely compatible with Redundant-Cut, so we only consider
@@ -744,7 +844,7 @@ function gen_cuts(
 					push!.(sfhv, fchild_sfhv)
 				end
 				#plis[(fcl, x)] = n # Mark plate existence.
-				plis[fcl, x] = n # Mark plate existence.
+				plis[fcl, fcw] = n # Mark plate existence.
 			elseif !no_redundant_cut
 				# If plate already exists, and we are implementing Redundant-Cut.
 				# Here we do not care for hybridize_with_restricted because
@@ -753,15 +853,15 @@ function gen_cuts(
 				if trim_cut
 					# From Furini2016 supplement: "if an existing plate j_1 ∈ J is
 					# obtained from j through a trim cut:"
-					#sh_j > -1 && (fh[plis[(fcl, x)]] = 1)
-					#sv_j > -1 && (fv[plis[(fcl, x)]] = 1)
-					sh_j > -1 && (fh[plis[fcl, x]] = 1)
-					sv_j > -1 && (fv[plis[fcl, x]] = 1)
+					#sh_j > -1 && (fh[plis[(fcl, fcw)]] = 1)
+					#sv_j > -1 && (fv[plis[(fcl, fcw)]] = 1)
+					sh_j > -1 && (fh[plis[fcl, fcw]] = 1)
+					sv_j > -1 && (fv[plis[fcl, fcw]] = 1)
 				else
 					# From Furini2016 supplement: "if a plate (new or EXISTING) j_1 is
 					# obtained from j without a trim cut: set all flags of j_1 to 1."
-					#setindex!.(sfhv, (1, 1, 1, 1), plis[(fcl, x)])
-					setindex!.(sfhv, (1, 1, 1, 1), plis[fcl, x])
+					#setindex!.(sfhv, (1, 1, 1, 1), plis[(fcl, fcw)])
+					setindex!.(sfhv, (1, 1, 1, 1), plis[fcl, fcw])
 				end
 			end
 			# If the second child size is rounded down to a discretized point:
@@ -799,18 +899,16 @@ function gen_cuts(
 			# Add the cut to the cut list. Check if the second child plate is waste
 			# before trying to get its plate index.
 			#push!(vnnn, (pli, plis[(fcl, x)], trim_cut ? 0 : plis[(pll, dw_sc)]))
-			push!(vnnn, (pli, plis[fcl, x], trim_cut ? 0 : plis[pll, dw_sc]))
-			#=
+			#push!(vnnn, (pli, plis[fcl, x], trim_cut ? 0 : plis[pll, dw_sc]))
 			push!(vnnn, (pli,
-				killed_first_born ? 0 : plis[pll, x],
+				killed_first_born ? 0 : plis[fcl, fcw],
 				trim_cut ? 0 : plis[pll, dw_sc]
 			))
-			=#
 			# Finally, if hybridize_with_restricted is enabled, and the current cut
 			# was transformed by this optimization in a double cut, we need to save
 			# the extracted piece in vdce (otherwise zero is our sentinel).
 			if hybridize_with_restricted
-				push!(vdce, fcl != pll ? pii_of_width_x : 0)
+				push!(vdce, fcl != pll ? pii_of_width_fcw : 0)
 			end
 		end
 
@@ -962,8 +1060,10 @@ function gen_cuts(
 	end
 	=#
 
-	@show hybridizations
-	@show first_borns_killed_by_hybridization
+	if verbose
+		@show hybridizations
+		@show first_borns_killed_by_hybridization
+	end
 
 	first_vertical_cut_idx = length(hnnn) + 1
 	return ByproductPPG2KP(
