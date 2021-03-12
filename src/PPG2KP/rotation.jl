@@ -122,7 +122,7 @@ function build_RAD(
 
 		# If the piece is a square or the rotation do not fit, then there
 		# is no rotated dummy piece.
-		if curr_l == curr_w || curr_l > W || curr_l > L
+		if curr_l == curr_w || curr_l > W || curr_w > L
 			push!(sdi2rai, lastindex(rai2sdi))
 			push!(sdi2opi, opi)
 			processed[opi] = true
