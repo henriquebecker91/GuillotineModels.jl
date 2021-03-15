@@ -681,6 +681,8 @@ function gen_cuts(
 	if hybridize_with_restricted
 		pol = discretize(d, l, w, L, W; only_single_pieces = true)
 		pow = discretize(d, w, l, W, L; only_single_pieces = true)
+		#@show pol
+		#@show pow
 	end
 	# There are two discretizations for each dimension: dl1/dw1 and dl2/dw2.
 	# They are only different if the Cut-Position reduction is being used. In
@@ -690,7 +692,7 @@ function gen_cuts(
 	# and may be needed (even if Cut-Position is used) for reducing the size of
 	# the second child to the last discretized position (if round2disc is
 	# enabled).
-	L, W = guarantee_discretization!(
+	guarantee_discretization!(
 		dls, dws, L, W, L, W, d, l, w, round2disc, ignore_2th_dim, ignore_d
 	)
 	hybridizations = 0
@@ -720,9 +722,15 @@ function gen_cuts(
 			dl1 = dl2 = dls[W]
 			dw1 = dw2 = dws[L]
 		else
+			#@show plw
+			@assert isassigned(dls, plw)
+			#@show pll
+			@assert isassigned(dws, pll)
+			#=
 			pll, plw = guarantee_discretization!(
 				dls, dws, pll, plw, L, W, d, l, w, round2disc, ignore_2th_dim, ignore_d
 			)
+			=#
 			dl1 = dl2 = dls[plw]
 			dw1 = dw2 = dws[pll]
 		end
@@ -781,21 +789,26 @@ function gen_cuts(
 			@assert x >= min_piw
 			@assert faithful2furini2016 || plw - x >= min_piw
 
-			# If the preprocessing is faithful2furini2016, the plates are cut until
-			# they have the same size as pieces and, consequently, there exist the
-			# concept of trim cut (i.e., a cut in which the second child is waste).
-			trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, pll, plw - x)
-			# The trim_cut flag is used below outside of 'if faithful2furini2016'
-			# because a true value implicates that 'faithful2furini2016 == true'.
-
 			# `fcl` is the first child length. It is used instead of `pll` because
 			# if `hybridize_with_restricted` is enabled, then `fcl` may be
 			# different from `pll`.
 			# `fcw` is similar, but can only be different when both
 			# hybridize_with_restricted and round2disc are enabled,
 			# and the width of the first child may be changed.
-			fcl = pll
-			fcw = x
+			fcl, fcw = pll, x
+			fcl, fcw = guarantee_discretization!(
+				dls, dws, fcl, fcw, L, W, d, l, w,
+				round2disc, ignore_2th_dim, ignore_d
+			)
+			# If the preprocessing is faithful2furini2016, the plates are cut until
+			# they have the same size as pieces and, consequently, there exist the
+			# concept of trim cut (i.e., a cut in which the second child is waste).
+			trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, fcl, fcw)
+			# The trim_cut flag is used below outside of 'if faithful2furini2016'
+			# because a true value implicates that 'faithful2furini2016 == true'.
+
+			# dcpii: Double-Cut PIece Index.
+			dcpii :: D = convert(D, 0)
 			if hybridize_with_restricted
 				# TODO: we can transform pow and pol in reverse indexes, and already
 				# remove these repeated calls to binary search from here.
@@ -814,11 +827,12 @@ function gen_cuts(
 									round2disc, ignore_2th_dim, ignore_d
 								)
 							end
+							dcpii = convert(D, pii_of_width_fcw)
 							hybridizations += 1
 						end
 					end
 				end
-			end
+			end # if hybridize_with_restricted
 			# For now, the only reason for a first child to be unable to pack
 			# any piece is the hybridize_with_restricted optimization.
 			killed_first_born = false
@@ -864,7 +878,14 @@ function gen_cuts(
 					setindex!.(sfhv, (1, 1, 1, 1), plis[fcl, fcw])
 				end
 			end
+
+			scl, scw = pll, plw - x
+			scl, scw = guarantee_discretization!(
+				dls, dws, scl, scw, L, W, d, l, w,
+				round2disc, ignore_2th_dim, ignore_d
+			)
 			# If the second child size is rounded down to a discretized point:
+			#=
 			if round2disc && !trim_cut
 				# Takes the index of the rounded down discretized point, if it is zero,
 				# it does not exist. Such may happen if faithful2furini2016 is enabled,
@@ -880,18 +901,19 @@ function gen_cuts(
 			else # If the second child size is not rounded.
 				dw_sc = plw - x
 			end
+			=#
 
 			# If the second child is not waste (!trim_cut), nor was already
 			# generated, then it is a new plate obtained without a trim cut.
 			#if !trim_cut && iszero(get(plis, (pll, dw_sc), 0))
-			if !trim_cut && iszero(plis[pll, dw_sc])
+			if !trim_cut && iszero(plis[scl, scw])
 				# Assert meaning: if the second child is not waste, then it must
 				# have an associated size.
-				@assert !iszero(dw_sc)
+				@assert !iszero(scw)
 				# Save the plate to be processed later, and mark its existence.
-				push!(next, (pll, dw_sc, n += 1))
+				push!(next, (scl, scw, n += 1))
 				#plis[(pll, dw_sc)] = n
-				plis[pll, dw_sc] = n
+				plis[scl, scw] = n
 				# From Furini2016 supplement: "if a plate (NEW or existing) j 1 is
 				# obtained from j without a trim cut: set all flags of j_1 to 1."
 				!no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
@@ -902,14 +924,12 @@ function gen_cuts(
 			#push!(vnnn, (pli, plis[fcl, x], trim_cut ? 0 : plis[pll, dw_sc]))
 			push!(vnnn, (pli,
 				killed_first_born ? 0 : plis[fcl, fcw],
-				trim_cut ? 0 : plis[pll, dw_sc]
+				trim_cut ? 0 : plis[scl, scw]
 			))
 			# Finally, if hybridize_with_restricted is enabled, and the current cut
 			# was transformed by this optimization in a double cut, we need to save
 			# the extracted piece in vdce (otherwise zero is our sentinel).
-			if hybridize_with_restricted
-				push!(vdce, fcl != pll ? pii_of_width_fcw : 0)
-			end
+			hybridize_with_restricted && push!(vdce, dcpii)
 		end
 
 		for y in dl1
@@ -924,19 +944,66 @@ function gen_cuts(
 			@assert y >= min_pil
 			@assert faithful2furini2016 || pll - y >= min_pil
 
+			# `fcw` is the first child width. It is used instead of `plw` because
+			# if `hybridize_with_restricted` is enabled, then `fcw` may be
+			# different from `plw`.
+			# `fcl` is similar, but can only be different when both
+			# hybridize_with_restricted and round2disc are enabled,
+			# and the length of the first child may be changed.
+			fcl, fcw = y, plw
+			fcl, fcw = guarantee_discretization!(
+				dls, dws, fcl, fcw, L, W, d, l, w,
+				round2disc, ignore_2th_dim, ignore_d
+			)
 			# If the preprocessing is faithful2furini2016, the plates are cut until
 			# they have the same size as pieces and, consequently, there exist the
 			# concept of trim cut (i.e., a cut in which the second child is waste).
-			trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, pll - y, plw)
+			trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, fcl, fcw)
 			# The trim_cut flag is used below outside of 'if faithful2furini2016'
 			# because a true value implicates that 'faithful2furini2016 == true'.
-			#if iszero(get(plis, (y, plw), 0)) # If the first child does not yet exist.
-			if iszero(plis[y, plw]) # If the first child does not yet exist.
-				push!(next, (y, plw, n += 1)) # Create the first child.
+
+			# dcpii: Double-Cut PIece Index.
+			dcpii :: D = convert(D, 0)
+			if hybridize_with_restricted
+				# TODO: we can transform pow and pol in reverse indexes, and already
+				# remove these repeated calls to binary search from here.
+				fcl_pol_idx = searchsorted(pol, fcl)
+				if !isempty(fcl_pol_idx)
+					swi_of_length_fcl = searchsorted(sllw.sl, fcl)
+					if isone(length(swi_of_length_fcl))
+						pii_of_length_fcl = sllw.sli2pii[only(swi_of_length_fcl)]
+						# TODO: when we change pow and pol to be a set of discretizations
+						# we will probably not need this `if` anymore.
+						if sllw.w[pii_of_length_fcl] <= plw
+							fcw = plw - sllw.w[pii_of_length_fcl]
+							if round2disc
+								fcl, fcw = guarantee_discretization!(
+									dls, dws, fcl, fcw, L, W, d, l, w,
+									round2disc, ignore_2th_dim, ignore_d
+								)
+							end
+							dcpii = convert(D, pii_of_length_fcl)
+							hybridizations += 1
+						end
+					end
+				end
+			end # if hybridize_with_restricted
+			# For now, the only reason for a first child to be unable to pack
+			# any piece is the hybridize_with_restricted optimization.
+			killed_first_born = false
+			if hybridize_with_restricted && !fits_at_least_one(sllw, fcl, fcw)
+				first_borns_killed_by_hybridization += 1
+				killed_first_born = true
+			elseif iszero(plis[fcl, fcw]) # If the first child does not yet exist.
+			#elseif iszero(get(plis, (fcl, x), 0))
+				push!(next, (fcl, fcw, n += 1)) # Create the first child.
 				if !no_redundant_cut
-					if trim_cut
+					# For now, we do not know if hybridize_with_restricted is
+					# entirely compatible with Redundant-Cut, so we only consider
+					# a trim_cut if it does not clash with hybridize_with_restricted.
+					if trim_cut && !hybridize_with_restricted
 						# From Furini2016 supplement: "if a NEW plate j_1 ∈ J is obtained
-						# from j through a trim cut with orientation v:"
+						# from j through a trim cut with orientation h:"
 						fchild_sfhv = (-1, 0, sh_j, sv_j)
 					else
 						# If a plate (NEW or existing) j_1 is obtained from j without a trim
@@ -945,59 +1012,79 @@ function gen_cuts(
 					end
 					push!.(sfhv, fchild_sfhv)
 				end
-				#plis[(y, plw)] = n # Mark plate existence.
-				plis[y, plw] = n # Mark plate existence.
+				#plis[(fcl, x)] = n # Mark plate existence.
+				plis[fcl, fcw] = n # Mark plate existence.
 			elseif !no_redundant_cut
-				# If plate already exists, and we are implementing Redundant-Cut
+				# If plate already exists, and we are implementing Redundant-Cut.
+				# Here we do not care for hybridize_with_restricted because
+				# setting positions to positive (i.e., `1`) is disabling
+				# Redundant-Cut optimizations not enabling them.
 				if trim_cut
 					# From Furini2016 supplement: "if an existing plate j_1 ∈ J is
 					# obtained from j through a trim cut:"
-					#sh_j > -1 && (fh[plis[(y, plw)]] = 1)
-					#sv_j > -1 && (fv[plis[(y, plw)]] = 1)
-					sh_j > -1 && (fh[plis[y, plw]] = 1)
-					sv_j > -1 && (fv[plis[y, plw]] = 1)
+					#sh_j > -1 && (fh[plis[(fcl, fcw)]] = 1)
+					#sv_j > -1 && (fv[plis[(fcl, fcw)]] = 1)
+					sh_j > -1 && (fh[plis[fcl, fcw]] = 1)
+					sv_j > -1 && (fv[plis[fcl, fcw]] = 1)
 				else
 					# From Furini2016 supplement: "if a plate (new or EXISTING) j_1 is
 					# obtained from j without a trim cut: set all flags of j_1 to 1."
-					#setindex!.(sfhv, (1, 1, 1, 1), plis[(y, plw)])
-					setindex!.(sfhv, (1, 1, 1, 1), plis[y, plw])
+					#setindex!.(sfhv, (1, 1, 1, 1), plis[(fcl, fcw)])
+					setindex!.(sfhv, (1, 1, 1, 1), plis[fcl, fcw])
 				end
 			end
+
+			scl, scw = pll - y, plw
+			scl, scw = guarantee_discretization!(
+				dls, dws, scl, scw, L, W, d, l, w,
+				round2disc, ignore_2th_dim, ignore_d
+			)
 			# If the second child size is rounded down to a discretized point:
+			#=
 			if round2disc && !trim_cut
 				# Takes the index of the rounded down discretized point, if it is zero,
 				# it does not exist. Such may happen if faithful2furini2016 is enabled,
 				# in the case the second child is waste (smaller than the first
 				# discretized point).
-				dl_sc_ix = searchsortedlast(dl2, pll - y)
-				@assert faithful2furini2016 || !iszero(dl_sc_ix)
-				if iszero(dl_sc_ix)
-					dl_sc = zero(S)
+				dw_sc_ix = searchsortedlast(dw2, plw - x)
+				@assert faithful2furini2016 || !iszero(dw_sc_ix)
+				if iszero(dw_sc_ix)
+					dw_sc = zero(S)
 				else
-					dl_sc = dl2[dl_sc_ix]
+					dw_sc = dw2[dw_sc_ix]
 				end
 			else # If the second child size is not rounded.
-				dl_sc = pll - y
+				dw_sc = plw - x
 			end
+			=#
+
 			# If the second child is not waste (!trim_cut), nor was already
 			# generated, then it is a new plate obtained without a trim cut.
-			#if !trim_cut && iszero(get(plis, (dl_sc, plw), 0))
-			if !trim_cut && iszero(plis[dl_sc, plw])
+			#if !trim_cut && iszero(get(plis, (pll, dw_sc), 0))
+			if !trim_cut && iszero(plis[scl, scw])
 				# Assert meaning: if the second child is not waste, then it must
 				# have an associated size.
-				@assert !iszero(dl_sc)
+				@assert !iszero(scw)
 				# Save the plate to be processed later, and mark its existence.
-				push!(next, (dl_sc, plw, n += 1))
-				#plis[(dl_sc, plw)] = n
-				plis[dl_sc, plw] = n
+				push!(next, (scl, scw, n += 1))
+				#plis[(pll, dw_sc)] = n
+				plis[scl, scw] = n
 				# From Furini2016 supplement: "if a plate (NEW or existing) j 1 is
 				# obtained from j without a trim cut: set all flags of j_1 to 1."
 				!no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
 			end
 			# Add the cut to the cut list. Check if the second child plate is waste
 			# before trying to get its plate index.
-			#push!(hnnn, (pli, plis[(y, plw)], trim_cut ? 0 : plis[(dl_sc, plw)]))
-			push!(hnnn, (pli, plis[y, plw], trim_cut ? 0 : plis[dl_sc, plw]))
+			#push!(vnnn, (pli, plis[(fcl, x)], trim_cut ? 0 : plis[(pll, dw_sc)]))
+			#push!(vnnn, (pli, plis[fcl, x], trim_cut ? 0 : plis[pll, dw_sc]))
+			push!(hnnn, (pli,
+				killed_first_born ? 0 : plis[fcl, fcw],
+				trim_cut ? 0 : plis[scl, scw]
+			))
+			# Finally, if hybridize_with_restricted is enabled, and the current cut
+			# was transformed by this optimization in a double cut, we need to save
+			# the extracted piece in vdce (otherwise zero is our sentinel).
+			hybridize_with_restricted && push!(hdce, dcpii)
 		end
 
 		# Goes to the next unprocessed plate.
@@ -1067,7 +1154,7 @@ function gen_cuts(
 
 	first_vertical_cut_idx = length(hnnn) + 1
 	return ByproductPPG2KP(
-		append!(hnnn, vnnn), append!(zeros(D, first_vertical_cut_idx - 1), vdce),
+		append!(hnnn, vnnn), append!(hdce, vdce),
 		first_vertical_cut_idx,
 		np, pli_lwb, deepcopy(d), deepcopy(l), deepcopy(w),
 		deepcopy(L), deepcopy(W)
