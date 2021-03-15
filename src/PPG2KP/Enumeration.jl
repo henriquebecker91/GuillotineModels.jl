@@ -800,10 +800,15 @@ function gen_cuts(
 				dls, dws, fcl, fcw, L, W, d, l, w,
 				round2disc, ignore_2th_dim, ignore_d
 			)
+			scl, scw = pll, plw - x
+			scl, scw = guarantee_discretization!(
+				dls, dws, scl, scw, L, W, d, l, w,
+				round2disc, ignore_2th_dim, ignore_d
+			)
 			# If the preprocessing is faithful2furini2016, the plates are cut until
 			# they have the same size as pieces and, consequently, there exist the
 			# concept of trim cut (i.e., a cut in which the second child is waste).
-			trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, fcl, fcw)
+			trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, scl, scw)
 			# The trim_cut flag is used below outside of 'if faithful2furini2016'
 			# because a true value implicates that 'faithful2furini2016 == true'.
 
@@ -879,11 +884,6 @@ function gen_cuts(
 				end
 			end
 
-			scl, scw = pll, plw - x
-			scl, scw = guarantee_discretization!(
-				dls, dws, scl, scw, L, W, d, l, w,
-				round2disc, ignore_2th_dim, ignore_d
-			)
 			# If the second child size is rounded down to a discretized point:
 			#=
 			if round2disc && !trim_cut
@@ -955,10 +955,15 @@ function gen_cuts(
 				dls, dws, fcl, fcw, L, W, d, l, w,
 				round2disc, ignore_2th_dim, ignore_d
 			)
+			scl, scw = pll - y, plw
+			scl, scw = guarantee_discretization!(
+				dls, dws, scl, scw, L, W, d, l, w,
+				round2disc, ignore_2th_dim, ignore_d
+			)
 			# If the preprocessing is faithful2furini2016, the plates are cut until
 			# they have the same size as pieces and, consequently, there exist the
 			# concept of trim cut (i.e., a cut in which the second child is waste).
-			trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, fcl, fcw)
+			trim_cut = faithful2furini2016 && !fits_at_least_one(sllw, scl, scw)
 			# The trim_cut flag is used below outside of 'if faithful2furini2016'
 			# because a true value implicates that 'faithful2furini2016 == true'.
 
@@ -1034,11 +1039,6 @@ function gen_cuts(
 				end
 			end
 
-			scl, scw = pll - y, plw
-			scl, scw = guarantee_discretization!(
-				dls, dws, scl, scw, L, W, d, l, w,
-				round2disc, ignore_2th_dim, ignore_d
-			)
 			# If the second child size is rounded down to a discretized point:
 			#=
 			if round2disc && !trim_cut
