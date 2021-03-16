@@ -544,9 +544,19 @@ function guarantee_discretization!(
 	end
 end
 
+# mirror plate
+_mp(::Val{true}, l, w) = l > w ? (w, l) : (l, w)
+_mp(::Val{false}, l, w) = l, w
+
+macro mp(v, l, w)
+	v_, l_, w_ = esc(v), esc(l), esc(w)#gensym(v), gensym(l), gensym(w)# v, l, w #
+	return :(_mp($v_, $l_, $w_)...)
+end
+
 function do_cut!(
 	is_vertical :: Bool, # If the cut is vertical (i.e., on a width position)
 	n :: P, # The last plate id, incremented with each plate created and returned.
+	m :: Val{M}, # If the plates are mirrored (i.e., length always smaller).
 	fcl :: S, # The length of the first child (if round2disc then it may shrink).
 	fcw :: S, # The width of the first child (if round2disc then it may shrink).
 	scl :: S, # The length of the second child (if round2disc then it may shrink).
@@ -573,7 +583,7 @@ function do_cut!(
 	faithful2furini2016 :: Bool,
 	hybridize_with_restricted :: Bool,
 	no_redundant_cut :: Bool,
-) :: P where {D, S, P}
+) :: P where {D, S, P, M}
 	# `fcl` is the first child length. It is used instead of `pll` because
 	# if `hybridize_with_restricted` is enabled, then `fcl` may be
 	# different from `pll`.
@@ -634,7 +644,7 @@ function do_cut!(
 	end
 
 	n = do_cut!(is_vertical,
-		n, fcl, fcw, scl, scw, next_idx, dls, dws,
+		n, m, fcl, fcw, scl, scw, next_idx, dls, dws,
 		sllw, sfhv, next, plis, nnn, faithful2furini2016,
 		hybridize_with_restricted, no_redundant_cut,
 	)
@@ -650,6 +660,7 @@ end
 function do_cut!(
 	is_vertical :: Bool, # If the cut is vertical (i.e., on a width position)
 	n :: P, # The last plate id, incremented with each plate created and returned.
+	m :: Val{M}, # If the plates are mirrored (i.e., length always smaller).
 	fcl :: S, # The length of the first child (if round2disc then it may shrink).
 	fcw :: S, # The width of the first child (if round2disc then it may shrink).
 	scl :: S, # The length of the second child (if round2disc then it may shrink).
@@ -665,7 +676,7 @@ function do_cut!(
 	faithful2furini2016 :: Bool,
 	hybridize_with_restricted :: Bool,
 	no_redundant_cut :: Bool,
-) :: P where {D, S, P}
+) :: P where {D, S, P, M}
 	# Put some info readily available.
 	pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
 	if !no_redundant_cut
@@ -684,7 +695,7 @@ function do_cut!(
 	killed_first_born = false
 	if hybridize_with_restricted && !fits_at_least_one(sllw, fcl, fcw)
 		killed_first_born = true
-	elseif iszero(plis[fcl, fcw]) # If the first child does not yet exist.
+	elseif iszero(plis[@mp m fcl fcw]) # If the first child does not yet exist.
 		push!(next, (fcl, fcw, n += 1)) # Create the first child.
 		if !no_redundant_cut
 			# For now, we do not know if hybridize_with_restricted is
@@ -705,7 +716,7 @@ function do_cut!(
 			end
 			push!.(sfhv, fchild_sfhv)
 		end
-		plis[fcl, fcw] = n # Mark plate existence.
+		plis[@mp m fcl fcw] = n # Mark plate existence.
 	elseif !no_redundant_cut
 		# If plate already exists, and we are implementing Redundant-Cut.
 		# Here we do not care for hybridize_with_restricted because
@@ -714,24 +725,24 @@ function do_cut!(
 		if trim_cut
 			# From Furini2016 supplement: "if an existing plate j_1 ∈ J is
 			# obtained from j through a trim cut:"
-			sh_j > -1 && (fh[plis[fcl, fcw]] = 1)
-			sv_j > -1 && (fv[plis[fcl, fcw]] = 1)
+			sh_j > -1 && (fh[plis[@mp m fcl fcw]] = 1)
+			sv_j > -1 && (fv[plis[@mp m fcl fcw]] = 1)
 		else
 			# From Furini2016 supplement: "if a plate (new or EXISTING) j_1 is
 			# obtained from j without a trim cut: set all flags of j_1 to 1."
-			setindex!.(sfhv, (1, 1, 1, 1), plis[fcl, fcw])
+			setindex!.(sfhv, (1, 1, 1, 1), plis[@mp m fcl fcw])
 		end
 	end
 
 	# If the second child is not waste (!trim_cut), nor was already
 	# generated, then it is a new plate obtained without a trim cut.
-	if !trim_cut && iszero(plis[scl, scw])
+	if !trim_cut && iszero(plis[@mp m scl scw])
 		# Assert meaning: if the second child is not waste, then it must
 		# have an associated size.
 		@assert !iszero(scw)
 		# Save the plate to be processed later, and mark its existence.
 		push!(next, (scl, scw, n += 1))
-		plis[scl, scw] = n
+		plis[@mp m scl scw] = n
 		# From Furini2016 supplement: "if a plate (NEW or existing) j 1 is
 		# obtained from j without a trim cut: set all flags of j_1 to 1."
 		!no_redundant_cut && push!.(sfhv, (1, 1, 1, 1))
@@ -739,8 +750,8 @@ function do_cut!(
 	# Add the cut to the cut list. Check if the second child plate is waste
 	# before trying to get its plate index.
 	push!(nnn, (pli,
-		killed_first_born ? 0 : plis[fcl, fcw],
-		trim_cut ? 0 : plis[scl, scw]
+		killed_first_born ? 0 : plis[@mp m fcl fcw],
+		trim_cut ? 0 : plis[@mp m scl scw]
 	))
 
 	return n
@@ -787,25 +798,33 @@ All keyword arguments are of type `Bool`.
   (consequently all discretized positions are used, none is removed).
 """
 function gen_cuts(
-	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S;
+	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S,
+	m :: Val{M} = Val(false);
 	ignore_2th_dim = false, ignore_d = false, round2disc = true,
 	hybridize_with_restricted = false,
 	faithful2furini2016 = false,
 	no_redundant_cut = false, no_cut_position = false,
 	no_furini_symmbreak = false, quiet = false, verbose = false
-) :: ByproductPPG2KP{D, S, P} where {D, S, P}
+) :: ByproductPPG2KP{D, S, P} where {D, S, P, M}
+	mirror_plates = M # the Bool inside the Val
 	# If both verbose and quiet are passed, then quiet wins.
 	verbose = verbose & !quiet
 	!quiet && faithful2furini2016 && round2disc && @warn(
 		"Enabling both faithful2furini2016 and round2disc is allowed, but you" *
 		" are not being entirely faithful to Furini2016 if you do so."
 	)
-	if !faithful2furini2016 && no_redundant_cut
-		!quiet && @warn "The Redundant-Cut is only used when faithful2furini2016" *
-			" is enabled. As flag faithful2furini2016 is not enabled, flag" *
-			" no-redundant-cut has no effect."
+	!faithful2furini2016 && no_redundant_cut && !quiet && @warn(
+		"The Redundant-Cut is only used when faithful2furini2016" *
+		" is enabled. As flag faithful2furini2016 is not enabled, flag" *
+		" no-redundant-cut has no effect."
+	)
+	if !no_redundant_cut && mirror_plates
+		!quiet && @warn(
+			"Flag mirror-plates has disabled the Redundant-Cut reduction."
+		)
 		no_redundant_cut = true
 	end
+
 	l = sllw.l
 	w = sllw.w
 	@assert length(d) == length(l)
@@ -847,10 +866,12 @@ function gen_cuts(
 	pli_lwb = Vector{Tuple{S, S, P}}()
 	# plis: matrix of the plate dimensions in which zero means "never seen that
 	# plate before" and nonzero means "this nonzero number is the plate index".
-	#plis = Dict{Tuple{S, S}, P}()
-	plis = zeros(P, L, W)
-	#plis[(L, W)] = one(P)
-	plis[L, W] = one(P)
+	if mirror_plates
+		plis = zeros(P, max(L, W), max(L, W))
+	else
+		plis = zeros(P, L, W)
+	end
+	plis[@mp m L W] = one(P)
 	# next: plates already indexed but not yet processed, starts with (L, W, 1).
 	# Storing the index as the third value is not necessary (as it could be
 	# queried from plis) but this is probably more efficient this way.
@@ -858,10 +879,10 @@ function gen_cuts(
 	next_idx = one(P)
 	#sizehint!(next, max_num_plates)
 	push!(next, (L, W, one(P)))
+	sfhv = (Vector{Int8}(), Vector{Int8}(), Vector{Int8}(), Vector{Int8}())
 	if !no_redundant_cut
 		# If the preprocessing is faithful2furini2016 and Redundant-Cut is
 		# enabled, then four auxiliary trim cut flag vectors are necessary.
-		sfhv = (Vector{Int8}(), Vector{Int8}(), Vector{Int8}(), Vector{Int8}())
 		sh, sv, fh, fv = sfhv
 		push!.(sfhv, (1, 1, 1, 1))
 	end
@@ -993,7 +1014,7 @@ function gen_cuts(
 
 			fcl, fcw, scl, scw = pll, x, pll, plw - x
 			n = do_cut!(true, # If the cut is vertical (i.e., on a width position)
-				n, fcl, fcw, scl, scw, next_idx, dls, dws, pol, pow,
+				n, m, fcl, fcw, scl, scw, next_idx, dls, dws, pol, pow,
 				L, W, d, l, w, sllw, sfhv, next, plis,
 				vnnn, # Either vnnn or hnnn, i.e., the correct orientation of the two
 				vdce, # Either vdce or hdce, i.e., the correct orientation of the two
@@ -1016,7 +1037,7 @@ function gen_cuts(
 
 			fcl, fcw, scl, scw = y, plw, pll -y, plw
 			n = do_cut!(false, # If the cut is vertical (i.e., on a width position)
-				n, fcl, fcw, scl, scw, next_idx, dls, dws, pol, pow,
+				n, m, fcl, fcw, scl, scw, next_idx, dls, dws, pol, pow,
 				L, W, d, l, w, sllw, sfhv, next, plis,
 				hnnn, # Either vnnn or hnnn, i.e., the correct orientation of the two
 				hdce, # Either vdce or hdce, i.e., the correct orientation of the two
@@ -1061,8 +1082,8 @@ function gen_cuts(
 			# a plate with the exact same dimensions.
 			#@assert !iszero(get(plis, (l[pii], w[pii]), 0))
 			#push!(np, (plis[(l[pii], w[pii])], pii))
-			@assert !iszero(plis[l[pii], w[pii]])
-			push!(np, (plis[l[pii], w[pii]], pii))
+			@assert !iszero(plis[@mp m l[pii] w[pii]])
+			push!(np, (plis[@mp m l[pii] w[pii]], pii))
 		end
 	end
 

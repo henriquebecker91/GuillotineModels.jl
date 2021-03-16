@@ -225,6 +225,7 @@ function VarInvIndexes(
 	return VarInvIndexes(num_piece_types, num_plate_types, bp.np, bp.cuts)
 end
 
+#=
 # TODO: change enumeration to also use a Dict? and then use
 # something like create_normalized_arg_subset in a subset of PPG2KP args
 @timeit TIMER function _gen_cuts_wo(
@@ -242,12 +243,14 @@ end
 		quiet = options["quiet"], verbose = options["verbose"]
 	)
 end
+=#
 
 @timeit TIMER function _gen_cuts_wo(
 	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
-	return gen_cuts(P, d, sllw, L, W;
+	return gen_cuts(P, d, sllw, L, W,
+		Val(options["allow-rotation"] & options["mirror-plates"]);
 		ignore_2th_dim = options["ignore-2th-dim"],
 		ignore_d = options["ignore-d"],
 		round2disc = options["round2disc"],
@@ -256,7 +259,7 @@ end
 		no_redundant_cut = options["no-redundant-cut"],
 		no_furini_symmbreak = options["no-furini-symmbreak"],
 		faithful2furini2016 = options["faithful2furini2016"],
-		quiet = options["quiet"], verbose = options["verbose"]
+		quiet = options["quiet"], verbose = options["verbose"],
 	)
 end
 

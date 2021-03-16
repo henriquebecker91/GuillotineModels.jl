@@ -110,10 +110,17 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 		Arg("allow-rotation", false,
 			"The formulation will allow the pieces to rotate. Dummy rotated pieces are created and feeded to the discretization and model building. The only explicit difference in the formulation is that the demand is shared between the two rotations of a piece. Pieces that meet any of the following conditions do not have rotated counterparts: (i) the piece is a square; (ii) after rotation the piece does not fit into the 'original plate'/'large object'; (iii) the instance has another piece that is exactly the same as the rotated piece (other attributes like profit need to match too), in this case the demand of both (non-rotated) pieces is summed and shared." # (Not sure if CutPattern really needs this field.) The CutPattern returned by `get_cut_pattern` should use only the indexes of the pieces originally in the instance (and mark the field `piece_is_rotated` as `true` when a rotated dummy is used)."
 		),
+		Arg("mirror-plates", false,
+			"Will error if the allow-rotation flag is not passed. If allow-rotation is enabled and mirror-plates is disabled, then the cut/plate enumeration is completely unaware of the fact (pieces are duplicated before enumeration and other changes are done at the formulation level). If both flags are enabled, then the enumeration is slightly changed: every plate can only have length smaller than or equal to the width (i.e., plates with length greater than width are rotated automatocally). This may cut by half the number of plates/constraints and, consequently, also reduce the number of cuts/variables (in other words, the whole size of the model). The Redundant-Cut improvement is disabled if this flag has any effect (because we lose the capability to distinguish between vertical and horizontal cuts)."
+		),
 	]
 end
 
 function Utilities.Args.throw_if_incompatible_options(::Val{:PPG2KP}, p_args)
+	p_args["mirror-plates"] && !p_args["allow-rotation"] && throw(
+		ArgumentError, "Flag mirror-plates cannot be used if allow-rotation" *
+			" is disabled."
+	)
 	alpha = p_args["pricing-alpha"]
 	beta = p_args["pricing-beta"]
 	alpha > 0.0 || alpha <= 1.0 || throw(ArgumentError(
