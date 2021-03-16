@@ -5,7 +5,7 @@
 ) where {P}
 	children = [P[] for _ in 1:highest_plate_idx]
 	for (pp, fc, sc) in cuts
-		push!(children[pp], fc)
+		!iszero(fc) && push!(children[pp], fc)
 		!iszero(sc) && push!(children[pp], sc)
 	end
 	reached = falses(highest_plate_idx)

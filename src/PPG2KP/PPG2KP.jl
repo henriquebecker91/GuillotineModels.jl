@@ -197,7 +197,7 @@ Utility constructor that creates the struct from a ByproductPPG2KP.
 	for i in eachindex(cuts)
 		parent, fchild, schild = cuts[i]
 		push!(parent2cut[parent], i)
-		push!(child2cut[fchild], i)
+		!iszero(fchild) && push!(child2cut[fchild], i)
 		!iszero(schild) && push!(child2cut[schild], i)
 	end
 
@@ -225,6 +225,7 @@ function VarInvIndexes(
 	return VarInvIndexes(num_piece_types, num_plate_types, bp.np, bp.cuts)
 end
 
+#=
 # TODO: change enumeration to also use a Dict? and then use
 # something like create_normalized_arg_subset in a subset of PPG2KP args
 @timeit TIMER function _gen_cuts_wo(
@@ -242,20 +243,23 @@ end
 		quiet = options["quiet"], verbose = options["verbose"]
 	)
 end
+=#
 
 @timeit TIMER function _gen_cuts_wo(
 	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S},
 	L :: S, W :: S, options :: Dict{String, Any} = Dict{String, Any}()
 ) where {D, S, P}
-	return gen_cuts(P, d, sllw, L, W;
+	return gen_cuts(P, d, sllw, L, W,
+		Val(options["allow-rotation"] & options["mirror-plates"]);
 		ignore_2th_dim = options["ignore-2th-dim"],
 		ignore_d = options["ignore-d"],
 		round2disc = options["round2disc"],
+		hybridize_with_restricted = options["hybridize-with-restricted"],
 		no_cut_position = options["no-cut-position"],
 		no_redundant_cut = options["no-redundant-cut"],
 		no_furini_symmbreak = options["no-furini-symmbreak"],
 		faithful2furini2016 = options["faithful2furini2016"],
-		quiet = options["quiet"], verbose = options["verbose"]
+		quiet = options["quiet"], verbose = options["verbose"],
 	)
 end
 
@@ -284,10 +288,19 @@ end
 	# (i.e., formulation-agnostic) part of the code.
 ) where {D, S, P}
 	# shorten the names
-	@unpack d, l, w, L, W, np, cuts, pli_lwb = bp
+	@unpack d, l, w, L, W, np, cuts, cut_extraction, pli_lwb = bp
 	@unpack pii2pair, pli2pair, child2cut, parent2cut = inv_idxs
 	num_piece_types = convert(D, length(d))
 	num_plate_types = length(pli_lwb)
+
+	# This probably should not be here (but in an outer function)
+	# but for now this will suffice.
+	pii2dci = Vector{D}[Vector{D}() for i in 1:num_piece_types]
+	for (dci, pii) in pairs(cut_extraction)
+		!iszero(pii) && push!(pii2dci[pii], dci)
+	end
+	#@show length(cuts)
+	#@show length(cut_extraction)
 
 	if problem == Val(:G2KP) || problem == Val(:G2MKP)
 		if options["allow-rotation"]
@@ -303,31 +316,39 @@ end
 		end
 	end
 
-	# If all pieces have demand one, a binary variable will suffice to make the
-	# connection between a piece type and the plate it is extracted from.
-	naturally_only_binary = all(di -> di == 1, d)
-	if naturally_only_binary
-		if build_LP_not_MIP
-			@variable(model, 0 <= picuts[1:length(np)] <= 1)
-		else
-			@variable(model, picuts[1:length(np)], Bin)
-		end
-	else
+	# Note: using `d` as upper bound of `picuts` and `dc_sells` works even
+	# with rotation enabled because `d` is the `rad.shared_d` expanded for the
+	# dummies.
+	@variable(model,
+		0 <= picuts[i = 1:length(np)] <= d[np[i][2]], integer = !build_LP_not_MIP
+	)
+	if options["hybridize-with-restricted"]
+		# dc_sells: Means "double-cut sells". For each piece type `pii` (or dummy
+		# piece type in the case of rotation enabled), we have `dc_sells[pii]`
+		# storing the number of pieces obtained by means of double cuts that were
+		# actually sold. This variable is necessary because we cannot assume the
+		# piece obtained by a double cut is always sold.  When double cuts are
+		# enabled (i.e., hybridize-with-restricted), the normal cuts replaced by
+		# double cuts cease to exist, and the double cuts may be needed in some
+		# situations just to trim waste, without selling the piece they extract
+		# because that piece demand is already exhausted.
 		@variable(model,
-			0 <= picuts[i = 1:length(np)] <= d[np[i][2]],
+			0 <= dc_sells[i = 1:num_piece_types] <= d[i],
 			integer = !build_LP_not_MIP
 		)
-		#=@variable(model,
-			0 <= picuts[i = 1:length(np)] <= min(pli_lwb[np[i][1]][3], d[np[i][2]]),
-			integer = !build_LP_not_MIP
-		)=#
 	end
 
-	# TODO: maybe create an upper bound for each problem type?
+	# We prefer to leave `cuts_made` without an upper bound to risk
+	# making a bound that will not work for some combination of parameters.
 	@variable(model,
-		cuts_made[i = 1:length(cuts)] >= 0, #<= pli_lwb[cuts[i][PARENT]][3],
-		integer = !build_LP_not_MIP
+		cuts_made[i = 1:length(cuts)] >= 0, integer = !build_LP_not_MIP
 	)
+
+	if options["hybridize-with-restricted"]
+		@constraint(model,
+			dc_link_con[i = 1:length(d)], dc_sells[i] <= sum(cuts_made[pii2dci[i]])
+		)
+	end
 
 	# If the problem is a knapsack problem, then the objective is to maximize
 	# the profit from the packed/extracted pieces.
@@ -335,9 +356,18 @@ end
 	# original plates used (all pieces must be packed).
 	# If it is OPP, then there is no objective function.
 	if problem === Val(:G2KP) || problem === Val(:G2MKP)
-		@objective(model, Max,
-			sum(p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
-		)
+		# If the objective is profit maximization we need to account for the
+		# sold pieces obtained by double cut extractionsa (`dc_sells`).
+		if options["hybridize-with-restricted"]
+			@objective(model, Max,
+				sum(p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types) +
+				sum(p[pii] * dc_sells[pii] for pii = 1:num_piece_types)
+			)
+		else
+			@objective(model, Max,
+				sum(p[pii] * sum(picuts[pii2pair[pii]]) for pii = 1:num_piece_types)
+			)
+		end
 	elseif problem === Val(:G2CSP)
 		# We create a variable to represent the number of original plates used:
 		# `b`. This variable is not strictly necessary, we could instead minimize
@@ -389,36 +419,52 @@ end
 	# put them in the expected key inside the model
 	model[:plate_cons] = pushfirst!(plate_numbers_2_to_m, plate_number_one)
 
-	# c3: the demand constraint. For knapsack problems it means an upper bound
-	# on how many of each piece type may be extracted/packed, for OPP and CSP
-	# it means the number of each piece type that *must* be extracted/packed.
-	# TODO: there is a better way than using this `if`?
+	# The demand constraint, yet simple, is modified in complementary ways by
+	# basically every flag that changes the formulation, leading an exponential
+	# explosion of slightly different demand constraints. To avoid 3+ levels of
+	# nested `if`s, we try to build each part of the demand constraint
+	# separatedly (depending only in the options that affect that single part)
+	# and then combine the parts at the end.
+
+	# The right-hand-side of the demand constraint is determined by the
+	# (no-)rotation. The (no-)rotation also defines how we translate
+	# demand constraint indexes to piece indexes (`di2pii`).
+	if options["allow-rotation"]
+		demand_con_rhs = rad.shared_demand
+		di2pii = rad.sdi2rai :: fieldtype(RotationAwareData{D, S}, :sdi2rai)
+	else
+		demand_con_rhs = d
+		# We use typeof to avoid type-unstability on binding `di2pii`.
+		di2pii = fieldtype(RotationAwareData{D, S}, :sdi2rai)()
+		append!(di2pii, eachindex(d))
+	end
+	# With the rhs and the translator we may build lhs expression outside
+	# of any `if`.
+	demand_con_lhs = @expression(model, [di=1:length(di2pii)],
+		sum(picuts[_flatten_index(pii2pair, di2pii[di], vcat)])
+	)
+	# If we are hybridizing with restricted we need to update lhs to
+	# also include the extractions/sells made by double cuts.
+	if options["hybridize-with-restricted"]
+		demand_con_lhs = @expression(model, [di=1:length(di2pii)],
+			demand_con_lhs[di] + sum(dc_sells[collect(di2pii[di])])
+		)
+	end
+	# Now, with lhs and rhs in hand, we will build contraints that only differ in
+	# the sense (i.e., either `<=` or `>=`).
+	# For knapsack problems, demand means an upper bound on how many of each
+	# piece type may be extracted/packed, for OPP and CSP it means a lower bound
+	# on the number of each piece type that *must* be extracted/packed.
 	if problem === Val(:G2KP) || problem === Val(:G2MKP)
-		if options["allow-rotation"]
-			@constraint(model,
-				demand_con[sdi=1:length(rad.shared_demand)],
-				sum(picuts[_flatten_index(pii2pair, rad.sdi2rai[sdi], vcat)]) <=
-					rad.shared_demand[sdi]
-			)
-		else
-			@constraint(model,
-				demand_con[pii=1:num_piece_types],
-				sum(picuts[pii2pair[pii]]) <= d[pii]
-			)
-		end
+		@constraint(model,
+			demand_con[di=1:length(di2pii)],
+			demand_con_lhs[di] <= demand_con_rhs[di]
+		)
 	elseif problem === Val(:G2OPP) || problem === Val(:G2CSP)
-		if options["allow-rotation"]
-			@constraint(model,
-				demand_con[sdi=1:length(rad.shared_demand)],
-				sum(picuts[_flatten_index(pii2pair, rad.sdi2rai[sdi], vcat)]) ==
-					rad.shared_demand[sdi]
-			)
-		else
-			@constraint(model,
-				demand_con[pii=1:num_piece_types],
-				sum(picuts[pii2pair[pii]]) == d[pii]
-			)
-		end
+		@constraint(model,
+			demand_con[di=1:length(di2pii)],
+			demand_con_lhs[di] >= demand_con_rhs[di]
+		)
 	end
 
 	#= Disabled while we rework it in a problem-agnostic fashion.
@@ -752,6 +798,34 @@ being used as the `d` field (of `G2KP`).
 	d = instance.dub
 	return build_model(
 		Val(:G2KP), Val(:PPG2KP), G2KP(L, W, l, w, d, p), m, options
+	)
+end
+
+"""
+    build_model(::Val{:G2CSP}, ::Val{:PPG2KP}, instance::G2KP, model[, options])
+
+Build a PPG2KP-style model for a G2CSP `instance` inside `model`.
+
+Changes `model` by adding variables and constraints. `options` takes
+arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
+
+This is a convenience method that takes a G2KP instance. It allows
+easily testing G2CSP over the same instances used commonly for
+Knapsack Problem (G2KP). If `options["quiet"]` is not passed,
+this method will always show a warnig, as the instance type is
+not ideal.
+"""
+@timeit TIMER function build_model(
+	::Val{:G2CSP}, ::Val{:PPG2KP}, instance :: G2KP{D, S, P}, m,
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
+	@unpack L, W, l, w, d = instance
+	if !options["quiet"]
+		@warn "Attention: converting a G2KP instance to a SSSCSP instance to" *
+			" solve it for the G2CSP (problem). Profits dropped."
+	end
+	return build_model(
+		Val(:G2CSP), Val(:PPG2KP), SSSCSP{D, S, P}(L, W, l, w, d), m, options
 	)
 end
 
