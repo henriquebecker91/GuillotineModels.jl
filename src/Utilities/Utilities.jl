@@ -236,6 +236,22 @@ end
 export SortedLinkedLW
 
 """
+    switched_dims(sllw :: SortedLinkedLW{D, S}) where {D, S}
+
+Returns a copy of `sllw` as it was created switching `L`/`W` and `l`/`w`.
+
+DANGER: Both the original and the copy share the same arrays, so any
+modification in one will change the other.
+"""
+function switched_dims(sllw :: SortedLinkedLW{D, S}) where {D, S}
+	return SortedLinkedLW{D, S}(
+		sllw.w, sllw.l, sllw.sw, sllw.sl,
+		sllw.swi2pii, sllw.sli2pii, sllw.pii2swi, sllw.pii2sli
+	)
+end
+export switched_dims
+
+"""
     SortedLinkedLW(::Type{D}, l :: [S], w :: [S])
 
 Construts a SortedLinkedLW structure using type `D` as the type for indexes,

@@ -70,7 +70,7 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 		),
 		Arg(
 			"ignore-d", false,
-			"Ignore the demand information during discretization, used to measure impact."
+			"Ignore the demand information during discretization, used to measure impact. The flag `hybridize-with-restricted` is affected by it too (i.e., less hybridizations will happen)."
 		),
 		Arg(
 			"use-c25", false,
@@ -78,7 +78,7 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 		),
 		Arg(
 			"ignore-2th-dim", false,
-			"Ignore the dimension not being discretized during discretization, used to measure impact."
+			"Ignore the dimension not being discretized during discretization, used to measure impact. The flag `hybridize-with-restricted` is affected by it too (i.e., less hybridizations will happen)."
 		),
 		Arg(
 			"heuristic-seed", 1,

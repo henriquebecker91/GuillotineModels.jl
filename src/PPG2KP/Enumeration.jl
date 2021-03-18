@@ -13,14 +13,15 @@ module Enumeration
 # and ignores a basic assumption).
 
 using DocStringExtensions
+using UnPack: @unpack
 
-import ...Utilities.SortedLinkedLW
+using ...Utilities: SortedLinkedLW, switched_dims
 
 export gen_cuts, ByproductPPG2KP
 export should_extract_piece_from_plate
 
 """
-    discretize(d::[D], l::[S], w::[S], L::S, W::S; kwords...) :: [S]
+    discretize(d::[D], l::[S], w::[S], L::S, W::S; kwargs...) :: [S]
 
 !!! **Internal use.**
 
@@ -441,6 +442,65 @@ struct ByproductPPG2KP{D, S, P}
 end
 Base.broadcastable(x :: ByproductPPG2KP{D, S, P}) where {D, S, P} = Ref(x)
 
+# `_piece_only_positions` is similar to `guarantee_discretization!` but:
+# 1. It is only necessary if hybridize-with-restricted is enabled.
+# 2. It is eager instead of lazy (i.e., it computes the whole data
+#    structure instead of filling the gaps as the enumeration goes).
+#    The reasoning is that: (i) different from the discretization,
+#    the number of distinct 'piece-only positions' is bounded by the
+#    number of pieces (linear); (ii) it is almost certain that we will
+#    need all of them.
+# The return is a `Vector{Vector{S}}`, lets call it `pols`.
+# `pows` outer Vector is indexed by the width available and gives the
+# inner vector that is all the lengths that can only be obtained by
+# single pieces (not by any combination) considering the length available.
+# To obtain its counterpart, `pows`, indexed by the width available and
+# returning the lengths only obtainable by single pieces, just switc
+# `L` and `W` as well all fields of SortedLinkedLW for the call.
+function _piece_only_positions(
+	L :: S, W :: S, sllw :: SortedLinkedLW{D, S}, d; ignore_d = false
+) :: Vector{Vector{S}} where {D, S}
+	@unpack l, w = sllw
+	pols = Vector{Vector{S}}(undef, W)
+	empty_list = S[]
+	# If less width is available than any piece the only valid value
+	# is an empty list.
+	for x in 1:(first(sllw.sw) - 1)
+		pols[x] = empty_list
+	end
+
+	for (swi, available_w) in pairs(sllw.sw)
+		not_is_last = swi < lastindex(sllw.sw)
+		if not_is_last && sllw.sw[swi + 1] == available_w
+			continue # i.e., only use the last in a block of repeated values
+		end
+		pol = discretize(
+			d, l, w, L, available_w; only_single_pieces = true,
+			ignore_d = ignore_d
+		)
+		before_next_w = not_is_last ? sllw.sw[swi + 1] - one(S) : W
+		for x in available_w:before_next_w
+			pols[x] = pol
+		end
+	end
+
+	return pols
+end
+
+# Same as _piece_only_positions, but does the work for both dimensions
+# instead of just the length dimension.
+# The keyword arguments are passed to `_piece_only_positions` which
+# pass them to `discretize`.
+function piece_only_positions(
+	L :: S, W :: S, sllw :: SortedLinkedLW{D, S}, d; kwargs...
+) :: NTuple{2, Vector{Vector{S}}} where {D, S}
+	pols = _piece_only_positions(L, W, sllw, d; kwargs...)
+	rev_sllw = switched_dims(sllw)
+	pows = _piece_only_positions(W, L, rev_sllw, d; kwargs...)
+
+	return pols, pows
+end
+
 function guarantee_discretization!(
 	dls, dws, pll :: S, plw :: S, L :: S, W :: S, d, l, w,
 	round2disc, ignore_2th_dim, ignore_d, level :: UInt8 = UInt8(1)
@@ -564,8 +624,8 @@ function do_cut!(
 	next_idx :: P, # The index of next and sfhv for the current parent plate.
 	dls :: Vector{Vector{S}}, # Discretized lengths set for each width.
 	dws :: Vector{Vector{S}}, # Discretized widths set for each length.
-	pol :: Vector{S}, # Lengths that match a piece but not a sum (2+ pieces).
-	pow :: Vector{S}, # Widths that match a piece but not a sum (2+ pieces).
+	pols :: Vector{Vector{S}}, # Piece-Only Length Sets (by available width).
+	pows :: Vector{Vector{S}}, # Piece-Only Widths Sets (by available length).
 	L :: S, # The original plate length.
 	W :: S, # The original plate width.
 	d :: Vector{D}, # The pieces demand (needed for guaranteeing discretization).
@@ -583,7 +643,7 @@ function do_cut!(
 	faithful2furini2016 :: Bool,
 	hybridize_with_restricted :: Bool,
 	no_redundant_cut :: Bool,
-) :: P where {D, S, P, M}
+) :: Tuple{P, Bool, Bool} where {D, S, P, M}
 	# `fcl` is the first child length. It is used instead of `pll` because
 	# if `hybridize_with_restricted` is enabled, then `fcl` may be
 	# different from `pll`.
@@ -609,14 +669,16 @@ function do_cut!(
 	# sddper -- Sorted Discretized Dimensions PERpendicular to cut
 	# sddpar -- Sorted Discretized Dimensions PARallel to cut
 	# sdd2pii -- Sorted Discretized Dimensions TO PIece Index (perpendicular)
-	pop, fcdper, fcdpar, pii2dper, pii2dpar, sddper, sddpar, sdd2pii =
-		if is_vertical
-			pow, fcw, fcl, sllw.w, sllw.l, sllw.sw, sllw.sl, sllw.swi2pii
-		else
-			pol, fcl, fcw, sllw.l, sllw.w, sllw.sl, sllw.sw, sllw.sli2pii
-		end
+	fcdper, fcdpar = is_vertical ? (fcw, fcl) : (fcl, fcw)
 	hybridization_success = false
 	if hybridize_with_restricted
+		pop, pii2dper, pii2dpar, sddper, sddpar, sdd2pii = if is_vertical
+			(ignore_2th_dim ? pows[L] : pows[fcl]), sllw.w, sllw.l,
+				sllw.sw, sllw.sl, sllw.swi2pii
+		else
+			(ignore_2th_dim ? pols[W] : pols[fcw]), sllw.l, sllw.w,
+				sllw.sl, sllw.sw, sllw.sli2pii
+		end
 		# TODO: we can transform pow and pol in reverse indexes, and already
 		# remove these repeated calls to binary search from here.
 		fcdper_pop_idx = searchsorted(pop, fcdper)
@@ -643,7 +705,7 @@ function do_cut!(
 		)
 	end
 
-	n = do_cut!(is_vertical,
+	n, killed_first_born = do_cut!(is_vertical,
 		n, m, fcl, fcw, scl, scw, next_idx, dls, dws,
 		sllw, sfhv, next, plis, nnn, faithful2furini2016,
 		hybridize_with_restricted, no_redundant_cut,
@@ -654,7 +716,7 @@ function do_cut!(
 	# the extracted piece in vdce (otherwise zero is our sentinel).
 	hybridize_with_restricted && push!(dce, dcpii)
 
-	return n
+	return n, hybridization_success, killed_first_born
 end
 
 function do_cut!(
@@ -676,7 +738,7 @@ function do_cut!(
 	faithful2furini2016 :: Bool,
 	hybridize_with_restricted :: Bool,
 	no_redundant_cut :: Bool,
-) :: P where {D, S, P, M}
+) :: Tuple{P, Bool} where {D, S, P, M}
 	# Put some info readily available.
 	pll, plw, pli = next[next_idx] # PLate Length, Width, and Index
 	if !no_redundant_cut
@@ -754,11 +816,11 @@ function do_cut!(
 		trim_cut ? 0 : plis[@mp m scl scw]
 	))
 
-	return n
+	return n, killed_first_born
 end
 
 """
-    gen_cuts(::Type{P}, d, sllw, L, W; [kword_args])
+    gen_cuts(::Type{P}, d, sllw, L, W; [kwargs])
 
 !!! **Internal use.**
 
@@ -902,12 +964,12 @@ function gen_cuts(
 	# the set does not fit because of the width, while the piece that had
 	# the length matched yet fits at that width).
 	if hybridize_with_restricted
-		pol = discretize(d, l, w, L, W; only_single_pieces = true)
-		pow = discretize(d, w, l, W, L; only_single_pieces = true)
+		pols, pows = piece_only_positions(L, W, sllw, d; ignore_d)
 	else
 		# If `hybridize_with_restricted` these will never be used, but
-		# it is practical if they exist and are the right type.
-		pol = pow = Vector{S}()
+		# it is practical if they exist and are the right type to be passed
+		# as arguments (and type-stable).
+		pols = pows = Vector{S}[]
 	end
 
 	# There are two discretizations for each dimension: dl1/dw1 and dl2/dw2.
@@ -1013,14 +1075,16 @@ function gen_cuts(
 			@assert faithful2furini2016 || plw - x >= min_piw
 
 			fcl, fcw, scl, scw = pll, x, pll, plw - x
-			n = do_cut!(true, # If the cut is vertical (i.e., on a width position)
-				n, m, fcl, fcw, scl, scw, next_idx, dls, dws, pol, pow,
+			n, hybridization_success, killed_first_born = do_cut!(true,
+				n, m, fcl, fcw, scl, scw, next_idx, dls, dws, pols, pows,
 				L, W, d, l, w, sllw, sfhv, next, plis,
 				vnnn, # Either vnnn or hnnn, i.e., the correct orientation of the two
 				vdce, # Either vdce or hdce, i.e., the correct orientation of the two
 				round2disc, ignore_2th_dim, ignore_d,
 				faithful2furini2016, hybridize_with_restricted, no_redundant_cut
 			)
+			hybridizations += hybridization_success
+			first_borns_killed_by_hybridization += killed_first_born
 		end
 
 		for y in dl1
@@ -1036,14 +1100,17 @@ function gen_cuts(
 			@assert faithful2furini2016 || pll - y >= min_pil
 
 			fcl, fcw, scl, scw = y, plw, pll -y, plw
-			n = do_cut!(false, # If the cut is vertical (i.e., on a width position)
-				n, m, fcl, fcw, scl, scw, next_idx, dls, dws, pol, pow,
+			n, hybridization_success, killed_first_born = do_cut!(false,
+				n, m, fcl, fcw, scl, scw, next_idx, dls, dws, pols, pows,
 				L, W, d, l, w, sllw, sfhv, next, plis,
 				hnnn, # Either vnnn or hnnn, i.e., the correct orientation of the two
 				hdce, # Either vdce or hdce, i.e., the correct orientation of the two
 				round2disc, ignore_2th_dim, ignore_d,
 				faithful2furini2016, hybridize_with_restricted, no_redundant_cut
 			)
+
+			hybridizations += hybridization_success
+			first_borns_killed_by_hybridization += killed_first_born
 		end
 
 		# Goes to the next unprocessed plate.
