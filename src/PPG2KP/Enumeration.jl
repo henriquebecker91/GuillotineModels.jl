@@ -642,25 +642,32 @@ function do_cut!(
 	ignore_d :: Bool, # Passed to guarantee_discretization!
 	faithful2furini2016 :: Bool,
 	hybridize_with_restricted :: Bool,
+	aggressive_hybridization :: Bool,
 	no_redundant_cut :: Bool,
-) :: Tuple{P, Bool, Bool} where {D, S, P, M}
-	# `fcl` is the first child length. It is used instead of `pll` because
-	# if `hybridize_with_restricted` is enabled, then `fcl` may be
-	# different from `pll`.
-	# `fcw` is similar, but can only be different when both
-	# hybridize_with_restricted and round2disc are enabled,
-	# and the width of the first child may be changed.
+) :: Tuple{P, P, P, P} where {D, S, P, M}
+	aggressive_hybridization_extra_vars = zero(P)
+	# fcl: first child length
+	# fcw: first child width
 	fcl, fcw = guarantee_discretization!(
 		dls, dws, fcl, fcw, L, W, d, l, w,
 		round2disc, ignore_2th_dim, ignore_d
 	)
+	# scl: second child length
+	# scw: second child width
 	scl, scw = guarantee_discretization!(
 		dls, dws, scl, scw, L, W, d, l, w,
 		round2disc, ignore_2th_dim, ignore_d
 	)
 
-	# dcpii: Double-Cut PIece Index.
-	dcpii :: D = convert(D, 0)
+	# dcpiis: Double-Cut PIece IndexeS. Has a single zero if no hybridization
+	#   has happened, has one or more piece ids if hybridizations have happened.
+	# fcdpars: if multiple hybridizations happen, then multiple `fcdpar` exist,
+	#   so after the `if hybridize_with_restricted` block below, we loop over
+	#   `fcdpars`. If there was no hybridization, then the only `fcdpar` is
+	#   pushed into the vector; if there is one or more hybridizations, they
+	#   are pushed into the `fcdpar`.
+	dcpiis = D[]
+	fcdpars = S[]
 	# pop -- Piece-Only Position (always perpendicular to cut)
 	# fcdper -- First Child Dimension PERpendicular to cut
 	# fcdpar -- First Child Dimension PARallel to cut
@@ -669,9 +676,10 @@ function do_cut!(
 	# sddper -- Sorted Discretized Dimensions PERpendicular to cut
 	# sddpar -- Sorted Discretized Dimensions PARallel to cut
 	# sdd2pii -- Sorted Discretized Dimensions TO PIece Index (perpendicular)
+	# First rename the dimensions to be cut-oriented.
 	fcdper, fcdpar = is_vertical ? (fcw, fcl) : (fcl, fcw)
-	hybridization_success = false
 	if hybridize_with_restricted
+		# Now rename all the other relevant data structures to be cut-oriented.
 		pop, pii2dper, pii2dpar, sddper, sddpar, sdd2pii = if is_vertical
 			(ignore_2th_dim ? pows[L] : pows[fcl]), sllw.w, sllw.l,
 				sllw.sw, sllw.sl, sllw.swi2pii
@@ -679,44 +687,75 @@ function do_cut!(
 			(ignore_2th_dim ? pols[W] : pols[fcw]), sllw.l, sllw.w,
 				sllw.sl, sllw.sw, sllw.sli2pii
 		end
-		# TODO: we can transform pow and pol in reverse indexes, and already
-		# remove these repeated calls to binary search from here.
+		# If `fcdper` is in `pop`, then we have one or more hybridizations,
+		# otherwise we have no hybridization.
 		fcdper_pop_idx = searchsorted(pop, fcdper)
-		if !isempty(fcdper_pop_idx)
-			spii = searchsorted(sddper, fcdper)
-			if isone(length(spii))
-				pii = sdd2pii[only(spii)]
-				# TODO: when we change pow and pol to be a set of discretizations
-				# we will probably not need this `if` anymore.
-				if pii2dpar[pii] <= fcdpar
-					fcdpar = fcdpar - pii2dpar[pii]
-					dcpii = convert(D, pii)
-					hybridization_success = true
+		if isempty(fcdper_pop_idx) # no hybridization
+			push!(dcpiis, 0)
+			push!(fcdpars, fcdpar)
+		else # one or more hybridizations
+			spiis = searchsorted(sddper, fcdper)
+			# If there is a single hybridization possibility, then we always
+			# hybridize. However, if there are multiple possibilities, we only
+			# hybridize if aggressive_hybridization is enabled, to avoid
+			# increasing the model size too much.
+			if isone(length(spiis)) || aggressive_hybridization
+				for spii in spiis
+					pii = sdd2pii[spii]
+					if pii2dpar[pii] <= fcdpar
+						push!(dcpiis, convert(D, pii))
+						push!(fcdpars, fcdpar - pii2dpar[pii])
+					end
 				end
+				aggressive_hybridization_extra_vars += length(spiis) - 1
+			else # multiple hybridization candidates but !aggressive_hybridization
+				# Abstain from any hybridization to keep optimality and model size.
+				push!(dcpiis, 0)
+				push!(fcdpars, fcdpar)
 			end
+			@assert !isempty(dcpiis)
+			@assert !isempty(fcdpars)
 		end
+	else
+		# If !hybridize_with_restricted, we fill dcpiis and fcdpars with
+		# sentinel values, that are the correct if no hybridization has ocurred.
+		push!(dcpiis, 0)
+		push!(fcdpars, fcdpar)
 	end # if hybridize_with_restricted
 
-	fcl, fcw = is_vertical ? (fcdpar, fcdper) : (fcdper, fcdpar)
+	qt_first_born_kills :: P = zero(P)
+	for (dcpii, fcdpar) in zip(dcpiis, fcdpars)
+		fcl, fcw = is_vertical ? (fcdpar, fcdper) : (fcdper, fcdpar)
 
-	if hybridization_success && round2disc
-		fcl, fcw = guarantee_discretization!(
-			dls, dws, fcl, fcw, L, W, d, l, w, round2disc, ignore_2th_dim, ignore_d
+		# If `dcpii` is not zero, then this is an hybridization, and the plate
+		# may be further reduced by round2disc.
+		if !iszero(dcpii) && round2disc
+			fcl, fcw = guarantee_discretization!(
+				dls, dws, fcl, fcw, L, W, d, l, w,
+				round2disc, ignore_2th_dim, ignore_d
+			)
+		end
+
+		n, killed_first_born = do_cut!(is_vertical,
+			n, m, fcl, fcw, scl, scw, next_idx, dls, dws,
+			sllw, sfhv, next, plis, nnn, faithful2furini2016,
+			hybridize_with_restricted, no_redundant_cut,
 		)
+		qt_first_born_kills += killed_first_born
+
+		# Finally, if hybridize_with_restricted is enabled, and the current cut
+		# was transformed by this optimization in a double cut, we need to save
+		# the extracted piece in vdce (otherwise zero is our sentinel).
+		hybridize_with_restricted && push!(dce, dcpii)
 	end
 
-	n, killed_first_born = do_cut!(is_vertical,
-		n, m, fcl, fcw, scl, scw, next_idx, dls, dws,
-		sllw, sfhv, next, plis, nnn, faithful2furini2016,
-		hybridize_with_restricted, no_redundant_cut,
-	)
+	qt_hybridizations :: P = zero(P)
+	if !iszero(first(dcpiis))
+		qt_hybridizations = convert(P, length(dcpiis))
+	end
 
-	# Finally, if hybridize_with_restricted is enabled, and the current cut
-	# was transformed by this optimization in a double cut, we need to save
-	# the extracted piece in vdce (otherwise zero is our sentinel).
-	hybridize_with_restricted && push!(dce, dcpii)
-
-	return n, hybridization_success, killed_first_born
+	return (n, qt_hybridizations, qt_first_born_kills,
+		aggressive_hybridization_extra_vars)
 end
 
 function do_cut!(
@@ -864,6 +903,7 @@ function gen_cuts(
 	m :: Val{M} = Val(false);
 	ignore_2th_dim = false, ignore_d = false, round2disc = true,
 	hybridize_with_restricted = false,
+	aggressive_hybridization = false,
 	faithful2furini2016 = false,
 	no_redundant_cut = false, no_cut_position = false,
 	no_furini_symmbreak = false, quiet = false, verbose = false
@@ -985,6 +1025,7 @@ function gen_cuts(
 	)
 	hybridizations = 0
 	first_borns_killed_by_hybridization = 0
+	aggressive_hybridization_extra_vars = 0
 	while next_idx <= length(next)
 		#@show next_idx
 		#@show length(next)
@@ -1075,16 +1116,18 @@ function gen_cuts(
 			@assert faithful2furini2016 || plw - x >= min_piw
 
 			fcl, fcw, scl, scw = pll, x, pll, plw - x
-			n, hybridization_success, killed_first_born = do_cut!(true,
+			n, qt_hybridizations, qt_first_born_kills, agg_hyb_extra = do_cut!(true,
 				n, m, fcl, fcw, scl, scw, next_idx, dls, dws, pols, pows,
 				L, W, d, l, w, sllw, sfhv, next, plis,
 				vnnn, # Either vnnn or hnnn, i.e., the correct orientation of the two
 				vdce, # Either vdce or hdce, i.e., the correct orientation of the two
 				round2disc, ignore_2th_dim, ignore_d,
-				faithful2furini2016, hybridize_with_restricted, no_redundant_cut
+				faithful2furini2016, hybridize_with_restricted,
+				aggressive_hybridization, no_redundant_cut
 			)
-			hybridizations += hybridization_success
-			first_borns_killed_by_hybridization += killed_first_born
+			hybridizations += qt_hybridizations
+			first_borns_killed_by_hybridization += qt_first_born_kills
+			aggressive_hybridization_extra_vars += agg_hyb_extra
 		end
 
 		for y in dl1
@@ -1100,17 +1143,19 @@ function gen_cuts(
 			@assert faithful2furini2016 || pll - y >= min_pil
 
 			fcl, fcw, scl, scw = y, plw, pll -y, plw
-			n, hybridization_success, killed_first_born = do_cut!(false,
+			n, qt_hybridizations, qt_first_born_kills, agg_hyb_extra = do_cut!(false,
 				n, m, fcl, fcw, scl, scw, next_idx, dls, dws, pols, pows,
 				L, W, d, l, w, sllw, sfhv, next, plis,
 				hnnn, # Either vnnn or hnnn, i.e., the correct orientation of the two
 				hdce, # Either vdce or hdce, i.e., the correct orientation of the two
 				round2disc, ignore_2th_dim, ignore_d,
-				faithful2furini2016, hybridize_with_restricted, no_redundant_cut
+				faithful2furini2016, hybridize_with_restricted,
+				aggressive_hybridization, no_redundant_cut
 			)
 
-			hybridizations += hybridization_success
-			first_borns_killed_by_hybridization += killed_first_born
+			hybridizations += qt_hybridizations
+			first_borns_killed_by_hybridization += qt_first_born_kills
+			aggressive_hybridization_extra_vars += agg_hyb_extra
 		end
 
 		# Goes to the next unprocessed plate.
@@ -1176,6 +1221,7 @@ function gen_cuts(
 	if verbose
 		@show hybridizations
 		@show first_borns_killed_by_hybridization
+		@show aggressive_hybridization_extra_vars
 	end
 
 	first_vertical_cut_idx = length(hnnn) + 1

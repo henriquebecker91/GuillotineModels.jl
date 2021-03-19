@@ -113,6 +113,9 @@ function Utilities.Args.accepted_arg_list(::Val{:PPG2KP})
 		Arg("mirror-plates", false,
 			"Will error if the allow-rotation flag is not passed. If allow-rotation is enabled and mirror-plates is disabled, then the cut/plate enumeration is completely unaware of the fact (pieces are duplicated before enumeration and other changes are done at the formulation level). If both flags are enabled, then the enumeration is slightly changed: every plate can only have length smaller than or equal to the width (i.e., plates with length greater than width are rotated automatocally). This may cut by half the number of plates/constraints and, consequently, also reduce the number of cuts/variables (in other words, the whole size of the model). The Redundant-Cut improvement is disabled if this flag has any effect (because we lose the capability to distinguish between vertical and horizontal cuts)."
 		),
+		Arg("aggressive-hybridization", false,
+			"Only can be used if hybridization-with-restricted is enabled. The default behavior of hybridization is to not increase the model size significantly (a small increase equivalent to the number of pieces may occur). To guarantee this, however, we need to abstain from hybridizations in a specific circumnstance. The circumnstance is: two or more pieces share the same length (or width), and the associated discretization point cannot be reached by a sum of smaller pieces lengths (or widths). Without increasing the number of variables (i.e., creating a different hybridized cut for each piece), we cannot hybridize for any of the pieces, because hybridizing for a single arbitrary piece would make the formulation lose the guarantee of optimality. Consequently, the default behaviour (i.e., without this flag) loses some opportunities for hybridization to keep optimality and to avoid considerable model size increase. This flag allows the formulation to seize these opportunities by creating multiple hybridized cuts, it also keeps the optimality but it can increase the model size considerably."
+		)
 	]
 end
 
@@ -121,6 +124,12 @@ function Utilities.Args.throw_if_incompatible_options(::Val{:PPG2KP}, p_args)
 		ArgumentError, "Flag mirror-plates cannot be used if allow-rotation" *
 			" is disabled."
 	)
+	if p_args["aggressive-hybridization"] && !p_args["hybridize-with-restricted"]
+		throw(
+			ArgumentError, "Flag aggressive-hybridization cannot be used if" *
+				"hybridize-with-restricted is disabled."
+		)
+	end
 	alpha = p_args["pricing-alpha"]
 	beta = p_args["pricing-beta"]
 	alpha > 0.0 || alpha <= 1.0 || throw(ArgumentError(

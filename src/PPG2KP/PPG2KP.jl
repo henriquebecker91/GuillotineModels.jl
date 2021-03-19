@@ -255,6 +255,7 @@ end
 		ignore_d = options["ignore-d"],
 		round2disc = options["round2disc"],
 		hybridize_with_restricted = options["hybridize-with-restricted"],
+		aggressive_hybridization = options["aggressive-hybridization"],
 		no_cut_position = options["no-cut-position"],
 		no_redundant_cut = options["no-redundant-cut"],
 		no_furini_symmbreak = options["no-furini-symmbreak"],
