@@ -61,7 +61,7 @@ export throw_if_unrecognized
     bits2idxs(bits, idx_type = Int) :: Vector{idx_type}
 
 Given a `BitArray` or a `Vector{Bool}` return a vector of the indexes storing
-true values.
+true values. The returned vector has its elements in increasing order.
 """
 function bits2idxs(bits) :: Vector{Int}
 	return bits2idxs(bits, Int) :: Vector{Int}
@@ -121,6 +121,8 @@ export shift_idxs!
 Given some valid JuMP.Model `vars`, return a list of all indexes in `vars`
 in which the variable value rounded to nearest integer is non-zero, and
 a list of the rounded values themselves.
+
+The elements of the first list (variable indexes) are in increasing order.
 
 The `::Type{D}` is the integer type for the rounded values. The `threshold`
 parameter is used to give a warning if the difference between the extracted

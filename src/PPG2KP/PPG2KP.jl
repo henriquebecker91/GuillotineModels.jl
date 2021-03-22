@@ -346,6 +346,8 @@ end
 	)
 
 	if options["hybridize-with-restricted"]
+		# Constraint that guarantee dc_sells only sell pieces actually extracted
+		# by double cuts.
 		@constraint(model,
 			dc_link_con[i = 1:length(d)], dc_sells[i] <= sum(cuts_made[pii2dci[i]])
 		)

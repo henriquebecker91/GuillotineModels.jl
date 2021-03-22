@@ -306,11 +306,6 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 			# relevance.
 			if pp["relax2lp"]
 				nothing
-			# TODO: REMOVE THIS AFTER, THIS IS GENERIC CODE THAT SHOULD NOT
-			# TEST MODEL SPECIFIC FLAGS
-			elseif pp["PPG2KP-hybridize-with-restricted"]
-				@warn("Flag hybridize-with-restricted does not support showing the pattern yet.")
-				nothing
 			else
 				get_cut_pattern(problem, formulation, m, mbp)
 			end

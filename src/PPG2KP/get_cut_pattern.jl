@@ -75,9 +75,10 @@ function _build_cut_idx_stack(
 	next_cut = one(P)
 	while next_cut <= length(cut_idx_stack)
 		_, fc, sc = nz_cuts[cut_idx_stack[next_cut]]
-		@assert !iszero(fc)
-		fc_idx = _consume_cut!(cuts_available, nz_cuts, fc)
-		fc_idx !== nothing && push!(cut_idx_stack, fc_idx)
+		if !iszero(fc)
+			fc_idx = _consume_cut!(cuts_available, nz_cuts, fc)
+			fc_idx !== nothing && push!(cut_idx_stack, fc_idx)
+		end
 		if !iszero(sc)
 			sc_idx = _consume_cut!(cuts_available, nz_cuts, sc)
 			sc_idx !== nothing && push!(cut_idx_stack, sc_idx)
@@ -122,36 +123,99 @@ function _add_used_extractions!(
 end
 
 # INTERNAL USE.
-# NOTE: only patterns is modified.
+# NOTE: only patterns and nzcs_vals are modified.
 # Starting from the cuts closest to the piece extractions (i.e.,
 # non-leaf nodes closest to a leaf node) start building the CutPattern
 # (tree) bottom-up.
+# The hybridizations are dealt with here.
 function _bottom_up_tree_build!(
 	patterns :: Dict{Int64, Vector{CutPattern{D, S}}},
 	nz_cut_idx_stack,
 	nz_cuts :: Vector{NTuple{3, P}},
 	nz_cuts_ori :: BitArray{1},
+	nz_cuts_pe :: Vector{D}, # The piece extractions from non-zero cuts
+	nzcs_idxs :: Vector{P},
+	nzcs_vals :: Vector{D},
 	bmr :: ByproductPPG2KP{D, S, P},
 	debug :: Bool = false
 ) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
 	for cut_idx in reverse(nz_cut_idx_stack)
 		debug && @show cut_idx
 		pp, fc, sc = nz_cuts[cut_idx]
-		debug && @show pp, fc, sc
+		ce :: D = nz_cuts_pe[cut_idx]
+		debug && @show pp, fc, sc, ce
+		ppl, ppw = bmr.pli_lwb[pp][1], bmr.pli_lwb[pp][2]
+		debug && @show ppl, ppw
+		cut_ori = nz_cuts_ori[cut_idx]
+
 		child_patts = Vector{CutPattern{D, S}}()
-		if !iszero(fc) && haskey(patterns, fc) && !isempty(patterns[fc])
-			push!(child_patts, pop!(patterns[fc]))
-			isempty(patterns[fc]) && delete!(patterns, fc)
+		# If `!iszero(ce)` then this cut is a double cut that extract piece
+		# `ce` (only possible if flag `hybridize-with-restricted` is enabled).
+		# However, if `isempty(nzcs_idx)` then no double cut ever
+		# sold this piece type, the double cut was done just for trimming;
+		# alternatively, if `iszero(nzcs_vals[only(nzcs_idx)])` then some
+		# double cuts have sold pieces of type `ce` but these were already
+		# processed, the remaining double cuts are to be considered as
+		# trimming cuts. Finally, if the double cut really extracts a piece,
+		# then we subtract it from `nzcs_vals`.
+		#
+		# We deal with double cuts in the following way: a dummy plate is
+		# created to represent what would be the first child in a normal cut
+		# but, in a double cut, it holds both the extracted piece (ce) and
+		# the first child. If the cut is not a double cut, then we just add
+		# the first child as the first child, instead of a dummy as the
+		# first child.
+		nzcs_idx = searchsorted(nzcs_idxs, ce)
+		if isempty(nzcs_idx) || iszero(nzcs_vals[only(nzcs_idx)])
+			ce = zero(D)
+		else
+			nzcs_vals[only(nzcs_idx)] -= one(D)
+		end
+		if !iszero(ce)
+			# Get a safe size for the dummy: if there is not a first child
+			# (it was killed by hubridization) then a safe size is just the
+			# piece size; otherwise, we get the minimum necessary to pack
+			# both the first child and the extracted piece.
+			dummy_l, dummy_w = if iszero(fc)
+				bmr.l[ce], bmr.w[ce]
+			else
+				if !cut_ori # if the cut inside the dummy is vertical
+					max(bmr.l[ce], bmr.pli_lwb[fc][1]), bmr.w[ce] + bmr.pli_lwb[fc][2]
+				else
+					bmr.l[ce] + bmr.pli_lwb[fc][1], max(bmr.w[ce], bmr.pli_lwb[fc][2])
+				end
+			end
+			dummy = CutPattern(
+				# The cut orientation inside the dummy is the opposite as the
+				# external cut (the first of the double cut): `!cut_ori` is the
+				# orientation of the second (inner) cut (i.e., the cut in the dummy).
+				dummy_l, dummy_w, !cut_ori,
+				CutPattern{D, S}[CutPattern(bmr.l[ce], bmr.w[ce], ce)]
+			)
+			# Now just add the first child inside the dummy if it exists,
+			# as we would do outside the dummy if there was no hybridization.
+			if !iszero(fc) && haskey(patterns, fc) && !isempty(patterns[fc])
+				push!(dummy.subpatterns, pop!(patterns[fc]))
+				isempty(patterns[fc]) && delete!(patterns, fc)
+			end
+			# Finally, push the dummy as the first child of the cut/plate this
+			# loop actually is about.
+			push!(child_patts, dummy)
+		else # If there is not double cut extraction just add the first child.
+			# The fc can be zero yet because the current cut may be a double cut
+			# that kills the first child and throws away the extracted piece.
+			if !iszero(fc) && haskey(patterns, fc) && !isempty(patterns[fc])
+				push!(child_patts, pop!(patterns[fc]))
+				isempty(patterns[fc]) && delete!(patterns, fc)
+			end
 		end
 		if !iszero(sc) && haskey(patterns, sc) && !isempty(patterns[sc])
 			push!(child_patts, pop!(patterns[sc]))
 			isempty(patterns[sc]) && delete!(patterns, sc)
 		end
-		ppl, ppw = bmr.pli_lwb[pp][1], bmr.pli_lwb[pp][2]
-		debug && @show ppl, ppw
 		!haskey(patterns, pp) && (patterns[pp] = Vector{CutPattern{D, S}}())
 		push!(patterns[pp], CutPattern(
-			ppl, ppw, nz_cuts_ori[cut_idx], child_patts
+			ppl, ppw, cut_ori, child_patts
 		))
 	end
 
@@ -161,7 +225,7 @@ end
 # Internal function that does the heavy lifting with the data already
 # extracted from the model.
 function _get_cut_pattern(
-	nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals,
+	nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, nzcs_idxs, nzcs_vals,
 	bmr :: ByproductPPG2KP{D, S}, debug :: Bool
 ) :: Vector{CutPattern{D, S}} where {D, S}
 	# 1. If there are extractions of small objects from large objects,
@@ -190,8 +254,10 @@ function _get_cut_pattern(
 	# If the call to _single_so_from_lo_extractions has exhausted the
 	# list of extractions, then there is nothing else to do (i.e.,
 	# lo2so_patterns has the solution already).
-	if isempty(nzpe_idxs)
-		@assert isempty(nzpe_vals)
+	# NOTE: if there are cut sells (from hybridize-with-restricted)
+	# we cannot bail early, as the cuts themselves may extract/sell pieces.
+	if isempty(nzpe_idxs) && isempty(nzcs_idxs)
+		@assert isempty(nzpe_vals) && isempty(nzcs_vals)
 		return lo2so_patterns
 	end
 
@@ -220,7 +286,31 @@ function _get_cut_pattern(
 	# `patterns`.
 	_add_used_extractions!(patterns, nzpe_idxs, nzpe_vals, bmr, debug)
 
-	_bottom_up_tree_build!(patterns, cut_idx_stack, sel_cuts, ori_cuts, bmr, debug)
+	# Here we build the tree. All cuts are added, even if they do not
+	# lead to extractions. If hybridize-with-restricted is enabled the
+	# cuts themselves may extract pieces, so all of them will need to
+	# be considered anyway. Before the call to _bottom_up_tree_build,
+	# _nzcs_vals are all non-zero (as the 'nz' in the name says), after
+	# the call the values must all be zero because the pieces sold from
+	# double cuts extractions were all assigned to somewhere in the tree.
+	# NOTE: sel_cuts is the subset of cuts given by nzcm_idxs, and the
+	# cut_idx_stack was built using it so their indexes are not from the
+	# universe set (as the values of nzcm_idxs) but from the subset
+	# (the keys of sel_cuts and nzcm_idxs); sel_cuts_pe provides a way
+	# to querying the piece extractions using these subset keys
+	# (as bmr.cut_extraction understands thee universal keys).
+	_nzcs_vals = copy(nzcs_vals)
+	if isempty(nzcs_idxs)
+		sel_cuts_pe = zeros(D, length(nzcm_idxs))
+	else
+		sel_cuts_pe = bmr.cut_extraction[nzcm_idxs]
+	end
+	@assert all(!iszero, _nzcs_vals)
+	_bottom_up_tree_build!(
+		patterns, cut_idx_stack, sel_cuts, ori_cuts, sel_cuts_pe,
+		nzcs_idxs, _nzcs_vals, bmr, debug
+	)
+	@assert all(iszero, _nzcs_vals)
 
 	if !isone(length(patterns)) || !haskey(patterns, 1)# || !isone(length(patterns[1]))
 		println("BUG AT GET_CUT_PATTERN")
@@ -300,12 +390,31 @@ import ..get_cut_pattern
 	# non-zero {piece extractions, cuts made} {indexes,values}
 	nzpe_idxs, nzpe_vals = gather_nonzero(pe, D)
 	nzcm_idxs, nzcm_vals = gather_nonzero(cm, D)
+
+	# TODO: the fact dc_sells only exist in hybridized models should probably
+	# be regarded as a implementation detail, and we should use a boolean
+	# in the bmr.preprocess_byproduct instead. But, for now, this will
+	# suffice.
+	hybridize_with_restricted = haskey(JuMP.object_dictionary(model), :dc_sells)
+	nzcs_idxs, nzcs_vals = if hybridize_with_restricted
+		cs = model[:dc_sells] # Cut Sells
+		gather_nonzero(cs, D)
+	else
+		D[], D[]
+	end
+
 	if debug
 		println("Start of: formulation info before _get_cut_pattern.")
 		@show nzpe_idxs
 		@show nzpe_vals
 		@show nzcm_idxs
 		@show nzcm_vals
+		if hybridize_with_restricted
+			@show bmr.preprocess_byproduct.cut_extraction[nzcm_idxs]
+			@show value.(cs[nzcs_idxs])
+		end
+		@show nzcs_idxs
+		@show nzcs_vals
 		@show value.(pe[nzpe_idxs])
 		@show value.(cm[nzcm_idxs])
 		println("End of: formulation info before _get_cut_pattern.")
@@ -313,7 +422,8 @@ import ..get_cut_pattern
 
 	# NOTE: this can alter the arrays above.
 	patterns = _get_cut_pattern(
-		nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, bmr.preprocess_byproduct, debug
+		nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, nzcs_idxs, nzcs_vals,
+		bmr.preprocess_byproduct, debug
 	) :: Vector{CutPattern{D, S}}
 
 	if debug
@@ -322,6 +432,12 @@ import ..get_cut_pattern
 		@show nzpe_vals
 		@show nzcm_idxs
 		@show nzcm_vals
+		if hybridize_with_restricted
+			@show bmr.preprocess_byproduct.cut_extraction[nzcm_idxs]
+			@show value.(cs[nzcs_idxs])
+		end
+		@show nzcs_idxs
+		@show nzcs_vals
 		@show value.(pe[nzpe_idxs])
 		@show value.(cm[nzcm_idxs])
 		println("End of: formulation info after _get_cut_pattern.")
@@ -330,7 +446,9 @@ import ..get_cut_pattern
 	# All the CutPattern extraction procedure is rotation-unaware. If rotation
 	# is allowed, the piece indexes in the leaf nodes of CutPattern need to be
 	# changed to the original piece indexes.
-	bmr.rad !== nothing && _cp_rai2opi!(patterns, bmr.rad :: RotationAwareData{D, S})
+	bmr.rad !== nothing && _cp_rai2opi!(
+		patterns, bmr.rad :: RotationAwareData{D, S}
+	)
 
 	# Call the method that deals only with the data, and not with the JuMP.Model.
 	is_single_pattern = isa(problem, Val{:G2KP}) || isa(problem, Val{:G2OPP})

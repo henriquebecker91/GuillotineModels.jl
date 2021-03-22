@@ -745,7 +745,7 @@ function do_cut!(
 
 		# Finally, if hybridize_with_restricted is enabled, and the current cut
 		# was transformed by this optimization in a double cut, we need to save
-		# the extracted piece in vdce (otherwise zero is our sentinel).
+		# the extracted piece in dce (otherwise zero is our sentinel).
 		hybridize_with_restricted && push!(dce, dcpii)
 	end
 
