@@ -296,9 +296,9 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 	solution = if bsr == BUILT_MODEL
 		if primal_status(m) == MOI.FEASIBLE_POINT
 			obj_value = objective_value(m)
-			@show obj_value
+			verbose && @show obj_value
 			obj_bound = objective_bound(m)
-			@show obj_bound
+			verbose && @show obj_bound
 			# If the model was solved relaxed we try not to obtain a solution from
 			# it (because it would not be a valid CutPattern). Also, we do not
 			# print any info because we are formulation agnostic, and without
