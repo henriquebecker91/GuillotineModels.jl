@@ -366,6 +366,19 @@ function _cp_rai2opi!(
 	return nothing
 end
 
+function _single_pattern(
+	patterns :: AbstractVector{CutPattern{D, S}}
+) :: Union{CutPattern{D, S}, Nothing} where {D, S}
+	qt_patterns = length(patterns)
+	if qt_patterns > 1
+		error(
+			"The problem only admits a single pattern but multiple were found." *
+			" The patterns follow:\n" * join(to_pretty_str.(patterns), "\n") * "\n"
+		)
+	end
+	return iszero(qt_patterns) ? nothing : only(patterns)
+end
+
 import ..get_cut_pattern
 #=
 @timeit TIMER function get_cut_pattern(
@@ -420,6 +433,7 @@ import ..get_cut_pattern
 		println("End of: formulation info before _get_cut_pattern.")
 	end
 
+	# Call the method that deals only with the data, and not with the JuMP.Model.
 	# NOTE: this can alter the arrays above.
 	patterns = _get_cut_pattern(
 		nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, nzcs_idxs, nzcs_vals,
@@ -450,8 +464,9 @@ import ..get_cut_pattern
 		patterns, bmr.rad :: RotationAwareData{D, S}
 	)
 
-	# Call the method that deals only with the data, and not with the JuMP.Model.
 	is_single_pattern = isa(problem, Val{:G2KP}) || isa(problem, Val{:G2OPP})
-	is_single_pattern && return only(patterns)
-	return patterns
+	if is_single_pattern
+		return _single_pattern(patterns) :: Union{CutPattern{D, S}, Nothing}
+	end
+	return patterns :: Vector{CutPattern{D, S}}
 end

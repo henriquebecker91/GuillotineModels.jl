@@ -218,7 +218,7 @@ function Utilities.Args.accepted_arg_list(::Val{:CPLEX}) :: Vector{Arg}
 		),
 		Arg(
 			"time-limit", 31536000.0,
-			"The value of CPX_PARAM_TILIM. Depends on CPX_PARAM_CLOCKTYPE which is by default wall clock time (not CPU time). Time limit in seconds for solver B&B (not root solving). Our default is one year."
+			"BROKEN, DO NOT USE, ALWAYS OVERWRITTEN BY `--generic-time-limit`. The value of CPX_PARAM_TILIM. Depends on CPX_PARAM_CLOCKTYPE which is by default wall clock time (not CPU time). Time limit in seconds for solver B&B (not root solving). Our default is one year."
 		),
 		Arg(
 			"seed", 1,
@@ -240,6 +240,7 @@ function Utilities.Args.accepted_arg_list(::Val{:CPLEX}) :: Vector{Arg}
 end
 
 function Utilities.Args.throw_if_incompatible_options(::Val{:CPLEX}, p_args)
+	warn_about_time_limit(Val(:CPLEX), p_args)
 	valid_lp_alg_names = sort!(collect(keys(CPLEX_NAME2CODE_LP_ALG)))
 	lpm = "LP-method"
 	rrm = "root-relax-method"
@@ -259,7 +260,7 @@ function Utilities.Args.accepted_arg_list(::Val{:Gurobi}) :: Vector{Arg}
 		),
 		Arg(
 			"time-limit", 31536000.0,
-			"Set Gurobi parameter: TimeLimit. Total time limit in seconds. Our default is one year."
+			"BROKEN, DO NOT USE, ALWAYS OVERWRITTEN BY `--generic-time-limit`. Set Gurobi parameter: TimeLimit. Total time limit in seconds. Our default is one year."
 		),
 		Arg(
 			"seed", 1,
@@ -277,6 +278,7 @@ function Utilities.Args.accepted_arg_list(::Val{:Gurobi}) :: Vector{Arg}
 end
 
 function Utilities.Args.throw_if_incompatible_options(::Val{:Gurobi}, p_args)
+	warn_about_time_limit(Val(:Gurobi), p_args)
 	# TODO: should we throw if the option does not exist?
 end
 
@@ -288,7 +290,7 @@ function Utilities.Args.accepted_arg_list(::Val{:Cbc}) :: Vector{Arg}
 		),
 		Arg(
 			"time-limit", 31536000.0,
-			"Set Cbc parameter: seconds. Total time limit in seconds (? not very well documented)."
+			"BROKEN, DO NOT USE, ALWAYS OVERWRITTEN BY `--generic-time-limit`. Set Cbc parameter: seconds. Total time limit in seconds (? not very well documented)."
 		),
 		Arg(
 			"seed", 1,
@@ -306,6 +308,7 @@ function Utilities.Args.accepted_arg_list(::Val{:Cbc}) :: Vector{Arg}
 end
 
 function Utilities.Args.throw_if_incompatible_options(::Val{:Cbc}, p_args)
+	warn_about_time_limit(Val(:Cbc), p_args)
 	# TODO: should we throw if the option does not exist?
 end
 
@@ -313,7 +316,7 @@ function Utilities.Args.accepted_arg_list(::Val{:GLPK}) :: Vector{Arg}
 	return [
 		Arg(
 			"time-limit", 2097152,
-			"Set GLPK parameter: tm_lim. The original parameter is in milliseconds, but to keep it similar to the other solvers this option takes seconds. To set this parameter with milliseconds precision use the --raw-parameter option. The default is a little over 24 days because GLPK uses a Int32 for milliseconds and 24 days is close to the maximum time-limit supported."
+			"BROKEN, DO NOT USE, ALWAYS OVERWRITTEN BY `--generic-time-limit`. Set GLPK parameter: tm_lim. The original parameter is in milliseconds, but to keep it similar to the other solvers this option takes seconds. To set this parameter with milliseconds precision use the --raw-parameter option. The default is a little over 24 days because GLPK uses a Int32 for milliseconds and 24 days is close to the maximum time-limit supported."
 		),
 		Arg(
 			"no-output", false,
@@ -327,7 +330,23 @@ function Utilities.Args.accepted_arg_list(::Val{:GLPK}) :: Vector{Arg}
 	]
 end
 
+function warn_about_time_limit(::Val{SOLVER_SYM}, p_args) where {SOLVER_SYM}
+	if haskey(p_args, "time-limit")
+		tl = p_args["time-limit"]
+		args = Utilities.Args.accepted_arg_list(Val(SOLVER_SYM))
+		tl_arg_idx = findfirst(arg -> arg.name == "time-limit", args)
+		if !isnothing(tl_arg_idx) && args[tl_arg_idx].default != tl
+			@warn "--$SOLVER_SYM-time-limit is BROKEN, it is always overwritten" *
+				" by --generic-time-limit even when this one is not passed (i.e., it" *
+				" is overwritten by its default value in such case)."
+		end
+	end
+
+	return
+end
+
 function Utilities.Args.throw_if_incompatible_options(::Val{:GLPK}, p_args)
+	warn_about_time_limit(Val(:GLPK), p_args)
 	# TODO: should we throw if the option does not exist?
 end
 
@@ -371,6 +390,7 @@ function Utilities.Args.accepted_arg_list(::Val{:NoSolver}) :: Vector{Arg}
 end
 
 function Utilities.Args.throw_if_incompatible_options(::Val{:NoSolver}, p_args)
+	warn_about_time_limit(Val(:NoSolver), p_args)
 	return nothing
 end
 

@@ -313,7 +313,7 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 			nothing
 		end
 	elseif bsr == FOUND_OPTIMUM
-			get_cut_pattern(problem, formulation, m, mbp)
+		get_cut_pattern(problem, formulation, m, mbp)
 	end
 	if solution !== nothing
 		@timeit TIMER "stringfy_solutions" begin
