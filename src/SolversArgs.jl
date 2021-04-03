@@ -65,7 +65,6 @@ const CPLEX_NAME2CODE_LP_ALG = Dict{String, Symbol}(
 	"7" => :CPX_ALG_CONCURRENT
 )
 function __init__()
-
 	#function cplex_empty_configured_model(p_args)
 	@require CPLEX="a076750e-1247-5638-91d2-ce28b192dca0" begin
 	@timeit TIMER function empty_configured_model(::Val{:CPLEX}, p_args)

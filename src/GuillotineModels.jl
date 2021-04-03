@@ -405,6 +405,7 @@ include("Data/Data.jl")
 #include("KnapsackPlates.jl") # not working, and no plans to fix it for now
 include("Flow/Flow.jl")
 include("PPG2KP/PPG2KP.jl")
+include("SaveModel.jl")
 include("CommandLine.jl")
 
 end # module
