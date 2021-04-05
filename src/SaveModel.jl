@@ -19,6 +19,19 @@ import Requires.@require
 import TimerOutputs.@timeit
 import ..TIMER
 
+# Based on: https://discourse.julialang.org/t/trying-to-save-mps-from-raw-solver-and-problems-with-moi-rawsolver/58515/2?u=henrique_becker
+_get_raw_solver(model :: JuMP.Model) = _get_raw_solver(JuMP.backend(model))
+function _get_raw_solver(model :: MOI.Utilities.CachingOptimizer)
+	if model.state == MOI.Utilities.EMPTY_OPTIMIZER
+		MOI.Utilities.attach_optimizer(model)
+	end
+	return _get_raw_solver(model.optimizer)
+end
+function _get_raw_solver(model :: MOI.Bridges.LazyBridgeOptimizer)
+	_get_raw_solver(model.model)
+end
+_get_raw_solver(model) = model # Unrecognized means we arrived were we wanted.
+
 """
 	write_to_file(model, filename; format = FORMAT_AUTOMATIC
 
@@ -30,15 +43,11 @@ the generic `JuMP`/`MathOptInterface` one.
 	filename :: String;
 	format :: MOI.FileFormats.FileFormat = MOI.FileFormats.FORMAT_AUTOMATIC
 )
-	if isa(JuMP.backend(model), MOI.Utilities.CachingOptimizer)
-		println("ENTERED HERE")
-		MOI.Utilities.attach_optimizer(JuMP.backend(model))
-	end
-	solver_obj = MOI.get(model, MOI.RawSolver())
-	if natively_supports(solver_obj, filename, format)
-		native_write_to_file(solver_obj, filename, format)
+	raw_solver = _get_raw_solver(model)
+	if natively_supports(raw_solver, filename; format = format)
+		native_write_to_file(raw_solver, filename; format = format)
 	else
-		JuMP.write_to_file(model, filename, format)
+		JuMP.write_to_file(model, filename; format = format)
 	end
 
 	return
@@ -46,14 +55,14 @@ end
 export write_to_file
 
 function natively_supports(
-	solver_obj, filename :: String;
+	raw_solver, filename :: String;
 	format :: MOI.FileFormats.FileFormat = MOI.FileFormats.FORMAT_AUTOMATIC
 ) :: Bool
 	return false
 end
 
 function native_write_to_file(
-	solver_object, filename :: String;
+	raw_solver, filename :: String;
 	format :: MOI.FileFormats.FileFormat = MOI.FileFormats.FORMAT_AUTOMATIC
 )
 	throw(ArgumentError(
@@ -78,7 +87,7 @@ const _KNOWN_FORMATS = Tuple{String, MOI_FF_FF}[
 
 function _format_from_ext(filename :: String)
 	for (ext, enum) in _KNOWN_FORMATS
-		endswith(filename, ext) || occursin("$(ext).", filename) && return enum
+		(endswith(filename, ext) || occursin("$ext.", filename)) && return enum
 	end
 	error("Unable to automatically detect format of $(filename).")
 end
@@ -92,7 +101,6 @@ function _real_format(filename :: String, format :: MOI_FF_FF) :: MOI_FF_FF
 end
 
 function __init__()
-	#function cplex_empty_configured_model(p_args)
 	@require CPLEX="a076750e-1247-5638-91d2-ce28b192dca0" begin
 		function natively_supports(
 			model :: CPLEX.Optimizer, filename :: String;
@@ -108,7 +116,7 @@ function __init__()
 		)
 			@assert format == MOI_FF.FORMAT_AUTOMATIC ||
 				format == _format_from_ext(filename)
-			return CPXwriteprob(model.env, model.lp, filename, C_NULL)
+			return CPLEX.CPXwriteprob(model.env, model.lp, filename, C_NULL)
 		end
 	end # @require CPLEX
 
@@ -128,7 +136,6 @@ function __init__()
 				format == _format_from_ext(filename)
 			# Calling GRBupdatemodel directly here is a recipe for a disaster,
 			# we need to use Gurobi.jl internals to avoid any subtle bugs.
-			Gurobi._require_update(model)
 			Gurobi._update_if_necessary(model)
 			return Gurobi.GRBwrite(model, filename)
 		end

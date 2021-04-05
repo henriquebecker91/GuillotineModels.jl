@@ -164,7 +164,7 @@ version = "6.1.2+6"
 deps = ["ArgParse", "AutoHashEquals", "Dates", "DocStringExtensions", "JuMP", "MathOptInterface", "Random", "RandomNumbers", "Requires", "Statistics", "TimerOutputs", "UnPack"]
 path = ".."
 uuid = "300ad42c-a273-11e9-37f6-175a19b744a4"
-version = "0.6.4"
+version = "0.6.3"
 
 [[Gurobi]]
 deps = ["CEnum", "Libdl", "MathOptInterface"]

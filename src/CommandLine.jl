@@ -30,6 +30,10 @@ using ..Flow, ..Flow.Args
 import ..solution_value, ..to_pretty_str, ..simplify!
 # Used inside read_build_solve_and_print in tandem with generic-time-limit.
 import ..throw_if_timeout_now, ..TimeoutError
+# Used for SaveModel.write_to_file that, differently from JuMP.write_to_file,
+# tries to use the raw solver to generate the MPS.
+import ..SaveModel
+const SM = SaveModel
 
 """
     create_unprefixed_subset(prefix, p_args :: T) :: T
@@ -250,7 +254,11 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 	if !isempty(pp["save-model"]) && verbose
 		if bsr == BUILT_MODEL
 			save_model_time = @elapsed begin
-				@timeit TIMER "save_model" JuMP.write_to_file(m, save_model_expanded)
+				if pp["use-native-save-model-if-possible"]
+					@timeit TIMER "save_model" SM.write_to_file(m, save_model_expanded)
+				else
+					@timeit TIMER "save_model" JuMP.write_to_file(m, save_model_expanded)
+				end
 			end
 			@show save_model_time
 		else
@@ -503,6 +511,10 @@ function generic_args() :: Vector{Arg}
 		Arg(
 			"save-model", "",
 			"Save the model of the passed instance to the given filename. The format used depends on the extension of the filename, allowed formats are described by the enumeration `MathOptInterface.FileFormats.FileFormat` from package `MathOptInterface`). The filename also allows using \$<parameter_name> patterns inside the name, these will be replaced by the value of the parameter (if it was not passed, the default value will be used). For convenience, a pseudo-parameter instance_file is also available (it is the same as `basename(instance_path)`, it includes any file extensions), and `Bool` parameters (i.e., flags with no argument) are replaced by 0 or 1. Putting an @ in front of \$<some_string> will disable the substitution (and remove the @ from the final string). There is no way to express an @ followed by a substitution that actually occurs (this is a limitation of the code)."
+		),
+		Arg(
+			"use-native-save-model-if-possible", false,
+			"Only used if a filename is passed to '--save-model'. If `--use-native-save-model-if-possible` is passed, then `GuillotineModels.SaveModel.write_to_file` is used instead of `JuMP.write_to_file`. Check the `SaveModel` module documentation for more info. For at least Gurobi and CPLEX, `GuillotineModels.SaveModel.write_to_file` will use the raw solver model-saving utilities instead of the `JuMP` one, but if the solver is not recognized then it will default to the JuMP one."
 		),
 		Arg(
 			"warm-jit", "no",
