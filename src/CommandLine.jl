@@ -94,6 +94,14 @@ function round_instance(
 	return SLOPP{D, S, P}(L_, W_, l_, w_, dlb, dub, p)
 end
 
+function round_instance(
+	instance :: SSSCSP{D, S, P}, factor, roundmode
+) where {D, S, P}
+	@unpack L, W, l, w, d = instance
+	L_, W_, l_, w_ = _round_instance(L, W, l, w, factor, roundmode)
+	return SSSCSP{D, S, P}(L_, W_, l_, w_, d)
+end
+
 function _round_instance(
 	L :: S, W :: S, l :: Vector{S}, w :: Vector{S}, factor, roundmode
 ) where {S}

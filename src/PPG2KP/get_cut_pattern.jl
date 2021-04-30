@@ -347,8 +347,14 @@ function _inner_cp_rai2opi!(
 			iszero(remaining_original_demand[opis[1]]) ? opis[2] : opis[1]
 		end
 
-		@assert !iszero(remaining_original_demand[opi])
-		remaining_original_demand[opi] -= 1
+		if iszero(remaining_original_demand[opi])
+			@warn "The solution has more copies of the piece type number $opi" *
+				" than exists demand for it. This is possible in G2OPP/G2CSP" *
+				" because we treat demand as a lower bound for the solution to be" *
+				" valid but we do not enforce equality."
+		else
+			remaining_original_demand[opi] -= 1
+		end
 		patterns[i] = CutPattern(e.length, e.width, opi)
 	end
 

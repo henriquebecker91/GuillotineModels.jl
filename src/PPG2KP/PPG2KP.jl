@@ -833,6 +833,35 @@ not ideal.
 end
 
 """
+    build_model(::Val{:G2KP}, ::Val{:PPG2KP}, instance::SSSCSP, model[, options])
+
+Build a PPG2KP-style model for a G2OPP `instance` inside `model`.
+
+Changes `model` by adding variables and constraints. `options` takes
+arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
+
+THIS IS A HACK THAT SHOULD BE DELETED AFTER. It gets a SSSCSP instance, and
+does not interpret it as a G2CSP/G2BPP instance, but instead as a G2OPP
+instance and then it transforms it in a G2KP problem with unitaty profits,
+so the G2OPP (a decision problem) is true if obj matches the sum(d), and
+is false if obj is smaller than sum(d) (a value larger than sum(d) is
+impossible).
+"""
+@timeit TIMER function build_model(
+	::Val{:G2KP}, ::Val{:PPG2KP}, instance :: SSSCSP{D, S, P}, m,
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
+	@unpack L, W, l, w, d = instance
+	if !options["quiet"]
+		@warn "Attention: converting a SSSCSP (understood as a G2OPP) instance to a G2KP instance to" *
+			" solve it for the G2KP (problem). Unitary profits added."
+	end
+	return build_model(
+		Val(:G2KP), Val(:PPG2KP), G2KP{D, S, P}(L, W, l, w, d, ones(P, length(d))), m, options
+	)
+end
+
+"""
     build_model(::Val{:G2MKP}, ::Val{:PPG2KP}, instance::MHLOPPW, model[, options])
 
 Build a PPG2KP-style model for a G2MKP `instance` inside `model`.
