@@ -97,7 +97,7 @@ end
     write_to_file(format, instance, filepath :: AbstractString[, mode])
     write_to_file(format, instance, io)
 
-Applies `write_to_string` to `instance` and write it to `filepath`/`io`.
+Wite the `instance` in `filepath`/`io` using `format`.
 
 NOTE: this function is not yet implemented for most format and instance
 types.

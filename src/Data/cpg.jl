@@ -27,7 +27,7 @@ end
 	"Widths of the large objects."
 	W :: Vector{S}
 	"Amount of copies available for each large object (cannot use more)."
-	available :: Vector{S}
+	available :: Vector{D}
 	"Lengths of the small objects."
 	l :: Vector{S}
 	"Widths of the small objects."
@@ -463,23 +463,53 @@ end
 end
 
 function write_to_file(
-	format :: Val{:Simple_CPG_SLOPP},
-	instance :: G2KP{D, S, P},
+	format :: Val{:CPG_MHLOPPW}, instance, io :: IO
+) where {D, S, P}
+	return write_to_file(CPG_MHLOPPW{Int, Int, Int}(), instance, io)
+end
+
+const MHLOPPW_HEADER = """
+***2D Rectangular Problem***
+***Instances for the Multiple Heterogeneous Large Object Placement Problem (MHLOPP/W)***
+Input parameter file: NONE
+***************************************************************************************************************
+Total number of instances 
+Number of different large objects (j)
+LargeObject[j].Length	LargeObject[j].Width	LargeObject[j].Available
+Number of different item types (i)
+Item[i].Length	Item[i].Width	Item[i].LowerBoundDemand	Item[i].UpperBoundDemand	Item[i].Value
+***************************************************************************************************************"""
+
+@timeit TIMER function write_to_file(
+	format :: CPG_MHLOPPW{D, S, P},
+	instance :: MHLOPPW{D, S, P},
 	io :: IO
 ) where {D, S, P}
-	return write_to_file(Simple_CPG_SLOPP{Int, Int, Int}(), instance, io)
+	# Ideally we should wrap on a StaticArray because there is no reason for this
+	# allocation, but this is not performance-critical code.
+	write_to_file(CPG_MHLOPPW{D, S, P}(), [instance], io)
+	return io
 end
 
 @timeit TIMER function write_to_file(
-	format :: Simple_CPG_SLOPP{D, S, P},
-	instance :: G2KP{D, S, P},
+	format :: CPG_MHLOPPW{D, S, P},
+	instances :: AbstractVector{MHLOPPW{D, S, P}},
 	io :: IO
 ) where {D, S, P}
-	@unpack L, W, l, w, d, p = instance
-	write(io, "$L $W\n")
-	write(io, "$(length(d))\n")
-	for (pl, pw, pd, pp) in zip(l, w, d, p)
-		write(io, "$pl $pw 0 $pd $pp\n")
+	println(MHLOPPW_HEADER)
+	write(io, "$(length(instances))\n")
+	for instance in instances
+		@unpack L, W, available, l, w, dlb, dub, p = instance
+		qt_plates = only(unique(length.((L, W, available))))
+		write(io, "$qt_plates\n")
+		for (PL, PW, PD) in zip(L, W, available)
+			write(io, "$PL $PW $PD\n")
+		end
+		qt_pieces = only(unique(length.((l, w, dlb, dub, p))))
+		write(io, "$qt_pieces\n")
+		for (pl, pw, pdlb, pdub, pp) in zip(l, w, dlb, dub, p)
+			write(io, "$pl $pw $pdlb $pdub $pp\n")
+		end
 	end
 	flush(io)
 	return io
