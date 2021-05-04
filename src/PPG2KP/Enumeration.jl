@@ -1004,7 +1004,7 @@ function gen_cuts(
 	# the set does not fit because of the width, while the piece that had
 	# the length matched yet fits at that width).
 	if hybridize_with_restricted
-		pols, pows = piece_only_positions(L, W, sllw, d; ignore_d)
+		pols, pows = piece_only_positions(L, W, sllw, d; ignore_d = ignore_d)
 	else
 		# If `hybridize_with_restricted` these will never be used, but
 		# it is practical if they exist and are the right type to be passed
