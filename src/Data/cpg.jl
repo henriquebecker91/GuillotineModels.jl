@@ -55,6 +55,7 @@ end
 	d :: Vector{D}
 end
 
+# TODO: should this struct have the 'P' parameter?
 @auto_hash_equals struct SSSCSP{D, S, P}
 	"Length of the large object."
 	L :: S
@@ -496,7 +497,7 @@ end
 	instances :: AbstractVector{MHLOPPW{D, S, P}},
 	io :: IO
 ) where {D, S, P}
-	println(MHLOPPW_HEADER)
+	println(io, MHLOPPW_HEADER)
 	write(io, "$(length(instances))\n")
 	for instance in instances
 		@unpack L, W, available, l, w, dlb, dub, p = instance
@@ -509,6 +510,56 @@ end
 		write(io, "$qt_pieces\n")
 		for (pl, pw, pdlb, pdub, pp) in zip(l, w, dlb, dub, p)
 			write(io, "$pl $pw $pdlb $pdub $pp\n")
+		end
+	end
+	flush(io)
+	return io
+end
+
+# CPG_SSSCSP write_to_file
+
+function write_to_file(
+	format :: Val{:CPG_SSSCSP}, instance, io :: IO
+) where {D, S, P}
+	return write_to_file(CPG_SSSCSP{Int, Int, Int}(), instance, io)
+end
+
+const SSSCSP_HEADER = """
+***2D Rectangular Problem***
+***Instances for the Single Stock Size Cutting Stock Problem (SSSCSP)***
+Input parameter file: NONE
+****************************************************************************************************
+Total number of instances 
+LargeObject.Length	LargeObject.Width
+Number of different item types (i)
+Item[i].Length	Item[i].Width	Item[i].Demand
+*****************************************************************************************************"""
+
+@timeit TIMER function write_to_file(
+	format :: CPG_SSSCSP{D, S, P},
+	instance :: SSSCSP{D, S, P},
+	io :: IO
+) where {D, S, P}
+	# Ideally we should wrap on a StaticArray because there is no reason for this
+	# allocation, but this is not performance-critical code.
+	write_to_file(CPG_SSSCSP{D, S, P}(), [instance], io)
+	return io
+end
+
+@timeit TIMER function write_to_file(
+	format :: CPG_SSSCSP{D, S, P},
+	instances :: AbstractVector{SSSCSP{D, S, P}},
+	io :: IO
+) where {D, S, P}
+	write(io, SSSCSP_HEADER)
+	write(io, '\n')
+	write(io, "$(length(instances))\n")
+	for instance in instances
+		@unpack L, W, l, w, d = instance
+		write(io, "$(L)\t$(W)\n")
+		write(io, "$(length(d))\n")
+		for (li, wi, di) in zip(l, w, d)
+			write(io, "$(li)\t$(wi)\t$(di)\n")
 		end
 	end
 	flush(io)
