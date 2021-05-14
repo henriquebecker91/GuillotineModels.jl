@@ -277,6 +277,54 @@ function _flatten_index(a, i :: Tuple{I, I}, f) where {I <: Integer}
 	return f(a[first(i)], a[last(i)])
 end
 
+# INTERNAL USE.
+#
+# (Only used in _build_base_model! to compute a cut upper bound.)
+#
+# Helper function that computes a loose upper bound on the number of original
+# plates available.
+_ub_plates(inst :: MHLOPPW) = only(inst.available)
+function _ub_plates(inst :: SSSCSP{D, S, P}) where {D, S, P}
+	@unpack L, W, l, w, d = inst
+	# The simplest (but terribly loose) upper bound is just `sum(d)`
+	# (i.e., there is a solution in which each piece is in a plate of its
+	# own). The following is the second-simplest thing: we have 4 buckets,
+	# for pieces in which li <= L÷8 and wi <= W÷8 (we can fit 64 of these
+	# in a plate), in which li <= L÷4 and wi <= W÷4 (we can fit 16 of these
+	# in a plate), in which li <= L÷2 and wi <= W÷2 (we can fit 4 of these
+	# in a plate), and in which li > L÷2 or wi > W÷2 (we give a whole plate
+	# for these). This way, the bound is not terrible in the presence of
+	# small- and medium-sized pieces.
+	le8qt64, le4qt16, le2qt4, gt2 = zero(D), zero(D), zero(D), zero(D)
+
+	L8, L4, L2 = L ÷ 8, L ÷ 4, L ÷ 2
+	W8, W4, W2 = W ÷ 8, W ÷ 4, W ÷ 2
+	for (li, wi, di) in zip(l, w, d)
+		if     li <= L8 && wi <= W8
+			le8qt64 += di
+		elseif li <= L4 && wi <= W4
+			le4qt16 += di
+		elseif li <= L2 && wi <= W2
+			le2qt4  += di
+		else # i.e., li > L2 || wi > W2
+			gt2     += di
+		end
+	end
+
+	# The trick below is: if we sum (divisor - 1) to the number about to be
+	# divided we transform ÷ into a round-up (not round-down) integer division.
+	final_ub = (
+		((le8qt64 + 63) ÷ 64) +
+		((le4qt16 + 15) ÷ 16) +
+		((le2qt4  +  3) ÷  4) +
+		gt2
+	)
+
+	@assert final_ub <= sum(d)
+
+	return final_ub
+end
+
 @timeit TIMER function _build_base_model!(
 	problem :: SIMILAR_4, inst, model, bp :: ByproductPPG2KP{D, S, P},
 	inv_idxs :: VarInvIndexes{P},
@@ -341,8 +389,22 @@ end
 
 	# We prefer to leave `cuts_made` without an upper bound to risk
 	# making a bound that will not work for some combination of parameters.
+	# EDIT: we are adding back a loose upper bound because it seems like
+	# Gurobi have a bug that may give wrong answers if upper bounds are not set.
+	# The `ub_cut_in_single_plate` is just an upper bound on the amount of
+	# plates p that fit in a single original plate, where p is the parent plate
+	# of the cut (i.e., the plate that is being divided by the cut).
+	ub_cut_in_single_plate = getindex.(pli_lwb, 3)[getindex.(cuts, 1)]
+	ub_cut = if problem === Val(:G2MKP) || problem === Val(:G2CSP)
+		# NOTE: _ub_plates assumes no-rotation because this is a valid upper bound
+		# for both rotation and no-rotation variants.
+		ub_cut_in_single_plate .* _ub_plates(inst)
+	else
+		ub_cut_in_single_plate
+	end
 	@variable(model,
-		cuts_made[i = 1:length(cuts)] >= 0, integer = !build_LP_not_MIP
+		0 <= cuts_made[i = 1:length(cuts)] <= ub_cut[i],
+		integer = !build_LP_not_MIP
 	)
 
 	if options["hybridize-with-restricted"]
@@ -583,7 +645,7 @@ function _get_profit(
 	return i.p
 end
 function _get_profit(
-	i :: Union{SSSCSP{D, S, P}}
+	i :: SSSCSP{D, S, P}
 ) :: Vector{P} where {D, S, P}
 	return zeros(P, length(i.d))
 end
