@@ -400,6 +400,9 @@ See also: [`build_model`](@ref)
 """
 function get_cut_pattern end
 
+include("parse_pattern.jl")
+include("to_tikz.jl")
+
 include("Utilities/Utilities.jl")
 include("Data/Data.jl")
 #include("KnapsackPlates.jl") # not working, and no plans to fix it for now

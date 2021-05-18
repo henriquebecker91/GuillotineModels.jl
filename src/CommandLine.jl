@@ -27,7 +27,7 @@ using ..Utilities.Args
 using ..PPG2KP, ..PPG2KP.Args
 using ..Flow, ..Flow.Args
 #using ..KnapsackPlates, ..KnapsackPlates.Args
-import ..solution_value, ..to_pretty_str, ..simplify!
+import ..solution_value, ..to_pretty_str, ..simplify!, ..to_tikz_picture
 # Used inside read_build_solve_and_print in tandem with generic-time-limit.
 import ..throw_if_timeout_now, ..TimeoutError
 # Used for SaveModel.write_to_file that, differently from JuMP.write_to_file,
@@ -338,19 +338,34 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 			local pretty_simple_sol_str :: String
 			if isa(solution, CutPattern)
 				pretty_sol_str = to_pretty_str(solution)
-				pretty_simple_sol_str = to_pretty_str(simplify!(deepcopy(solution)))
+				tikz_pretty_sol_str = to_tikz_picture(solution)
+
+				simplified_sol = simplify!(deepcopy(solution))
+				pretty_simple_sol_str = to_pretty_str(simplified_sol)
+				tikz_pretty_simple_sol_str = to_tikz_picture(simplified_sol)
 			else
 				pretty_sol_str = join(to_pretty_str.(solution), "\n")
-				pretty_simple_sol_str = join(
-					to_pretty_str.(simplify!.(deepcopy.(solution))), "\n"
+				tikz_pretty_sol_str = join(to_tikz_picture.(solution), "\n")
+
+				simplified_sols = simplify!.(deepcopy(solution))
+				pretty_simple_sol_str = join(to_pretty_str.(simplified_sols), "\n")
+				tikz_pretty_simple_sol_str = join(
+					to_tikz_picture.(simplified_sols), "\n"
 				)
 			end
 
 			pretty_sol_str = "PRETTY_STR_SOLUTION_BEGIN\n" * pretty_sol_str *
 				"\nPRETTY_STR_SOLUTION_END\n"
+			tikz_pretty_sol_str = "TIKZ_PRETTY_STR_SOLUTION_BEGIN\n" *
+				tikz_pretty_sol_str * "\nTIKZ_PRETTY_STR_SOLUTION_END\n"
+
 			pretty_simple_sol_str = "SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
 				pretty_simple_sol_str *
 				"\nSIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
+			tikz_pretty_simple_sol_str =
+				"TIKZ_SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN\n" *
+				tikz_pretty_simple_sol_str *
+				"\nTIKZ_SIMPLIFIED_PRETTY_STR_SOLUTION_END\n"
 		end
 
 		if verbose
@@ -358,7 +373,9 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 				iob = IOBuffer()
 				write(iob, solution_str)
 				write(iob, pretty_sol_str)
+				write(iob, tikz_pretty_sol_str)
 				write(iob, pretty_simple_sol_str)
+				write(iob, tikz_pretty_simple_sol_str)
 				print(read(seekstart(iob), String))
 			end
 			sol_val = solution_value(problem, instance, solution)
