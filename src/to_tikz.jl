@@ -50,15 +50,21 @@ end
 
 Creates a `String` with tikz `\\draw` commands representing the CutPattern.
 
-TODO: add keyword parameters to customize the output.
+The tikz code has nodes indicating the piece indexes (waste pieces are not
+labeled because we do not distinguish between the waste pieces and the
+intermediary plates yet). The same node command is also outputted commented and
+with the size of piece, for easy alternance between these two informations.
 """
-function to_tikz_rectangles(p :: CutPattern{D, S}) :: String where {D, S}
+function to_tikz_rectangles(
+	p :: CutPattern{D, S}# future keyword arguments
+) :: String where {D, S}
 	return join(map(to_rectangles(p)) do rectangle
 		(i, (xo, yo, xf, yf)) = rectangle
 		s = "\\draw[dashed, thick, black] ($xo, $yo) rectangle ($xf, $yf);"
 		if !iszero(i)
 			cl, cw = xo + (xf - xo)/2, yo + (yf - yo)/2
 			s = s * "\n\\node[font=\\LARGE] at ($cl, $cw) {$i};"
+			s = s * "\n%\\node[font=\\LARGE] at ($cl, $cw) {$(xf - xo)x$(yf - yo)};"
 		end
 		s
 	end, '\n')

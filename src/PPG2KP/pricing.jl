@@ -608,6 +608,8 @@ function _add_plate_cons!(
 	return
 end
 
+# NOTE: pricing may not work with hybridization because of the below
+# (i.e., it assumes non-zero fc).
 # Pattern repeated in many parts of the code.
 function _map_cuts(f, cuts)
 	return map(cuts) do (pp, fc, sc)
