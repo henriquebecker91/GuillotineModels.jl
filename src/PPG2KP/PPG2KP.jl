@@ -675,15 +675,14 @@ function _no_arg_check_build_model(
 	end
 	if verbose
 		@show enumeration_time
-		println("START_DEBUG_T1a")
-		for (pp, fc, sc) in bp.cuts
-			print(bp.pli_lwb[pp][1], ' ', bp.pli_lwb[pp][2], ' ')
-			print(bp.pli_lwb[fc][1], ' ', bp.pli_lwb[fc][2], ' ')
-			!iszero(sc) && print(bp.pli_lwb[sc][1], ' ', bp.pli_lwb[sc][2])
-			println()
-		end
-		println("END_DEBUG_T1a")
-		# PUT DEBUG OF THE MODEL HERE
+		#println("START_DEBUG_T1a")
+		#for (pp, fc, sc) in bp.cuts
+		#	print(bp.pli_lwb[pp][1], ' ', bp.pli_lwb[pp][2], ' ')
+		#	print(bp.pli_lwb[fc][1], ' ', bp.pli_lwb[fc][2], ' ')
+		#	!iszero(sc) && print(bp.pli_lwb[sc][1], ' ', bp.pli_lwb[sc][2])
+		#	println()
+		#end
+		#println("END_DEBUG_T1a")
 		println("qt_pevars_after_preprocess = $(length(bp.np))")
 		println("qt_cmvars_after_preprocess = $(length(bp.cuts))")
 		println("qt_plates_after_preprocess = $(length(bp.pli_lwb))")
