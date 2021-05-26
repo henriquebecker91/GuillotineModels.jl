@@ -1153,14 +1153,26 @@ function gen_cuts(
 					# NOTE: if dl1/dw1 stops being generated for each new plate
 					# we will need to `deepcopy` the variables.
 					# NOTE 2: the `_pop_smaller_than` is necessary for not breaking
-					# our assumption no cut position is smaller than the
-					# corresponding smallest piece dimension. Such cut never is
-					# necessary (in the enhanced, the only cases in which such cut
-					# could apply are the cases in which there will be an extraction
-					# variable to do the job).
+					# our assumption of "no cut position exists before the
+					# length (width) of the piece with smallest length (width) that
+					# fits the current plate". If this assumption is broken the
+					# round2disc/plate-normalization breaks because it normalizes
+					# child plates from such cuts to 0x0 plates (rightfully so,
+					# a 0x0 plate is the smallest plate that fits an empty set of
+					# pieces). These cuts are never needed in the enhanced (even
+					# if we are only allowed to use restricted cuts) because
+					# in such cases there is an extraction variable to extract the
+					# larger-than-half-plate piece that, when reflected, generated
+					# such these thin cuts (that broken our assumptions).
 					if !faithful2furini2016
-						dl1 = _pop_smaller_than!(reflect!(dl1, pll), min_pil)
-						dw1 = _pop_smaller_than!(reflect!(dw1, plw), min_piw)
+						if !isempty(dl1)
+							plate_min_pil = first(dl1)
+							dl1 = _pop_smaller_than!(reflect!(dl1, pll), plate_min_pil)
+						end
+						if !isempty(dw1)
+							plate_min_piw = first(dw1)
+							dw1 = _pop_smaller_than!(reflect!(dw1, plw), plate_min_piw)
+						end
 					end
 				end
 				#= Debug. Showing something is not an error.
