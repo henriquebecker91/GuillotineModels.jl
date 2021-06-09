@@ -372,6 +372,127 @@ function _cp_rai2opi!(
 	return nothing
 end
 
+# NOTE: exponential time on the number of children, but works over the
+# non-simplified patterns that only have 2~3 children (2 if non-hybridized,
+# possibly 3 if hybridized?).
+# MAX and SUM are L and W if cuts_are_vertical and switched otherwise.
+# max_s and sum_s are the length and width of all children plates/pieces
+# if cuts_are_vertical and switched otherwise.
+function _idxs_children_to_mirror_back_multiple(
+	::Type{D}, MAX :: S, SUM :: S, max_s :: Vector{S}, sum_s :: Vector{S}
+) :: Vector{D} where {D, S}
+	@assert length(max_s) == length(sum_s)
+	n = length(max_s)
+	n > 8 && warn(
+		"The code for unmirroring the solution is exponential on the number" *
+		" immediate children of a pattern (i.e., the length of the subpatterns" *
+		" field inside a CutPattern object). Found a subpattern with $n" *
+		" children inside, this may slow down the computation."
+	)
+	for i in 1:(2^n - 1)
+		turned = '1' .== collect(last(bitstring(i), n))
+
+		new_max_s = ifelse.(turned, sum_s, max_s)
+		new_sum_s = ifelse.(turned, max_s, sum_s)
+
+		if maximum(new_max_s) <= MAX && sum(new_sum_s) <= SUM
+			return (one(D):convert(D, n))[turned]
+		end
+	end
+
+	@error "Tried to unmirror a subpattern but no combination of rotations" *
+		" resulted in a valid solution. Orthogonal/max: $MAX and $max_s." *
+		" Parallel/sum: $SUM and $sum_s."
+
+	return D[]
+end
+
+function _idxs_children_to_mirror_back(
+	children :: Vector{CutPattern{D, S}},
+	L :: S, W :: S, cuts_are_vertical :: Bool
+) :: Vector{D} where {D, S}
+	isempty(children) && return D[]
+	if isone(length(children))
+		only_child = first(children)
+		l, w = only_child.length, only_child.width
+		if l > L || w > W # Some dimension does not fit, needs mirroring/rotation.
+			if l > W && w > L # Impossible to fit the other way. Should not happen.
+				@error "Could not un-mirror a single plate inside another." *
+					"Plate $(L)x$(W) and inner plate/piece $(l)x$(w)."
+				return D[]
+			else
+				return D[one(D)]
+			end
+		else # The only child fits, no need to rotate.
+			return D[]
+		end
+	else # length(patterns) > 1
+		cw = getfield.(children, :width)
+		cl = getfield.(children, :length)
+		if cuts_are_vertical
+			sum_width = sum(cw)
+			max_length = maximum(cl)
+			if sum_width > W || max_length > L
+				return _idxs_children_to_mirror_back_multiple(D, L, W, cl, cw)
+			else # everything fits
+				return D[]
+			end
+		else # !cuts_are_vertical
+			sum_length = sum(cl)
+			max_width = maximum(cw)
+			if sum_length > L || max_width > W
+				return _idxs_children_to_mirror_back_multiple(D, W, L, cw, cl)
+			else # everything fits
+				return D[]
+			end
+		end
+	end
+end
+
+function _rotate_pattern(
+	p :: CutPattern{D, S}
+) :: CutPattern{D, S} where {D, S}
+	return CutPattern(
+		p.width, p.length, p.piece_idx,
+		isempty(p.subpatterns) ? p.cuts_are_vertical : !p.cuts_are_vertical,
+		p.subpatterns # we do only rotate the subpatterns if necessary, so not here
+	)
+end
+
+function _rec_try_mirror_back!(
+	p :: CutPattern{D, S}
+) :: Nothing where {D, S}
+	# Get the index of the subpatterns that will be rotated.
+	c_idxs = _idxs_children_to_mirror_back(
+		p.subpatterns, p.length, p.width, p.cuts_are_vertical
+	)
+	# Rotate the subpatterns (but not their subpatterns).
+	p.subpatterns[c_idxs] .= _rotate_pattern.(p.subpatterns[c_idxs])
+	# Now recurse for each subpattern, rotated or not.
+	foreach(_rec_try_mirror_back!, p.subpatterns)
+
+	return
+end
+
+# A new CutPattern is returned and the old one may be invalid and share
+# memory with the new one (so nothing should use it anymore).
+function _try_mirror_back!(
+	pattern :: CutPattern{D, S}, L :: S, W :: S
+) :: CutPattern{D, S} where {D, S}
+	L_, W_ = pattern.length, pattern.width
+	if L_ > L || W_ > W
+		if pattern.length > W || pattern.width > L
+			@warn "While unmirroring the solution failed to fit the root pattern." *
+				"Original dimensions? $L and $W. Root pattern? $L_ and $W_."
+		end
+		pattern = _rotate_pattern(pattern)
+	end
+
+	_rec_try_mirror_back!(pattern)
+
+	return pattern
+end
+
 function _single_pattern(
 	patterns :: AbstractVector{CutPattern{D, S}}
 ) :: Union{CutPattern{D, S}, Nothing} where {D, S}
@@ -466,9 +587,13 @@ import ..get_cut_pattern
 	# All the CutPattern extraction procedure is rotation-unaware. If rotation
 	# is allowed, the piece indexes in the leaf nodes of CutPattern need to be
 	# changed to the original piece indexes.
-	bmr.rad !== nothing && _cp_rai2opi!(
-		patterns, bmr.rad :: RotationAwareData{D, S}
-	)
+	if bmr.rad !== nothing
+		_cp_rai2opi!(patterns, bmr.rad :: RotationAwareData{D, S})
+		if bmr.preprocess_byproduct.mirror_plates
+			L, W = bmr.preprocess_byproduct.L, bmr.preprocess_byproduct.W
+			patterns = _try_mirror_back!.(patterns, L, W)
+		end
+	end
 
 	is_single_pattern = isa(problem, Val{:G2KP}) || isa(problem, Val{:G2OPP})
 	if is_single_pattern

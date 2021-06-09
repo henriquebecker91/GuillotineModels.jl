@@ -439,6 +439,8 @@ struct ByproductPPG2KP{D, S, P}
 	L :: S
 	"The width of the original plate."
 	W :: S
+	"If all plates were rotated so length is never greater than width."
+	mirror_plates :: Bool
 end
 Base.broadcastable(x :: ByproductPPG2KP{D, S, P}) where {D, S, P} = Ref(x)
 
@@ -1328,7 +1330,7 @@ function gen_cuts(
 		append!(hnnn, vnnn), append!(hdce, vdce),
 		first_vertical_cut_idx,
 		np, pli_lwb, deepcopy(d), deepcopy(l), deepcopy(w),
-		deepcopy(L), deepcopy(W)
+		deepcopy(L), deepcopy(W), mirror_plates
 	)
 end
 

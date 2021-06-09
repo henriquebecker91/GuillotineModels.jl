@@ -150,7 +150,7 @@ end
 			kept_fields = copy.(kept_fields)
 		end
 		new_bp = ByproductPPG2KP{D, S, P}(
-			rc, rc_fvci, kept_fields...
+			rc, rc_fvci, kept_fields..., bp.mirror_plates
 		)
 		cuts_full2part = zeros(P, length(bp.cuts))
 		cuts_full2part[rc_idxs] .= 1:length(rc_idxs)
@@ -208,7 +208,9 @@ end
 
 	kept_fields = (bp.d, bp.l, bp.w, bp.L, bp.W)
 	copy_unchanged && (kept_fields = copy.(kept_fields))
-	r_bp = ByproductPPG2KP{D, S, P}(rc, rc_fvci, re, rp, kept_fields...)
+	r_bp = ByproductPPG2KP{D, S, P}(
+		rc, rc_fvci, re, rp, kept_fields..., bp.mirror_plates
+	)
 	return r_bp, bpl
 end
 
@@ -788,7 +790,7 @@ function _clean_partial_byproduct!(model, lidxs, full_bp, part_bp)
 	)
 	return ByproductPPG2KP( # new_fvci was computed and need to be updated
 		part_bp.cuts, new_fvci, part_bp.np, part_bp.pli_lwb, part_bp.d,
-		part_bp.l, part_bp.w, part_bp.L, part_bp.W
+		part_bp.l, part_bp.w, part_bp.L, part_bp.W, part_bp.mirror_plates
 	)
 end
 
