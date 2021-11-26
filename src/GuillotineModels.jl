@@ -138,8 +138,6 @@ struct CutPattern{D, S}
 	width :: S
 	"If the pattern represents a piece, then the piece index; otherwise zero."
 	piece_idx :: D
-	#"If the piece the pattern represents was rotated (90 degrees)."
-	#piece_is_rotated :: Bool
 	"The common orientation of the cuts between the plates in `subpatterns`."
 	cuts_are_vertical :: Bool
 	"The subpatterns that constitute the pattern."
@@ -405,7 +403,6 @@ include("to_tikz.jl")
 
 include("Utilities/Utilities.jl")
 include("Data/Data.jl")
-#include("KnapsackPlates.jl") # not working, and no plans to fix it for now
 include("Flow/Flow.jl")
 include("PPG2KP/PPG2KP.jl")
 include("SaveModel.jl")

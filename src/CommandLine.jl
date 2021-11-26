@@ -26,7 +26,6 @@ using ..Utilities
 using ..Utilities.Args
 using ..PPG2KP, ..PPG2KP.Args
 using ..Flow, ..Flow.Args
-#using ..KnapsackPlates, ..KnapsackPlates.Args
 import ..solution_value, ..to_pretty_str, ..simplify!, ..to_tikz_picture
 # Used inside read_build_solve_and_print in tandem with generic-time-limit.
 import ..throw_if_timeout_now, ..TimeoutError

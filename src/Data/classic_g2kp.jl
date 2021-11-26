@@ -66,7 +66,6 @@ See also: [`read_from_file`](@ref)
 		elseif  lnc == (2::D)
 			N = parse(D, ln)
 		else    # all other lines
-			# cp_ == current plate
 			piece_cols = split(ln)
 			cp_l = parse(S, piece_cols[1])
 			cp_w = parse(S, piece_cols[2])

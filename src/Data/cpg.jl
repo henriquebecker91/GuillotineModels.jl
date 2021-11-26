@@ -112,7 +112,6 @@ Input parameter file:[^\\n]*
 $CPG_DELIM
 .*
 $CPG_DELIM""", "mis")
-#Regex("\\*\\*\\*2D Rectangular Problem\\*\\*\\*", "mi")
 end
 
 function _check_CPG_header(f, s :: AbstractString)

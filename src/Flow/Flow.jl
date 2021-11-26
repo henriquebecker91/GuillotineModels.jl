@@ -3,7 +3,6 @@ module Flow
 module Args
 	import ...Utilities
 	import ...Utilities.Args: Arg
-	#export accepted_arg_list, throw_if_incompatible_options
 	# No extra flags for this model yet.
 	Utilities.Args.accepted_arg_list(::Val{:Flow}) = Vector{Arg}()
 	function Utilities.Args.throw_if_incompatible_options(

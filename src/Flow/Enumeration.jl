@@ -265,7 +265,6 @@ function globalize!(
 		end
 		back = ppo2gbedge_idx[bedge_ppo...]
 		edge = Edge{N, E}(indx, head, tail, back)
-		#(iszero(head) || iszero(tail)) && @show edge, @__LINE__
 		push!(glo_fow_edges, edge)
 		# If this foward edge cuts a plate with the exact same size as some piece
 		# then we add the "final plate"/piece edge too.
@@ -340,7 +339,6 @@ function gen_u_fow_edges(
 		back = ppo2gbedge_idx[bedge_ppo...]
 
 		edge = Edge(lgei += one(E), glo_nodes[1].idx, node.idx, back)
-		#(iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
 		push!(u_fow_edges, edge)
 	end
 	for i = 2:(length(glo_nodes)-1)
@@ -361,7 +359,6 @@ function gen_u_fow_edges(
 			edge = Edge(
 				lgei += one(E), glo_nodes[i].idx, glo_nodes[j].idx, back
 			)
-			#(iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
 			push!(u_fow_edges, edge)
 		end
 	end
@@ -391,17 +388,13 @@ function gen_w_fow_edges(
 	@assert iszero(glo_nodes[1].per)
 	@assert isone(length(unique!(map(gn -> gn.par, glo_nodes))))
 	@assert isone(length(unique!(map(gn -> gn.ori, glo_nodes))))
-	#sink_idx = glo_nodes[end].idx
 	# Start from the second position, to avoid wasting the whole plate (if
 	# the whole plate is to be wasted, this should happen at higher level).
 	# Add waste arcs from every node to the next. Maybe it could be smarter
 	# than this, but at least is O(n).
 	for i = 2:(length(glo_nodes)-1)
-		#for j = (i+1):length(glo_nodes)
 		edge = Edge(lgei += 1, glo_nodes[i].idx, glo_nodes[i+1].idx, zero(E))
-		#(iszero(edge.head) || iszero(edge.tail)) && @show edge, @__LINE__
 		push!(w_fow_edges, edge)
-		#end
 	end
 	w_fow_edges, lgei
 end
@@ -477,7 +470,6 @@ function gen_closed_flow(
 	y2node_idx, rr_fow_edges = gen_rr_fow_edges!(
 		N, d, per, PER
 	)
-	#@show rr_fow_edges
 
 	dummy_sink = false
 	if iszero(y2node_idx[PER])
@@ -499,9 +491,6 @@ function gen_closed_flow(
 		glo_nodes, y2node_idx, lgei, ppo2gbedge_idx
 	)
 	glo_nodes, y2node_idx, vcat(r_fow_edges, w_fow_edges, u_fow_edges), lgni, lgei
-	#=
-	glo_nodes, y2node_idx, append!(r_fow_edges, w_fow_edges), lgni, lgei
-	=#
 end
 
 """
@@ -588,18 +577,11 @@ function gen_all_edges(
 	append!(edges, vroot_edges)
 	append!(nodes, vroot_nodes)
 
-	#for ppo in CartesianIndices(ppo2gbedge_idx) # DEBUG PRINT FOR
-	#  iszero(ppo2gbedge_idx[ppo]) && continue
-	#  @show ppo
-	#  @show ppo2gbedge_idx[ppo]
-	#end
-
 	# Create the forward edge that inverts the default orientation
 	# of the root plate.
 	push!(edges, Edge{N, E}(
 		n + 3, origin_vf_by_L[L], lgni, n + 4
 	))
-	#@show last(edges), @__LINE__
 
 	hroot_nodes, hflows_by_W[W], hroot_edges, lgni, lgei = gen_closed_flow(
 		lgni, lgei, lw2pii', ppo2gbedge_idx, d, w, l, 0x02, W, L
@@ -610,16 +592,7 @@ function gen_all_edges(
 	append!(edges, hroot_edges)
 	append!(nodes, hroot_nodes)
 
-	#for ppo in CartesianIndices(ppo2gbedge_idx) # DEBUG PRINT FOR
-	#  iszero(ppo2gbedge_idx[ppo]) && continue
-	#  @show ppo
-	#  @show ppo2gbedge_idx[ppo]
-	#end
-
-	#unique_lw
-	#@show disc_L
-	#@show disc_W
-	for L_ in @view disc_L[2:end-1]#setdiff(unique(l), [L])#
+	for L_ in @view disc_L[2:end-1]
 		vnodes, vflows_by_L[L_], vedges, lgni, lgei = gen_closed_flow(
 			lgni, lgei, lw2pii, ppo2gbedge_idx, d, l, w, 0x01, L_, W
 		)
@@ -627,7 +600,7 @@ function gen_all_edges(
 		append!(edges, vedges)
 		append!(nodes, vnodes)
 	end
-	for W_ in @view disc_W[2:end-1]#setdiff(unique(w), [W])#
+	for W_ in @view disc_W[2:end-1]
 		hnodes, hflows_by_W[W_], hedges, lgni, lgei = gen_closed_flow(
 			lgni, lgei, lw2pii', ppo2gbedge_idx, d, w, l, 0x02, W_, L
 		)
@@ -635,13 +608,10 @@ function gen_all_edges(
 		append!(edges, hedges)
 		append!(nodes, hnodes)
 	end
-	#@show vflows_by_L
-	#@show hflows_by_W
 
 	for ppo in CartesianIndices(ppo2gbedge_idx)
 		pari, peri, orii = ppo[1], ppo[2], ppo[3]
 		iszero(ppo2gbedge_idx[ppo]) && continue
-		#@show ppo
 		if orii == 0x01
 			while !iszero(peri) && iszero(vflows_by_L[pari][peri]); peri -= 1; end
 			@assert !iszero(peri)
@@ -650,7 +620,6 @@ function gen_all_edges(
 				zero(N)
 			))
 			edge = last(edges)
-			#(iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, peri, @__LINE__
 		else
 			@assert orii == 0x02
 			while !iszero(peri) && iszero(hflows_by_W[pari][peri]); peri -= 1; end
@@ -659,7 +628,6 @@ function gen_all_edges(
 				zero(N)
 			))
 			edge = last(edges)
-			#(iszero(edge.head) || iszero(edge.tail)) && @show edge, ppo, peri, @__LINE__
 		end
 	end
 
