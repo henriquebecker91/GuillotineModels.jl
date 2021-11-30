@@ -14,6 +14,7 @@ makedocs(
 			"Utilities.Args" => "U-Args.md"
 		],
 		"GuillotineModels.Data" => "Data.md",
+		"GuillotineModels.SaveModel" => "SaveModel.md",
 		"GuillotineModels.CommandLine" => [
 			"CommandLine" => "CommandLine.md",
 			"CommandLine.SolversArgs" => "CL-SolversArgs.md"
