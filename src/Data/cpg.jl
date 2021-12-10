@@ -1,4 +1,4 @@
-# = 2DPackGen =
+# = 2DCPackGen =
 
 # == Structures ==
 
@@ -356,6 +356,73 @@ function _read_number_of_instances(
 	return qt_instances
 end
 
+"""
+    read_from_string(format :: CPG_Format{D, S, P}, s :: AbstractString)
+
+Expect a string in the format given and parse it to the adequate instance
+object. The `format` may be `CPG_SLOPP{D, S, P}()`, `CPG_MHLOPPW{D, S, P}()`,
+`CPG_ODPW{D, S, P}()`, `CPG_SSSCSP{D, S, P}()`. All these formats come from
+2DCPackGen (10.1016/j.ejor.2014.02.059, see
+https://sites.google.com/gcloud.fe.up.pt/cutting-and-packing-tools/2dcpackgen
+for the code). Each of these formats starts with a self-explanatory header.
+These headers are copyied below.
+
+```
+***2D Rectangular Problem***
+***Instances for the Single Large Object Placement Problem (SLOPP)***
+Input parameter file: SLOPP_parameters.txt
+***************************************************************************************************************
+Total number of instances
+LargeObject.Length      LargeObject.Width
+Number of different item types (i)
+Item[i].Length  Item[i].Width   Item[i].LowerBoundDemand        Item[i].UpperBoundDemand        Item[i].Value
+***************************************************************************************************************
+```
+
+```
+***2D Rectangular Problem***
+***Instances for the Multiple Heterogeneous Large Object Placement Problem (MHLOPP/W)***
+Input parameter file: MHLOPPW_parameters.txt
+***************************************************************************************************************
+Total number of instances 
+Number of different large objects (j) 
+LargeObject[j].Length   LargeObject[j].Width    LargeObject[j].Available
+Number of different item types (i) 
+Item[i].Length  Item[i].Width   Item[i].LowerBoundDemand        Item[i].UpperBoundDemand        Item[i].Value
+***************************************************************************************************************
+```
+
+```
+***2D Rectangular Problem***
+***Problem tests for the Open Dimension Problem (ODP/W)***
+Input parameter file: ODPW_parameters.txt
+***********************************************************************
+Total number of instances 
+Number of different large objects (j)
+LargeObject[j].Width    LargeObject[j].Available        LargeObject[j].Value
+Number of different item types (i)
+Item[i].Length  Item[i].Width   Item[i].Demand
+***********************************************************************
+```
+
+```
+***2D Rectangular Problem***
+***Instances for the Single Stock Size Cutting Stock Problem (SSSCSP)***
+Input parameter file: SSSCSP_parameters.txt
+****************************************************************************************************
+Total number of instances
+LargeObject.Length      LargeObject.Width
+Number of different item types (i)
+Item[i].Length  Item[i].Width   Item[i].Demand
+*****************************************************************************************************
+```
+
+The `D`, `S`, and `P` type parameters indicate the integer type which
+should be used to store `D`emand, `S`ize, and `P`rofit (or piece/plate area).
+
+Returns an object of type `YYY{D, S, P}` in which `YYY` is what comes after
+`CPG_` in the given `format` type.
+"""
 function read_from_string(
 	format :: CPG_Format{D, S, P}, s :: AbstractString
 ) where {D, S, P}
@@ -387,6 +454,14 @@ function read_from_string(
 	return instances
 end
 
+"""
+    read_from_string(_ :: Simple_CPG_SLOPP{D, S, P}, s :: AbstractString)
+
+Similar to `read_from_string(CPG_SLOPP{D, S, P}(), s)` which is described
+in `read_from_string(format :: CPG_Format{D, S, P}, s :: AbstractString)`,
+the only difference in format compared to `CPG_SLOPP` is that
+`Simple_CPG_SLOPP` format expects just a single instance and no header.
+"""
 function read_from_string(
 	format :: Simple_CPG_SLOPP{D, S, P}, s :: AbstractString
 ) where {D, S, P}
@@ -407,30 +482,60 @@ function read_from_string(
 	return instance
 end
 
+"""
+    read_from_string(::Val{:Simple_CPG_SLOPP}, s :: AbstractString)
+
+Convenience method. To be called as `read_from_string(Val(:Simple_CPG_SLOPP), s)`.
+Equivalent to the call `read_from_string(Simple_CPG_SLOPP{Int, Int, Int}(), s)`.
+"""
 function read_from_string(
 	_ :: Val{:Simple_CPG_SLOPP}, s :: AbstractString
 )
 	return read_from_string(Simple_CPG_SLOPP{Int, Int, Int}(), s)
 end
 
+"""
+    read_from_string(::Val{:CPG_SLOPP}, s :: AbstractString)
+
+Convenience method. To be called as `read_from_string(Val(:CPG_SLOPP), s)`.
+Equivalent to the call `read_from_string(CPG_SLOPP{Int, Int, Int}(), s)`.
+"""
 function read_from_string(
 	_ :: Val{:CPG_SLOPP}, s :: AbstractString
 )
 	return read_from_string(CPG_SLOPP{Int, Int, Int}(), s)
 end
 
+"""
+    read_from_string(::Val{:CPG_ODPW}, s :: AbstractString)
+
+Convenience method. To be called as `read_from_string(Val(:CPG_ODPW), s)`.
+Equivalent to the call `read_from_string(CPG_ODPW{Int, Int, Int}(), s)`.
+"""
 function read_from_string(
 	_ :: Val{:CPG_ODPW}, s :: AbstractString
 )
 	return read_from_string(CPG_ODPW{Int, Int, Int}(), s)
 end
 
+"""
+    read_from_string(::Val{:CPG_MHLOPPW}, s :: AbstractString)
+
+Convenience method. To be called as `read_from_string(Val(:CPG_MHLOPPW), s)`.
+Equivalent to the call `read_from_string(CPG_MHLOPPW{Int, Int, Int}(), s)`.
+"""
 function read_from_string(
 	_ :: Val{:CPG_MHLOPPW}, s :: AbstractString
 )
 	return read_from_string(CPG_MHLOPPW{Int, Int, Int}(), s)
 end
 
+"""
+    read_from_string(::Val{:CPG_SSSCSP}, s :: AbstractString)
+
+Convenience method. To be called as `read_from_string(Val(:CPG_SSSCSP), s)`.
+Equivalent to the call `read_from_string(CPG_SSSCSP{Int, Int, Int}(), s)`.
+"""
 function read_from_string(
 	_ :: Val{:CPG_SSSCSP}, s :: AbstractString
 )

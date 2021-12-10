@@ -586,7 +586,7 @@ function test_non_SLOPP()
 				@testset "$case" begin
 					format_symbol = Symbol("CPG_$problem_type")
 					obtained = @test_logs read_from_string(Val(format_symbol), s)
-					show(IOContext(stdout, :limit => false), obtained)
+					#show(IOContext(stdout, :limit => false), obtained)
 					@test expected == obtained
 				end
 			end

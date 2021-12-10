@@ -33,7 +33,7 @@ end
 _get_raw_solver(model) = model # Unrecognized means we arrived were we wanted.
 
 """
-	write_to_file(model, filename; format = FORMAT_AUTOMATIC
+    write_to_file(model, filename; format = FORMAT_AUTOMATIC)
 
 Save the model to filename trying to use the solver mechanism instead of
 the generic `JuMP`/`MathOptInterface` one.

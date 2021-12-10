@@ -267,10 +267,11 @@ function no_chance_to_fit_6_piece(
 	A :: P;
 	ignore_2th_dim = false
 ) :: Bool where {D, S, P}
+	six = convert(D, 6)
 	ub = ub_num_pieces_fit(
-		d, l, w, a, L, W, A, 6; ignore_2th_dim = ignore_2th_dim
+		d, l, w, a, L, W, A, six; ignore_2th_dim = ignore_2th_dim
 	)
-	return ub < 6
+	return ub < six
 end
 
 """
@@ -939,6 +940,11 @@ All keyword arguments are of type `Bool`.
 * `no_furini_symmbreak`: Default: false. Ignored if `faithful2furini2016`
   is `false`. Disables the symmetry-breaking used in 10.1287/ijoc.2016.0710
   (consequently all discretized positions are used, none is removed).
+
+## Return
+
+The return is a ByproductPPG2KP object.
+
 """
 function gen_cuts(
 	::Type{P}, d :: Vector{D}, sllw :: SortedLinkedLW{D, S}, L :: S, W :: S,
@@ -1020,7 +1026,7 @@ function gen_cuts(
 	# Storing the index as the third value is not necessary (as it could be
 	# queried from plis) but this is probably more efficient this way.
 	next = Vector{Tuple{S, S, P}}()
-	next_idx = one(P)
+	next_idx :: P = one(P)
 	#sizehint!(next, max_num_plates)
 	push!(next, (L, W, one(P)))
 	sfhv = (Vector{Int8}(), Vector{Int8}(), Vector{Int8}(), Vector{Int8}())
@@ -1260,7 +1266,7 @@ function gen_cuts(
 		end
 
 		# Goes to the next unprocessed plate.
-		next_idx += 1
+		next_idx += one(P)
 	end
 
 	if faithful2furini2016
@@ -1325,7 +1331,7 @@ function gen_cuts(
 		@show aggressive_hybridization_extra_vars
 	end
 
-	first_vertical_cut_idx = length(hnnn) + 1
+	first_vertical_cut_idx = convert(P, length(hnnn) + 1)
 	return ByproductPPG2KP(
 		append!(hnnn, vnnn), append!(hdce, vdce),
 		first_vertical_cut_idx,

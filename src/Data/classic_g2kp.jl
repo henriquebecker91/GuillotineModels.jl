@@ -33,6 +33,9 @@ Expect a string in the following format:
 pieces in the instance. The `l`, `w`, `p`, and `d`, are the length, width,
 profit, and demand, of a piece.
 
+The `D`, `S`, and `P` type parameters indicate the integer type which
+should be used to store `D`emand, `S`ize, and `P`rofit (or piece/plate area).
+
 Returns a `G2KP{D, S, P}` object.
 
 # Notes
@@ -61,9 +64,9 @@ See also: [`read_from_file`](@ref)
 				" The extra lines will not be used."
 			break
 		end
-		if      lnc == (1::D)
+		if      lnc == one(D)
 			(L, W) = map(x->parse(S, x), split(ln))
-		elseif  lnc == (2::D)
+		elseif  lnc == convert(D, 2)
 			N = parse(D, ln)
 		else    # all other lines
 			piece_cols = split(ln)
@@ -78,11 +81,17 @@ See also: [`read_from_file`](@ref)
 		# different of the real number of lines because the instances with 50
 		# and 25 items are the same, only changing the value (they could
 		# have removed the unused lines...).
-		lnc = lnc + (1::D)
+		lnc = lnc + one(D)
 	end
 	return G2KP{D, S, P}(L, W, l, w, d, p)
 end
 
+"""
+    read_from_string(::Val{:Classic_G2KP}, s :: AbstractString)
+
+Convenience method. To be called as `read_from_string(Val(:Classic_G2KP), s)`.
+Equivalent to the call `read_from_string(Classic_G2KP{Int, Int, Int}(), s)`.
+"""
 function read_from_string(
 	_ :: Val{:Classic_G2KP}, s :: AbstractString
 )

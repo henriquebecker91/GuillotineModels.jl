@@ -830,24 +830,111 @@ arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
 end
 =#
 
-const HOMO_PAIRS = [
-	(:G2KP, :G2KP), (:G2CSP, :SSSCSP), (:G2OPP, :SSSCSP)
-]
-
-for (problem, instance) in HOMO_PAIRS
-	eval(quote
-		@timeit TIMER function build_model(
-			::Val{$(QuoteNode(problem))}, ::Val{:PPG2KP}, instance :: $instance{D, S, P}, model,
-			options :: Dict{String, Any} = Dict{String, Any}()
-		) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
-			norm_options = create_normalized_arg_subset(
-				options, accepted_arg_list(Val(:PPG2KP))
-			)
-			return _no_arg_check_build_model(
-				Val($(QuoteNode(problem))), instance, model, norm_options
+function _check_pieces_size(
+	L :: S, W :: S, l :: AbstractVector{S}, w :: AbstractVector{S},
+	allow_rotation :: Bool
+) :: Nothing where {S}
+	if allow_rotation
+		max_size = max(L, W)
+		min_size = min(L, W)
+		big_idx = findfirst(
+			(((x, y),) -> x > max_size || y > max_size || (x > min_size && y > min_size)),
+		zip(l, w))
+		if big_idx !== nothing
+			error(
+				"The piece of index $(big_idx) has dimensions" *
+				" ($(l[big_idx]), $(w[big_idx])) and is impossible to fit into" *
+				" a plate of dimensions ($(L), $(W)) even with rotation."
 			)
 		end
-	end)
+	else
+		big_l_idx = findfirst(>(L), l)
+		big_w_idx = findfirst(>(W), w)
+		if big_l_idx !== nothing
+			error(
+				"The piece of index $(big_l_idx) has length $(l[big_l_idx])" *
+				" which is greater than the maximum length $(L)."
+			)
+		elseif big_w_idx !== nothing
+			error(
+				"The piece of index $(big_w_idx) has width $(w[big_w_idx])" *
+				" which is greater than the maximum width $(W)."
+			)
+		end
+	end
+	return nothing
+end
+
+"""
+    build_model(::Val{:G2KP)}, ::Val{:PPG2KP}, instance::G2KP, model[, options])
+
+Build a PPG2KP-style model for a G2KP `instance` inside `model`.
+
+Changes `model` by adding variables and constraints. `options` takes
+arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
+"""
+@timeit TIMER function build_model(
+	::Val{:G2KP}, ::Val{:PPG2KP}, instance :: G2KP{D, S, P}, model,
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
+	norm_options = create_normalized_arg_subset(
+		options, accepted_arg_list(Val(:PPG2KP))
+	)
+	_check_pieces_size(
+		instance.L, instance.W, instance.l, instance.w,
+		norm_options["allow-rotation"]
+	)
+	return _no_arg_check_build_model(
+		Val(:G2KP), instance, model, norm_options
+	)
+end
+
+"""
+    build_model(::Val{:G2CSP)}, ::Val{:PPG2KP}, instance::SSSCSP, model[, options])
+
+Build a PPG2KP-style model for a G2CSP `instance` inside `model`.
+
+Changes `model` by adding variables and constraints. `options` takes
+arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
+"""
+@timeit TIMER function build_model(
+	::Val{:G2CSP}, ::Val{:PPG2KP}, instance :: SSSCSP{D, S, P}, model,
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
+	norm_options = create_normalized_arg_subset(
+		options, accepted_arg_list(Val(:PPG2KP))
+	)
+	_check_pieces_size(
+		instance.L, instance.W, instance.l, instance.w,
+		norm_options["allow-rotation"]
+	)
+	return _no_arg_check_build_model(
+		Val(:G2CSP), instance, model, norm_options
+	)
+end
+
+"""
+    build_model(::Val{:G2OPP}, ::Val{:PPG2KP}, instance::SSSCSP, model[, options])
+
+Build a PPG2KP-style model for a G2OPP `instance` inside `model`.
+
+Changes `model` by adding variables and constraints. `options` takes
+arguments described in `Utilities.Args.accepted_arg_list(::Val{:PPG2KP})`.
+"""
+@timeit TIMER function build_model(
+	::Val{:G2OPP}, ::Val{:PPG2KP}, instance :: SSSCSP{D, S, P}, model,
+	options :: Dict{String, Any} = Dict{String, Any}()
+) :: Tuple{BuildStopReason, <: Any} where {D, S, P}
+	norm_options = create_normalized_arg_subset(
+		options, accepted_arg_list(Val(:PPG2KP))
+	)
+	_check_pieces_size(
+		instance.L, instance.W, instance.l, instance.w,
+		norm_options["allow-rotation"]
+	)
+	return _no_arg_check_build_model(
+		Val(:G2OPP), instance, model, norm_options
+	)
 end
 
 """
@@ -958,8 +1045,12 @@ implemented.
 			" dimensions are not allowed."
 		)
 	end
+	L, W = only(instance.L), only(instance.W)
 	norm_options = create_normalized_arg_subset(
 		options, accepted_arg_list(Val(:PPG2KP))
+	)
+	_check_pieces_size(
+		L, W, instance.l, instance.w, norm_options["allow-rotation"]
 	)
 	return _no_arg_check_build_model(
 		Val(:G2MKP), instance, m, norm_options

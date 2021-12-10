@@ -82,7 +82,7 @@ function throw_if_incompatible_options(
 end
 
 """
-ArgParse.add_arg_table!(settings :: ArgParseSettings, arg :: Arg)
+    ArgParse.add_arg_table!(settings :: ArgParseSettings, arg :: Arg)
 
 A specialization of `ArgParse.add_arg_table!` to transform `Arg` objects into
 options of `ArgParseSettings`. Boolean arguments become `:store_{true|false}`

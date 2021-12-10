@@ -102,5 +102,5 @@ function main(args)
 	println()
 end
 
-main(ARGS)
+main()
 

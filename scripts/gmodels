@@ -4,9 +4,15 @@
 exec julia --project=@. --color=yes --startup-file=no -e "include(popfirst!(ARGS))" "${BASH_SOURCE[0]}" "$@"
 =#
 
-#import Pkg
-#Pkg.activate(".")
-#Pkg.instantiate()
+import Pkg
+Pkg.activate(".")
+Pkg.instantiate()
+
+# Supported solvers as of Tue 28 Jan 2020 02:06:06 AM -03:
+#import CPLEX
+#import Gurobi
+#import Cbc
+import GLPK
 
 import GuillotineModels
 import TimerOutputs
@@ -18,19 +24,13 @@ import TimerOutputs
 # solvers would become required dependencies (and users will probably have
 # just a subset of such solvers installed).
 
-# Supported solvers as of Tue 28 Jan 2020 02:06:06 AM -03:
-import CPLEX
-import Gurobi
-#import Cbc
-import GLPK
-
 # New solvers may be added by defining a function
 # empty_configured_model(::Val{:SolverName}, p_args) (which return a
 # JuMP.direct_model with the specified solver already configured, see
 # SolversArgs.jl file for more info), and by importing the solver package
 # here, as it is done with the already supported solvers.
 
-GuillotineModels.CommandLine.run()
+GuillotineModels.CommandLine.run(; supported_solvers = [:GLPK])
 TimerOutputs.print_timer(GuillotineModels.TIMER; allocations = false)
 println()
 

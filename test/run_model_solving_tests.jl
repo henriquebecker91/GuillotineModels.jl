@@ -4,21 +4,6 @@ const TINY_HANDMADE_INSTANCES = Tuple{String, Int64, String}[
 		1
 		1 1 1 1
 	""")
-	, ("Pieces do not fit plate.", 0, """
-		10 10
-		3
-		15 15 1 1
-		15 10 1 1
-		10 15 1 1
-	""")
-	, ("One piece fit the plate others do not.", 10, """
-		10 10
-		4
-		10 10 10 1
-		15 15 1 1
-		15 10 1 1
-		10 15 1 1
-	""")
 	, ("Two halfs instead slightly larger very efficient piece.", 20, """
 		10 20
 		2
@@ -94,19 +79,20 @@ import JuMP
 import MathOptInterface
 const MOI = MathOptInterface
 import GLPK # to load glue code in GuillotineModels
-import Cbc
+#import Cbc
 using GuillotineModels: build_model, get_cut_pattern, to_pretty_str, simplify!
+using GuillotineModels: BUILT_MODEL
 using GuillotineModels.Data: read_from_string
 using GuillotineModels.Utilities.Args: accepted_arg_list,
 	create_normalized_arg_subset
 using GuillotineModels.CommandLine.SolversArgs: empty_configured_model
 
 function test_obj_val(
-	model :: Symbol, solver :: Symbol, instance :: String, obj_val :: Int64
+	formulation :: Symbol, solver :: Symbol, instance :: String, obj_val :: Int64
 )
-	instance = read_from_string(Val(:Classic_G2KP), instance)
-	N, L, W, l, w, p, d = length(instance.l), instance.L, instance.W,
-		instance.l, instance.w, instance.p, instance.d
+	parsed_instance = read_from_string(Val(:Classic_G2KP), instance)
+	#N, L, W, l, w, p, d = length(instance.l), instance.L, instance.W,
+	#	instance.l, instance.w, instance.p, instance.d
 
 	solver_type = Val(solver)
 	solver_pp = create_normalized_arg_subset(
@@ -115,7 +101,10 @@ function test_obj_val(
 	)
 	m = empty_configured_model(solver_type, solver_pp)
 	#println(instance)
-	bmr = build_model(Val(model), m, d, p, l, w, L, W, Dict{String, Any}())
+	reason, bmr = build_model(
+		Val(:G2KP), Val(formulation), parsed_instance, m, Dict{String, Any}()
+	)
+	@test reason == BUILT_MODEL
 	#JuMP.write_to_file(m, "Cbc_false_infeasible.lp")
 	#JuMP.write_to_file(m, "Cbc_false_infeasible.mof.json")
 	#JuMP.write_to_file(m, "Cbc_false_infeasible.mps")
@@ -124,8 +113,8 @@ function test_obj_val(
 	@test JuMP.primal_status(m) == MOI.FEASIBLE_POINT
 	@test JuMP.objective_value(m) ≈ obj_val rtol=1e-6 atol=1e-6
 	# #=
-	if model === :PPG2KP
-		solution = get_cut_pattern(Val(model), m, eltype(d), eltype(l), bmr)
+	if formulation === :PPG2KP
+		solution = get_cut_pattern(Val(:G2KP), Val(formulation), m, bmr)
 		#@show solution
 		#println("to_pretty_str(solution) = $(to_pretty_str(solution))")
 		#println("to_pretty_str(simplify!(solution)) = $(to_pretty_str(simplify!(solution)))")

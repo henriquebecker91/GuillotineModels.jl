@@ -266,11 +266,11 @@ reasons and because if the original vectors may be changed then the concept of
 """
 function SortedLinkedLW(::Type{D}, l :: Vector{S}, w :: Vector{S}) where {D, S}
 	@assert length(l) == length(w)
-	n = length(l)
+	n = convert(D, length(l))
 	sl = sort(l)
 	sw = sort(w)
-	sli2pii = sort!(collect(1:n), by = pii -> l[pii])
-	swi2pii = sort!(collect(1:n), by = pii -> w[pii])
+	sli2pii = sort!(collect(one(D):n), by = pii -> l[pii])
+	swi2pii = sort!(collect(one(D):n), by = pii -> w[pii])
 	pii2sli = Vector{D}(undef, n)
 	pii2swi = Vector{D}(undef, n)
 	for si = 1:n

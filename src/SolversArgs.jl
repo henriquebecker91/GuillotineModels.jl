@@ -138,14 +138,14 @@ function __init__()
 			, "randomCbcSeed" => p_args["seed"]
 			, "seconds" => p_args["time-limit"]
 			, "ratioGap" => 1e-6
-			, "barrier" => ""
+			#, "barrier" => ""
 		]
 		# TODO: implement a no-trick flag for Cbc?
 		raw_parameters = eval(
 			Meta.parse(p_args["raw-parameters"])
 		) :: Vector{Pair{String, Any}}
 		configuration = [configuration; raw_parameters]
-		model = JuMP.Model(JuMP.with_optimizer(Cbc.Optimizer))
+		model = JuMP.Model(Cbc.Optimizer)
 		JuMP.set_optimizer_attributes(model, configuration...)
 		model
 	end
@@ -156,7 +156,7 @@ function __init__()
 		configuration = Pair{String, Any}[
 			# TODO: find how configure: # of threads, tolerance gap, barrier, etc...
 			# TODO: specially: does GLPK have a RANDOMSEED option?!
-			"msg_lev" => p_args["no-output"] ? GLPK.MSG_OFF : GLPK.MSG_ON
+			"msg_lev" => p_args["no-output"] ? GLPK.GLP_MSG_OFF : GLPK.GLP_MSG_ON
 			, "tm_lim" => p_args["time-limit"] * 1000 # is milliseconds not seconds
 		]
 		# TODO: implement a no-trick flag for GLPK? does GLPK even have tricks?

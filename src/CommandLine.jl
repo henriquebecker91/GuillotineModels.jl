@@ -238,6 +238,10 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 	bsr, mbp = build_model(
 		problem, formulation, instance, m, model_pp
 	)
+	# The solver may be used for building the model (if pricing is enabled)
+	# so here we try to guarantee any solver output was already printed before
+	# we continue.
+	Base.Libc.flush_cstdio()
 	if verbose
 		println("build_stop_reason = $(bsr)")
 		println("build_stop_code = $(Int(bsr))")
@@ -267,6 +271,7 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 					@timeit TIMER "save_model" JuMP.write_to_file(m, save_model_expanded)
 				end
 			end
+			Base.Libc.flush_cstdio()
 			@show save_model_time
 		else
 			@warn "No model saved to '$(save_model_expanded)' because the" *
@@ -291,6 +296,7 @@ function build_solve_and_print(problem, formulation, instance_, pp, timings)
 			@timeit TIMER fms_name optimize_within_time_limit!(
 				m, limit - (time() - start)
 			)
+			Base.Libc.flush_cstdio()
 		end
 		if verbose
 			println("$fms_name = $fms_time")

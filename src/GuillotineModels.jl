@@ -97,7 +97,7 @@ Should always return two values: the first is always an element of
 
 # Returns
 
-1. `::BuildStopReason`: The reason for which the method returned. It can be: BUILT_MODEL (the model was built successfully) or FOUND_OPTIMUM (in the process of building the model, the optimal solution was already found, so the building process was abandoned). See [`get_cut_pattern`](@ref) for more information.
+1. `::BuildStopReason`: The reason for which the method returned. It can be: `BUILT_MODEL` (the model was built successfully) or `FOUND_OPTIMUM` (in the process of building the model, the optimal solution was already found, so the building process was abandoned). See [`get_cut_pattern`](@ref) for more information.
 2. `::Any`: the specific type of the second returned value depends on the `problem` and `formulation`, however it should always exist (even if it is `nothing`). It is passed as an argument to `get_cut_pattern` in order to assemble a solution (CutPattern) from the variables values of a model.
 """
 function build_model end
