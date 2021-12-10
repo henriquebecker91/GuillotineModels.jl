@@ -8,5 +8,5 @@ TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 
 [compat]
 GLPK = "= 0.14.14"
-GuillotineModels = "= 0.8.5"
+GuillotineModels = "= 0.8.6"
 TimerOutputs = "0.5.7"

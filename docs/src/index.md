@@ -4,7 +4,7 @@ The main utility of this package is to enable researchers to reproduce results f
 
 The code is divided into the following modules:
 
-* `GuillotineModels` -- The main module. The most important types and functions peratain to this module, and are fully described at the end of this page.
+* `GuillotineModels` -- The main module. The most important types and functions pertain to this module, and are fully described at the end of this page.
 * `GuillotineModels.CommandLine` -- The module used to implement the `gmodels` script, which is basically just a call to `run`. Most of the other functions in the module are only relevant to someone extending the `run` command. The only exception is `round_instance` which may be used to divide all values from a problem instance by some factor.
 * `GuillotineModels.CommandLine.SolversArgs` -- The module responsible for the interface between the rest of the code and GLPK.jl, CPLEX.jl, Gurobi.jl, and Cbc.jl. It only interests someone trying to extend the set of supported solvers.
 * `GuillotineModels.Utilities` -- The module aggregates the functions that are needed by one or more of other submodules but that do not are directly related to the package purpose. For example, `relax!` and `restore!` which help to change variables from binary/integer to continuous and back, or `optimize_within_time_limit!` which calls `JuMP.optimize!` but first checks for timeout and also changes the model object to respect the remaining time before timeout. The user may need to import the `SortedLinkedLW` if they want to work directly with `GuillotineModels.PPG2KP.Enumeration.gen_cuts`.
