@@ -19,7 +19,9 @@ end
 # extractions; also, mutate nzpe_idxs and nzcm_vals to remove the positions
 # refering to extractions directly from the large object.
 function _single_so_from_lo_extractions!(
-	np :: Vector{Tuple{P, D}}, nzpe_idxs :: Vector{P}, nzpe_vals :: Vector{D}
+	np :: Vector{Tuple{P, D}}, # if (n, p) in np then p can be extracted from n
+	nzpe_idxs :: Vector{P}, # indexes of piece extraction in the solution
+	nzpe_vals :: Vector{D} # how many times the piece extraction happens
 ) :: Vector{P} where {D, P}
 	to_delete = D[]
 	extractions = P[]
@@ -56,10 +58,11 @@ function _consume_cut!(
 end
 
 # INTERNAL USE.
-# Given a list of the cuts used in a solution, the number of times their appear
-# in the solution, and the index of the root cut in such list, return a list of
-# cut indexes in topological ordering (any non-root cut over some plate only
-# appears if a previous cut has made a copy of that plate type available).
+# Given a list of the cuts used in a solution (`nz_cuts`), the number of times
+# their appear in the solution (`qt_cuts`), and the index of the root cuts in
+# such list (`root_cut_idxs`), return a list of cut indexes in topological
+# ordering (any non-root cut over some plate only appears if a previous cut has
+# made a copy of that plate type available).
 # SEE: https://discourse.julialang.org/t/unreachable-reached-at-0x7fa478093547-in-julia-1-0-5/36404
 function _build_cut_idx_stack(
 	nz_cuts :: Vector{NTuple{3, P}},
@@ -124,19 +127,19 @@ end
 
 # INTERNAL USE.
 # NOTE: only patterns and nzcs_vals are modified.
-# Starting from the cuts closest to the piece extractions (i.e.,
-# non-leaf nodes closest to a leaf node) start building the CutPattern
-# (tree) bottom-up.
+# Starting from the cuts closest to the piece extractions (i.e., non-leaf nodes
+# closest to a leaf node, the reverse order of our topological ordering) start
+# building the CutPattern (tree) bottom-up.
 # The hybridizations are dealt with here.
 function _bottom_up_tree_build!(
-	patterns :: Dict{Int64, Vector{CutPattern{D, S}}},
-	nz_cut_idx_stack,
-	nz_cuts :: Vector{NTuple{3, P}},
-	nz_cuts_ori :: BitArray{1},
+	patterns :: Dict{Int64, Vector{CutPattern{D, S}}}, # The "plate index -> list of plate used" Dictionary.
+	nz_cut_idx_stack, # The topological ordering. If traversed in reverse guarantee that we will only make a cut for which the children plates are already in patterns.
+	nz_cuts :: Vector{NTuple{3, P}}, # The list of (parent plate index, first child plate index, second child plate index) triple.
+	nz_cuts_ori :: BitArray{1}, # The orientation of the cuts (i.e., vertical or horizontal).
 	nz_cuts_pe :: Vector{D}, # The piece extractions from non-zero cuts
-	nzcs_idxs :: Vector{P},
-	nzcs_vals :: Vector{D},
-	bmr :: ByproductPPG2KP{D, S, P},
+	nzcs_idxs :: Vector{P}, # Indexes of the cut sells variables of non-zero value.
+	nzcs_vals :: Vector{D}, # Values of the cut sells variables of non-zero value.
+	bmr :: ByproductPPG2KP{D, S, P}, # The model building byproduct.
 	debug :: Bool = false
 ) :: Dict{Int64, Vector{CutPattern{D, S}}} where {D, S, P}
 	for cut_idx in reverse(nz_cut_idx_stack)
@@ -224,19 +227,29 @@ end
 
 # Internal function that does the heavy lifting with the data already
 # extracted from the model.
+# * `nzpe_idxs` -- Indexes of the piece extraction variables of non-zero value.
+# * `nzpe_vals` -- Values of the piece extraction variables of non-zero value.
+# * `nzcm_idxs` -- Indexes of the cuts made variables of non-zero value.
+# * `nzcm_vals` -- Values of the cuts made variables of non-zero value.
+# * `nzcs_idxs` -- Indexes of the cut sells variables of non-zero value.
+# * `nzcs_vals` -- Values of the cut sells variables of non-zero value.
+# * `bmr` -- The model byproduct.
+# * `debug` -- Flag to enable debug.
 function _get_cut_pattern(
 	nzpe_idxs, nzpe_vals, nzcm_idxs, nzcm_vals, nzcs_idxs, nzcs_vals,
 	bmr :: ByproductPPG2KP{D, S}, debug :: Bool
 ) :: Vector{CutPattern{D, S}} where {D, S}
-	# 1. If there are extractions of small objects from large objects,
+	# 1. If there are extractions of small objects from large objects
+	#    (i.e., a piece being extracted directly from an original plate),
 	#    we keep them in a separate array and remove these extractions from
-	#    the data (the rest of the code then can safely assume the large
-	#    objects are either cut or unused, not directly extracted).
+	#    the data. This way the rest of the code then can safely assume the large
+	#    objects are either cut or unused, but not directly extracted anymore.
 	# 2. If not all extractions were made directly from large objects, then the
 	#    cuts made over large objects are in `cuts_made`, find them (i.e.,
-	#    traverse non-zero cuts_made variables checking for a hcut or vcut that
-	#    has the original plate as the parent plate).
-	# 3. Create a topological ordering of the cuts starting from the root cuts.
+	#    traverse `nzcm_idxs` and `nzcm_vals` variables checking for a hcut or
+	#    vcut that has the original plate as the parent plate).
+	# 3. Create a topological ordering of the cuts starting from the root cuts
+	#    (this is, the cuts over original plates).
 	# 4. Initialize a pool of plate type "uses"/patterns with the piece
 	#    extractions in the solution (i.e., leaf nodes).
 	# 5. Traverse the reverse of the topological ordering and build the
@@ -245,12 +258,17 @@ function _get_cut_pattern(
 	#    to be only present inside their parent pattern. At the end of the
 	#    process there should remain only patterns starting from an original
 	#    plate (i.e., large object) in the pool.
+
+	# The _single_so_from_lo_extractions! removes the nzpe_idxs and nzpe_vals
+	# elements representing extractions directly from the original plates
+	# (large objects).
 	lo2so_idxs = _single_so_from_lo_extractions!(bmr.np, nzpe_idxs, nzpe_vals)
 	lo2so_patterns = _extraction_pattern.(
 		(bmr,), lo2so_idxs
 	) :: Vector{CutPattern{D, S}}
 	@assert all(!isequal(zero(eltype(nzpe_idxs))), nzpe_idxs)
 	@assert all(!isequal(zero(D)), nzpe_vals)
+
 	# If the call to _single_so_from_lo_extractions has exhausted the
 	# list of extractions, then there is nothing else to do (i.e.,
 	# lo2so_patterns has the solution already).
@@ -261,7 +279,8 @@ function _get_cut_pattern(
 		return lo2so_patterns
 	end
 
-	# The cuts actually used in the solution.
+	# We use nzcm_idxs to get the data from the cuts that were actually
+	# employed in the solution.
 	sel_cuts = bmr.cuts[nzcm_idxs]
 	debug && @show sel_cuts
 	# If the cut in `sel_cuts` is vertical or not.
@@ -270,16 +289,20 @@ function _get_cut_pattern(
 	root_idxs = findall(cut -> isone(cut[1]), sel_cuts)
 	isempty(root_idxs) && return CutPattern{D, S}[]
 
+	# Creates the topological ordering mentioned above.
 	cut_idx_stack = _build_cut_idx_stack(sel_cuts, nzcm_vals, root_idxs, debug)
 
 	# `patterns` translates a plate index (pli) into a list of all "uses" of that
 	# plate type. Such "uses" are CutPattern objects, either pieces or more
 	# complex patterns. When we discover a plate is used in the solution such
 	# "use" is added to the known uses in `patterns`, and we arbitrarily
-	# associate it to some "uses" of its children (which are then are removed
-	# from `patterns`). Consequently, at the end, the `patterns` should have only
-	# the key of the original plate, and its associated value should be a Vector
-	# of a single CutPattern.
+	# associate it to some plates that are cut from a plate of that type (which
+	# are then are removed from `patterns`). The solution of PPG2KP-related
+	# formulations does not represent a single pattern, but a set of symmetric
+	# solutions. The arbitrary choice that we do in this step that concretizes it
+	# into a specific solution. At the end, the `patterns` should have only the
+	# key of the original plate, and its associated value should be a Vector with
+	# a single CutPattern for each used original plate.
 	patterns = Dict{Int64, Vector{CutPattern{D, S}}}()
 
 	# Insert all piece extractions (i.e., plate to piece patterns) into
@@ -312,7 +335,11 @@ function _get_cut_pattern(
 	)
 	@assert all(iszero, _nzcs_vals)
 
-	if !isone(length(patterns)) || !haskey(patterns, 1)# || !isone(length(patterns[1]))
+	# As, for now, all problems are homogeneous (i.e., have original/stock
+	# plates of the same dimensions), then there is a bug if the final
+	# `patterns` Dict has more keys than just the key 1 (the plate of
+	# index 1 is always the original plate).
+	if !isone(length(patterns)) || !haskey(patterns, 1)
 		println("BUG AT GET_CUT_PATTERN")
 		for (key, subpatts) in patterns
 			@show key
@@ -321,25 +348,31 @@ function _get_cut_pattern(
 			end
 		end
 	end
-
 	@assert isone(length(patterns))
 	@assert haskey(patterns, 1)
-	#@assert isone(length(patterns[1]))
 
+	# The piece extractions directly from the original plate are finally
+	# combined with the other more complex patterns before we return.
 	return vcat(lo2so_patterns, patterns[1])
 end
 
+# Does the heavy lifting for `_cp_rai2opi!`, see it for an explanation.
 function _inner_cp_rai2opi!(
 	patterns :: AbstractVector{CutPattern{D, S}},
 	rai2opi :: Vector{Union{D, Tuple{D, D}}},
 	remaining_original_demand :: Vector{D}
 ) :: Nothing where {D, S}
+	# The process is the same for each element in `patterns`.
 	for (i, e) in pairs(patterns)
+		# If it is not a piece extraction at the original plate level, then
+		# just call _inner_cp_rai2opi! recursively.
 		if iszero(e.piece_idx) # not a piece extraction
 			_inner_cp_rai2opi!(e.subpatterns, rai2opi, remaining_original_demand)
 			continue
 		end
 
+		# If the rotated piece can be one or more non-rotated pieces, then
+		# choose the one yet with remaining demand.
 		opis = rai2opi[e.piece_idx] # original piece index(es)
 		opi :: D = if isa(opis, D) # The dummy maps to a single original piece.
 			opis
@@ -347,6 +380,9 @@ function _inner_cp_rai2opi!(
 			iszero(remaining_original_demand[opis[1]]) ? opis[2] : opis[1]
 		end
 
+		# If we need more pieces than the demand, emmit an warning, because
+		# if this is a G2KP/G2MKP problem then this means something is
+		# wrong with the code.
 		if iszero(remaining_original_demand[opi])
 			@warn "The solution has more copies of the piece type number $opi" *
 				" than exists demand for it. This is possible in G2OPP/G2CSP" *
@@ -355,12 +391,23 @@ function _inner_cp_rai2opi!(
 		else
 			remaining_original_demand[opi] -= 1
 		end
+		# Update with the new pattern inplace.
 		patterns[i] = CutPattern(e.length, e.width, opi)
 	end
 
 	return nothing
 end
 
+# Associate rotation-aware indexes (RAI) back to original piece indexes (OPI).
+# The computation is not as trivial as it seems because there may be a corner
+# case like: piece 1 is 10x5 with demand 2 and piece 2 is 5x10 with demand 3.
+# In such cases, there may be a solution with 4 10x5 pieces, for example, and
+# they need to come in part from the demand of piece 1 and in another part
+# from the demand of piece 2 (how much from each is not relevant and may be
+# arbitrarily chosen). The piece indexes inside the `patterns` are changed,
+# however, CutPattern are immutable, for this to happen, the `CutPattern`s
+# are in fact being replaced when necessary (from the `patterns` vector,
+# or from the inner vectors inside the `CutPattern` objects).
 function _cp_rai2opi!(
 	patterns :: Vector{CutPattern{D, S}},
 	rad :: RotationAwareData{D, S}
