@@ -31,7 +31,7 @@ import TimerOutputs
 # here, as it is done with the already supported solvers.
 
 isempty(ARGS) && push!(ARGS, "--help")
-GuillotineModels.CommandLine.run(; supported_solvers = [:GLPK])
+GuillotineModels.CommandLine.run()
 TimerOutputs.print_timer(GuillotineModels.TIMER; allocations = false)
 println()
 

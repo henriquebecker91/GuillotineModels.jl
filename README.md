@@ -310,7 +310,11 @@ The procedure for changing the `gmodels` script to support the solvers is descri
 2. **Open the REPL for installing the julia package.** Execute `julia --project=.` inside the `scripts` folder of the `GuillotineModels` package. See sections *Package installation* and *Command-line usage* of this README for more info on how to find this folder.
 3. (Gurobi and CPLEX only) **Set the path of the solver.** As pointed out in the already linked GitHub page of the Gurobi.jl and CPLEX.jl packages, it is necessary to set either `ENV["CPLEX_STUDIO_BINARIES"] = "/path/to/os_arch/folder/inside/bin"` or `ENV["GUROBI_HOME"] = "/path/to/os_arch/folder"` in the Julia REPL before installing the package. Check the GitHub page instructions if you are not sure exactly which folder the path should be pointing at.
 4. **Install the Julia package corresponding to the solver.** In the same Julia REPL session execute: `import Pkg; Pkg.add("SOLVER_NAME"); Pkg.build("SOLVER_NAME")`. If the build process fails then probably the path set to `ENV` in the last step is not correct, only `Pkg.build("SOLVER_NAME")` will need to be re-run after fixing `ENV`. The command `Pkg.status()` may be used to check the version of the installed package.
-5. **Edit the `gmodels` script.** Finally, the `gmodels` script needs to be edited with a plain text editor (some examples are `nano` or `gedit` on Linux, `TextEdit` on Mac, and `Notepad++` on Windows). The line `#import SOLVER_NAME` needs to have the `#` removed.
+5. **Edit the `gmodels` script.** Finally, the `gmodels` script needs to be edited with a plain text editor (some examples are `nano` or `gedit` on Linux, `TextEdit` on Mac, and `Notepad++` on Windows). The line `#import SOLVER_NAME` needs to have the `#` removed. If the file is read-only, it will be needed to force writing (editor specific), or follow the troubleshooting below.
+
+#### Troubleshooting
+
+1. **ERROR: SystemError: opening file "/home/.../.julia/packages/GuillotineModels/.../scripts/Project.toml": Permission denied**: The most recent versions of the Julia language create the files inside the package folder without write permission. Executing `chmod u+w *` in a Bash terminal inside the `scripts` folder should solve the problem.
 
 ### The instance formats
 
