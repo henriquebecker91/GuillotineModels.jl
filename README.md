@@ -1,3 +1,8 @@
+By end of Aug 2023, the author of this repository decided to abandon 
+GitHub (Microsoft and 2FA shenaningans) and adopt CodeBerg. While not 
+deleted, there is no guarantee the GitHub repo is updated. Check the 
+official repo at: https://codeberg.org/hbecker/GuillotineModels.jl
+
 # GuillotineModels.jl
 
 Mathematical models for 2D guillotine cutting problems. Part of Henrique Becker's PhD (co-advised by Olinto Araujo, advised by Luciana S. Buriol).
