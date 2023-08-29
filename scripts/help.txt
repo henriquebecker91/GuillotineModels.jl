@@ -1,0 +1,571 @@
+usage: gmodels [--do-not-solve]
+               [--generic-time-limit GENERIC-TIME-LIMIT]
+               [--save-model SAVE-MODEL]
+               [--use-native-save-model-if-possible]
+               [--warm-jit WARM-JIT] [--no-csv-output] [--relax2lp]
+               [--round-nearest ROUND-NEAREST] [--round-up ROUND-UP]
+               [--round-down ROUND-DOWN]
+               [--CPLEX-root-relax-method CPLEX-ROOT-RELAX-METHOD]
+               [--CPLEX-LP-method CPLEX-LP-METHOD]
+               [--CPLEX-threads CPLEX-THREADS]
+               [--CPLEX-time-limit CPLEX-TIME-LIMIT]
+               [--CPLEX-seed CPLEX-SEED] [--CPLEX-no-tricks]
+               [--CPLEX-no-output]
+               [--CPLEX-raw-parameters CPLEX-RAW-PARAMETERS]
+               [--Gurobi-LP-method GUROBI-LP-METHOD]
+               [--Gurobi-threads GUROBI-THREADS]
+               [--Gurobi-time-limit GUROBI-TIME-LIMIT]
+               [--Gurobi-seed GUROBI-SEED] [--Gurobi-no-output]
+               [--Gurobi-raw-parameters GUROBI-RAW-PARAMETERS]
+               [--Cbc-threads CBC-THREADS]
+               [--Cbc-time-limit CBC-TIME-LIMIT] [--Cbc-seed CBC-SEED]
+               [--Cbc-no-output]
+               [--Cbc-raw-parameters CBC-RAW-PARAMETERS]
+               [--GLPK-time-limit GLPK-TIME-LIMIT] [--GLPK-no-output]
+               [--GLPK-raw-parameters GLPK-RAW-PARAMETERS]
+               [--NoSolver-no-output]
+               [--PPG2KP-minimal-subset-in-iterative-pricing]
+               [--PPG2KP-no-sort-in-iterative-pricing]
+               [--PPG2KP-building-time-limit PPG2KP-BUILDING-TIME-LIMIT]
+                              [--PPG2KP-Gurobi-LP-method-inside-furini-pricing PPG2KP-GUROBI-LP-METHOD-INSIDE-FURINI-PRICING]
+               [--PPG2KP-pricing-alpha PPG2KP-PRICING-ALPHA]
+               [--PPG2KP-pricing-beta PPG2KP-PRICING-BETA]
+               [--PPG2KP-round2disc]
+               [--PPG2KP-hybridize-with-restricted]
+               [--PPG2KP-faithful2furini2016]
+               [--PPG2KP-no-redundant-cut] [--PPG2KP-no-cut-position]
+               [--PPG2KP-no-furini-symmbreak]
+               [--PPG2KP-pricing PPG2KP-PRICING] [--PPG2KP-ignore-d]
+               [--PPG2KP-use-c25] [--PPG2KP-ignore-2th-dim]
+               [--PPG2KP-heuristic-seed PPG2KP-HEURISTIC-SEED]
+               [--PPG2KP-verbose] [--PPG2KP-quiet]
+               [--PPG2KP-do-not-purge-unreachable]
+               [--PPG2KP-MIP-start PPG2KP-MIP-START]
+               [--PPG2KP-allow-rotation] [--PPG2KP-mirror-plates]
+               [--PPG2KP-aggressive-hybridization] [-h] [problem]
+               [format] [model] [solver] [instance_path]
+
+optional arguments:
+  -h, --help            show this help message and exit
+
+Core Parameters:
+  problem               The type of problem to be solved (case
+                        sensitive, ex.: G2KP, G2CSP, G2ODP, G2MKP).
+                        Required.
+  format                The format of the instance(s) in the file
+                        (case sensitive, ex.: Classic_G2KP, CPG_SLOPP,
+                        CPG_SSSCSP, CPG_ODPW, CPG_MHLOPPW). Required.
+  model                 Model or solution procedure to be used (case
+                        sensitive, ex.: Flow, KnapsackPlates, PPG2KP).
+                        Required.
+  solver                Solver to be used if necessary
+                        (case-sensitive, ex.: NoSolver, Cbc, CPLEX,
+                        Gurobi). Required, even if --do-not-solve is
+                        specified. NoSolver use `JuMP.Model()` which
+                        allows building and saving the model, but not
+                        solving it.
+  instance_path         The path to the instance to be solved.
+
+Generic Options:
+  --do-not-solve        The model is built but not solved. A solver
+                        has yet to be specified. Note that just
+                        building a model may depend on using a solver
+                        over subproblems. Such uses of the solver are
+                        not disabled by this flag.
+  --generic-time-limit GENERIC-TIME-LIMIT
+                        Defines a time limit (in seconds) to be
+                        observed in the context of the model-agnostic
+                        process of reading, building, solving, and
+                        printing. Each model has to define its own
+                        flag to control the time inside the model
+                        building process (to be set independently, it
+                        is does not interact with this flag).
+                        `JuMP.set_time_limit_sec` is called over the
+                        model before starting to solve it, with the
+                        remaining time after reading instance and
+                        building the model (not the total time). If
+                        `--warm-jit` defines that there will be a mock
+                        run to warm the jit, the time limit applies to
+                        this mock run (i.e., if the mock run breaks
+                        the limit it an exception is raised) but the
+                        timer is reset after the mock, so the mock
+                        time is not counted for the 'real' run time
+                        limit. A `GuillotineModels.TimeoutError` is
+                        raised if the time limit is violated. (type:
+                        Float64, default: 3.1536e7)
+  --save-model SAVE-MODEL
+                        Save the model of the passed instance to the
+                        given filename. The format used depends on the
+                        extension of the filename, allowed formats are
+                        described by the enumeration
+                        `MathOptInterface.FileFormats.FileFormat` from
+                        package `MathOptInterface`). The filename also
+                        allows using $<parameter_name> patterns inside
+                        the name, these will be replaced by the value
+                        of the parameter (if it was not passed, the
+                        default value will be used). For convenience,
+                        a pseudo-parameter instance_file is also
+                        available (it is the same as
+                        `basename(instance_path)`, it includes any
+                        file extensions), and `Bool` parameters (i.e.,
+                        flags with no argument) are replaced by 0 or
+                        1. Putting an @ in front of $<some_string>
+                        will disable the substitution (and remove the
+                        @ from the final string). There is no way to
+                        express an @ followed by a substitution that
+                        actually occurs (this is a limitation of the
+                        code). (default: "")
+  --use-native-save-model-if-possible
+                        Only used if a filename is passed to
+                        '--save-model'. If
+                        `--use-native-save-model-if-possible` is
+                        passed, then
+                        `GuillotineModels.SaveModel.write_to_file` is
+                        used instead of `JuMP.write_to_file`. Check
+                        the `SaveModel` module documentation for more
+                        info. For at least Gurobi and CPLEX,
+                        `GuillotineModels.SaveModel.write_to_file`
+                        will use the raw solver model-saving utilities
+                        instead of the `JuMP` one, but if the solver
+                        is not recognized then it will default to the
+                        JuMP one.
+  --warm-jit WARM-JIT   There are three valid options: 'no',
+                        'with-toy', and 'yes'. If 'yes', the instance
+                        is solved two times, but the first time the
+                        arguments are changed to disable output (i.e.,
+                        '--no-csv-output' and '--SOLVER-no-output' are
+                        passed, and if supported, '--MODEL-quiet' is
+                        passed too; in the GuillotineModels.TIMER the
+                        timings of this first run are under
+                        'warm_jit'). If 'with-toy', it behaves
+                        similarly to 'yes' but instead of using the
+                        instance itself it uses a very small hardcoded
+                        instance (this helps a lot, but many
+                        procedures only called when the model has
+                        specific properties are not called, and
+                        therefore, not compiled). If 'no', the code is
+                        just run a single time. (default: "no")
+  --no-csv-output       Disable some extra output that the author of
+                        this package uses to assemble CSVs and/or
+                        debug. Also disables --save-model.
+  --relax2lp            Integer and binary variables become
+                        continuous.
+  --round-nearest ROUND-NEAREST
+                        Multiplies the instances size-related fields
+                        by the passed factor and round them to nearest
+                        (the model answer becomes a GUESS, not a valid
+                        primal heuristic, nor a valid bound). (type:
+                        Float64, default: 1.0)
+  --round-up ROUND-UP   Multiplies the instances size-related fields
+                        by the passed factor and round them up (the
+                        model becomes a PRIMAL HEURISTIC). (type:
+                        Float64, default: 1.0)
+  --round-down ROUND-DOWN
+                        Multiplies the instance size-related fields by
+                        the passed factor and round them down (the
+                        model becomes an OPTIMISTIC GUESS, A VALID
+                        BOUND). (type: Float64, default: 1.0)
+
+CPLEX-specific Options:
+  --CPLEX-root-relax-method CPLEX-ROOT-RELAX-METHOD
+                        Changes CPX_PARAM_LPMETHOD. Accept simplified
+                        single-word names (primal, dual, etc...),
+                        CPLEX names (CPX_ALG_PRIMAL, CPX_ALG_DUAL,
+                        ...), and codes (1, 2, ...). (default:
+                        "automatic")
+  --CPLEX-LP-method CPLEX-LP-METHOD
+                        Changes
+                        CPX_PARAM_STARTALG/CPXPARAM_MIP_Strategy_StartAlgorithm.
+                        Accept simplified single-word names (primal,
+                        dual, etc...), CPLEX names (CPX_ALG_PRIMAL,
+                        CPX_ALG_DUAL, ...), and codes (1, 2, ...).
+                        (default: "automatic")
+  --CPLEX-threads CPLEX-THREADS
+                        The value of CPXPARAM_Threads. If zero and no
+                        callbacks is the number os cores, if zero and
+                        callbacks is one. If a positive number, is
+                        that number of cores. (type: Int64, default:
+                        1)
+  --CPLEX-time-limit CPLEX-TIME-LIMIT
+                        BROKEN, DO NOT USE, ALWAYS OVERWRITTEN BY
+                        `--generic-time-limit`. The value of
+                        CPX_PARAM_TILIM. Depends on
+                        CPX_PARAM_CLOCKTYPE which is by default wall
+                        clock time (not CPU time). Time limit in
+                        seconds for solver B&B (not root solving). Our
+                        default is one year. (type: Float64, default:
+                        3.1536e7)
+  --CPLEX-seed CPLEX-SEED
+                        The value of CPX_PARAM_RANDOMSEED. The random
+                        seed used by CPLEX. (type: Int64, default: 1)
+  --CPLEX-no-tricks     Set CPX_PARAM_PROBE, CPX_PARAM_HEURFREQ, and
+                        CPX_PARAM_REPEATPRESOLVE to -1. Also, set
+                        CPX_PARAM_DIVETYPE to 1. Basically, disable
+                        many tricks used by CPLEX to speedup the
+                        solving (but that sometimes have the opposite
+                        effect).
+  --CPLEX-no-output     Set CPX_PARAM_SCRIND to false. Disables the
+                        solver output.
+  --CPLEX-raw-parameters CPLEX-RAW-PARAMETERS
+                        A string of Julia code to be evaluated to
+                        CPLEX parameters. For example: 'Pair{String,
+                        Any}["CPX_PARAM_SCRIND" => CPLEX.CPX_OFF]'
+                        will have the same effect as
+                        --CPLEX-no-output. Obviously, this is a
+                        security breach. (default: "Pair{String,
+                        Any}[]")
+
+Gurobi-specific Options:
+  --Gurobi-LP-method GUROBI-LP-METHOD
+                        Gurobi has a parameter called 'Method' that
+                        defines the algorithm used to solve continuous
+                        models (including MIP root node continuous
+                        relaxations). The options (described in Gurobi
+                        9.0 reference) are: automatic (-1), primal
+                        simplex (0), dual simplex (1), barrier (2),
+                        concurrent (3), deterministic concurrent (4),
+                        deterministic concurrent simplex (5). (type:
+                        Int64, default: -1)
+  --Gurobi-threads GUROBI-THREADS
+                        Number of threads for all Gurobi
+                        parallelizable algorithms. Zero is automatic,
+                        probably the number of cores but may be fewer.
+                        If a positive number, is that number of cores.
+                        (type: Int64, default: 1)
+  --Gurobi-time-limit GUROBI-TIME-LIMIT
+                        BROKEN, DO NOT USE, ALWAYS OVERWRITTEN BY
+                        `--generic-time-limit`. Set Gurobi parameter:
+                        TimeLimit. Total time limit in seconds. Our
+                        default is one year. (type: Float64, default:
+                        3.1536e7)
+  --Gurobi-seed GUROBI-SEED
+                        The random seed used by Gurobi. Our default
+                        (one) is different from Gurobi (which is
+                        zero). (type: Int64, default: 1)
+  --Gurobi-no-output    Set OutputFlag to zero. Disables the solver
+                        output.
+  --Gurobi-raw-parameters GUROBI-RAW-PARAMETERS
+                        A string of Julia code to be evaluated to
+                        Gurobi parameters. For example: 'Pair{String,
+                        Any}["OutputFlag" => 0]' will have the same
+                        effect as --Gurobi-no-output. Obviously, this
+                        is a security breach. (default: "Pair{String,
+                        Any}[]")
+
+Cbc-specific Options:
+  --Cbc-threads CBC-THREADS
+                        Number of threads for "parallel
+                        branch-and-bound". (type: Int64, default: 1)
+  --Cbc-time-limit CBC-TIME-LIMIT
+                        BROKEN, DO NOT USE, ALWAYS OVERWRITTEN BY
+                        `--generic-time-limit`. Set Cbc parameter:
+                        seconds. Total time limit in seconds (? not
+                        very well documented). (type: Float64,
+                        default: 3.1536e7)
+  --Cbc-seed CBC-SEED   Set Cbc parameter: randomCbcSeed. Our default
+                        is 1 (different from Cbc default that is -1).
+                        (type: Int64, default: 1)
+  --Cbc-no-output       Set logLevel to zero. Disables the solver
+                        output.
+  --Cbc-raw-parameters CBC-RAW-PARAMETERS
+                        A string of Julia code to be evaluated to Cbc
+                        parameters. For example: 'Pair{String,
+                        Any}["logLevel" => 0]' will have the same
+                        effect as --Cbc-no-output. Obviously, this is
+                        a security breach. The complete list of
+                        parameters can be found by running the cbc
+                        executable and typing ? at the prompt.
+                        (default: "Pair{String, Any}[]")
+
+GLPK-specific Options:
+  --GLPK-time-limit GLPK-TIME-LIMIT
+                        BROKEN, DO NOT USE, ALWAYS OVERWRITTEN BY
+                        `--generic-time-limit`. Set GLPK parameter:
+                        tm_lim. The original parameter is in
+                        milliseconds, but to keep it similar to the
+                        other solvers this option takes seconds. To
+                        set this parameter with milliseconds precision
+                        use the --raw-parameter option. The default is
+                        a little over 24 days because GLPK uses a
+                        Int32 for milliseconds and 24 days is close to
+                        the maximum time-limit supported. (type:
+                        Int64, default: 2097152)
+  --GLPK-no-output      Set msg_lev to GLPK.MSG_OFF. Disables the
+                        solver output.
+  --GLPK-raw-parameters GLPK-RAW-PARAMETERS
+                        A string of Julia code to be evaluated to GLPK
+                        parameters. For example: 'Pair{String,
+                        Any}["msg_lev" => GLPK.MSG_OFF]' will have the
+                        same effect as --GLPK-no-output. Obviously,
+                        this is a security breach. If you find the
+                        complete list of GLPK parameters please send
+                        it to me (henriquebecker91@gmail.com).
+                        (default: "Pair{String, Any}[]")
+
+NoSolver-specific Options:
+  --NoSolver-no-output  Provided to avoid breaking the assumption
+                        every solver provides this flag. Does
+                        notthing, as NoSolver should not print
+                        anything anyway.
+
+PPG2KP-specific Options:
+  --PPG2KP-minimal-subset-in-iterative-pricing
+                        Only used if the value of the 'pricing' option
+                        is 'furini'. The explanation of the iterative
+                        pricing algorithm in 10.1287/ijoc.2016.0710
+                        implies all rows are present since start, and
+                        that cuts (`x` variables) that cannot assume
+                        non-zero values yet (because the plates they
+                        are cutting are not made available by other
+                        cuts yet) are also present since start. This
+                        flag enables an alternative behavior, in which
+                        the only plate constraints in the initial
+                        model are either: obtainable by restricted
+                        cuts (i.e., present in a restricted version of
+                        the model); or have a sell/extraction (`y`
+                        variable in original model or `e` variable in
+                        the revised model) selling that plate (or
+                        extracting a piece from it). All
+                        selling/extraction variables are present, but
+                        the cut variables are a smaller subset (only
+                        the cuts over 'reachable' plates, no cuts over
+                        plates that cannot be yet generated by the
+                        model). Consequently, both 'cut
+                        variables'/columns and 'plate
+                        constraints'/rows are added
+                        dinamically/iteratively to the model.
+  --PPG2KP-no-sort-in-iterative-pricing
+                        Only used if the value of the 'pricing' option
+                        is 'furini'. The explanation of the pricing
+                        algorithm in 10.1287/ijoc.2016.0710 does not
+                        make very clear if the variables with positive
+                        reduced profit added each iteration are the
+                        ones with highest reduced profit or an
+                        arbitrary subset. The default is to sort
+                        because: the extra effort is minimal compared
+                        to solving the LP; the time solving the LP can
+                        be drastically reduced by the adding the
+                        variables with highest reduced profit first.
+  --PPG2KP-building-time-limit PPG2KP-BUILDING-TIME-LIMIT
+                        Defines a time limit (in seconds) to be
+                        observed in the context of the model building
+                        proccess. If the solver is called during the
+                        building procedure then
+                        `JuMP.set_time_limit_sec` is called over the
+                        model before starting to solve it, with the
+                        remaining time (not the total time). A
+                        `GuillotineModels.TimeoutError` is raised if
+                        the time limit is violated. (type: Float64,
+                        default: 3.1536e7)
+  --PPG2KP-Gurobi-LP-method-inside-furini-pricing PPG2KP-GUROBI-LP-METHOD-INSIDE-FURINI-PRICING
+                        Allows to switch the algorithm used to solve
+                        continuous models and root node relaxations
+                        inside the Furini's iterative pricing when
+                        Gurobi is the solver used. Will have no effect
+                        but print warnings if either Furini's pricing
+                        is not called or Gurobi is not the solver in
+                        use. The default value of -2 will not touch
+                        Gurobi's Method parameter, values -1 to 5 will
+                        set Gurobi's Method to the corresponding value
+                        during the subprocedure mentioned, and restore
+                        the previous value after it. (type: Int64,
+                        default: -2)
+  --PPG2KP-pricing-alpha PPG2KP-PRICING-ALPHA
+                        Used to compute the number of variables added
+                        in each iteration of the iterative pricing
+                        (only used if furini pricing is selected, see
+                        pricing flag). Must be above zero and at most
+                        one. Explained in 10.1287/ijoc.2016.0710, p.
+                        13 (747) (last paragraph before section 4.3).
+                        Default value is the one used in the
+                        experiments of the original paper. (type:
+                        Float64, default: 0.2)
+  --PPG2KP-pricing-beta PPG2KP-PRICING-BETA
+                        Used to compute the number of variables addded
+                        in each iteration of the iterative pricing
+                        (only used if furini pricing is selected, see
+                        pricing flag). Must be non-negative, and makes
+                        most sense to be at most one. Explained in
+                        10.1287/ijoc.2016.0710, p. 13 (747) (last
+                        paragraph before section 4.3). Default value
+                        is the one used in the experiments of the
+                        original paper. (type: Float64, default: 0.25)
+  --PPG2KP-round2disc   Round the second child size to a discretized
+                        position.
+  --PPG2KP-hybridize-with-restricted
+                        If a cut matches the length or width of a
+                        piece, and this length/width cannot be
+                        obtained by any combination of smaller pieces,
+                        then the cut already immediatelly extracts the
+                        matching piece. Should preserve optimality but
+                        it is experimental.
+  --PPG2KP-faithful2furini2016
+                        Tries to be the most faithful possible to the
+                        description on the Furini2016 paper of the
+                        PPG2KP (i.e., the model with the CutPosition
+                        and RedundantCut reductions BUT NOT the
+                        multistep pricing procedure); the flags
+                        --no-cut-position, --no-redundant-cut,
+                        --no-furini-symmbreak, can disable parts of
+                        this reimplementation. Passing '--pricing
+                        furini' will enable the pricing making the
+                        model the Priced PPG2KP.
+  --PPG2KP-no-redundant-cut
+                        Disables Furini2016 Redundant-Cut reduction: a
+                        bunch of flags is used to check if some trim
+                        cut is necessary for optimality, or is
+                        dominated by other trim cuts.
+  --PPG2KP-no-cut-position
+                        Disables Furini2016 Cut-Position reduction: if
+                        a trivial heuristic shows that no combination
+                        of six or more pieces fit a plate, then the
+                        plate may be cut with restricted cuts without
+                        loss to optimality.
+  --PPG2KP-no-furini-symmbreak
+                        Disables Furini2016 symmetry breaking: as trim
+                        cuts are needed in faithful2furini2016 mode,
+                        the symmetry-breaking is less restrictive than
+                        'do not cut after midplate', it just removes
+                        each cut y > midplate in which plate_size - y
+                        is an existing cut; enabling this flag makes
+                        the code just use all discretized positions as
+                        cuts.
+  --PPG2KP-pricing PPG2KP-PRICING
+                        Define if a pricing procedure will be used,
+                        and which one. The default value is 'none'.
+                        The accepted values are: 'furini', 'becker',
+                        and 'none'. Combining '--PPG2KP-pricing none'
+                        with '--PPG2KP-faithful2furini2016' will give
+                        the Complete PP-G2KP Model with Cut-Position
+                        and Redundant-Cut reductions (pass
+                        no-redundant-cut and no-cut-position to have
+                        the pure Complete PP-G2KP Model). (default:
+                        "none")
+  --PPG2KP-ignore-d     Ignore the demand information during
+                        discretization, used to measure impact. The
+                        flag `hybridize-with-restricted` is affected
+                        by it too (i.e., less hybridizations will
+                        happen).
+  --PPG2KP-use-c25      Add the tightening constraints 2.5. Increase
+                        considerably the number of constraints hoping
+                        to improve the relaxation a little.
+  --PPG2KP-ignore-2th-dim
+                        Ignore the dimension not being discretized
+                        during discretization, used to measure impact.
+                        The flag `hybridize-with-restricted` is
+                        affected by it too (i.e., less hybridizations
+                        will happen).
+  --PPG2KP-heuristic-seed PPG2KP-HEURISTIC-SEED
+                        Used only if the value of the 'MIP-start'
+                        option implies the use of
+                        `GuillotineModels.PPG2KP.Heuristic.fast_iterated_greedy`
+                        (the seed is used to initialize a RNG, more
+                        specifically a
+                        `RandomNumbers.Xoroshiro128Plus`). (type:
+                        Int64, default: 1)
+  --PPG2KP-verbose      Only really relevant if you are studying the
+                        code. Will increase the amount of data
+                        outputted. The quiet flag overrides this.
+  --PPG2KP-quiet        Avoid outputting any information or warning,
+                        just output errors. Overrides the verbose
+                        flag. .
+  --PPG2KP-do-not-purge-unreachable
+                        By default, the code removes variables and
+                        constraints that are useless (because the only
+                        way to reach them was removed by some other
+                        mechanism, like pricing), this flag disables
+                        this feature and leave the work to the
+                        presolver of the MIP solver. Note that if the
+                        'verbose' flag is enabled then the unreachable
+                        variables and constraints will be searched and
+                        printed, even if they are not removed from the
+                        model after.
+  --PPG2KP-MIP-start PPG2KP-MIP-START
+                        Three values are allowed: "expected", "none",
+                        and "guaranteed". If "expected" is passed,
+                        then the model will not be MIP-started unless
+                        some sort of pricing (that already generates a
+                        complete feasible solution in the process) is
+                        used. If it is Becker's pricing, then the
+                        model is just MIP-started with the simple
+                        iterated greedy 2-staged heuristic; if it is
+                        Furini's pricing, then two MIP-starts occur:
+                        the first one using the same heuristic in a
+                        restricted model; the second one using the
+                        solution of the restricted model in the
+                        returned non-restricted model. If "none" is
+                        passed, then the model is never MIP-started,
+                        even temporarily (as the first MIP-start that
+                        can occur in the middle of Furini's pricing).
+                        If "guaranteed" is passed, it behaves as
+                        "expected" if pricing is enabled, but if
+                        pricing is disabled, it calls the iterated
+                        greedy 2-staged heuristic just to MIP-start
+                        the model before returning it. The MIP-start
+                        is done by means of `MOI.set(model,
+                        VariablePrimalStart(), var_index, value)`.
+                        (default: "expected")
+  --PPG2KP-allow-rotation
+                        The formulation will allow the pieces to
+                        rotate. Dummy rotated pieces are created and
+                        feeded to the discretization and model
+                        building. The only explicit difference in the
+                        formulation is that the demand is shared
+                        between the two rotations of a piece. Pieces
+                        that meet any of the following conditions do
+                        not have rotated counterparts: (i) the piece
+                        is a square; (ii) after rotation the piece
+                        does not fit into the 'original plate'/'large
+                        object'; (iii) the instance has another piece
+                        that is exactly the same as the rotated piece
+                        (other attributes like profit need to match
+                        too), in this case the demand of both
+                        (non-rotated) pieces is summed and shared.
+  --PPG2KP-mirror-plates
+                        Will error if the allow-rotation flag is not
+                        passed. If allow-rotation is enabled and
+                        mirror-plates is disabled, then the cut/plate
+                        enumeration is completely unaware of the fact
+                        (pieces are duplicated before enumeration and
+                        other changes are done at the formulation
+                        level). If both flags are enabled, then the
+                        enumeration is slightly changed: every plate
+                        can only have length smaller than or equal to
+                        the width (i.e., plates with length greater
+                        than width are rotated automatocally). This
+                        may cut by half the number of
+                        plates/constraints and, consequently, also
+                        reduce the number of cuts/variables (in other
+                        words, the whole size of the model). The
+                        Redundant-Cut improvement is disabled if this
+                        flag has any effect (because we lose the
+                        capability to distinguish between vertical and
+                        horizontal cuts).
+  --PPG2KP-aggressive-hybridization
+                        Only can be used if
+                        hybridization-with-restricted is enabled. The
+                        default behavior of hybridization is to not
+                        increase the model size significantly (a small
+                        increase equivalent to the number of pieces
+                        may occur). To guarantee this, however, we
+                        need to abstain from hybridizations in a
+                        specific circumnstance. The circumnstance is:
+                        two or more pieces share the same length (or
+                        width), and the associated discretization
+                        point cannot be reached by a sum of smaller
+                        pieces lengths (or widths). Without increasing
+                        the number of variables (i.e., creating a
+                        different hybridized cut for each piece), we
+                        cannot hybridize for any of the pieces,
+                        because hybridizing for a single arbitrary
+                        piece would make the formulation lose the
+                        guarantee of optimality. Consequently, the
+                        default behaviour (i.e., without this flag)
+                        loses some opportunities for hybridization to
+                        keep optimality and to avoid considerable
+                        model size increase. This flag allows the
+                        formulation to seize these opportunities by
+                        creating multiple hybridized cuts, it also
+                        keeps the optimality but it can increase the
+                        model size considerably.
+

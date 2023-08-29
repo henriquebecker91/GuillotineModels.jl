@@ -142,48 +142,48 @@ struct CutPattern{D, S}
 	cuts_are_vertical :: Bool
 	"The subpatterns that constitute the pattern."
 	subpatterns :: Vector{CutPattern{D, S}}
+end
 
-	"Inner constructor."
-	function CutPattern(
-		L :: S, W :: S, piece_idx :: D, cuts_are_vertical :: Bool,
-		subpatterns :: Vector{CutPattern{D, S}}
-	) :: CutPattern{D, S} where {D, S}
-		!iszero(piece_idx) && !isempty(subpatterns) && @error(
-			"A piece cannot be subdivided; " *
-			"failed: !iszero(piece_idx) && isempty(subpatterns)."
+"Outer constructor. Prints error messages but do not throw exceptions."
+function CutPattern(
+	L :: S, W :: S, piece_idx :: D, cuts_are_vertical :: Bool,
+	subpatterns :: Vector{CutPattern{D, S}}
+) :: CutPattern{D, S} where {D, S}
+	!iszero(piece_idx) && !isempty(subpatterns) && @error(
+		"A piece cannot be subdivided; " *
+		"failed: !iszero(piece_idx) && isempty(subpatterns)."
+	)
+	L <= zero(L) && @error(
+		"The length of a pattern must be positive."
+	)
+	W <= zero(W) && @error(
+		"The width of a pattern must be positive."
+	)
+	if cuts_are_vertical
+		sum_width = reduce(+, getfield.(subpatterns, :width); init = zero(S))
+		sum_width > W && @error(
+			"The sum of the subpatterns width is $sum_width but the width" *
+			" of the pattern is $W."
 		)
-		L <= zero(L) && @error(
-			"The length of a pattern must be positive."
+		max_length = reduce(max, getfield.(subpatterns, :length); init = zero(S))
+		max_length > L && @error(
+			"The largest subpattern length is $max_length but the length" *
+			" of the pattern is $L."
 		)
-		W <= zero(W) && @error(
-			"The width of a pattern must be positive."
+	else
+		sum_length = reduce(+, getfield.(subpatterns, :length); init = zero(S))
+		sum_length > L && @error(
+			"The sum of the subpatterns length is $sum_length but the length" *
+			" of the pattern is $L."
 		)
-		if cuts_are_vertical
-			sum_width = reduce(+, getfield.(subpatterns, :width); init = zero(S))
-			sum_width > W && @error(
-				"The sum of the subpatterns width is $sum_width but the width" *
-				" of the pattern is $W."
-			)
-			max_length = reduce(max, getfield.(subpatterns, :length); init = zero(S))
-			max_length > L && @error(
-				"The largest subpattern length is $max_length but the length" *
-				" of the pattern is $L."
-			)
-		else
-			sum_length = reduce(+, getfield.(subpatterns, :length); init = zero(S))
-			sum_length > L && @error(
-				"The sum of the subpatterns length is $sum_length but the length" *
-				" of the pattern is $L."
-			)
-			max_width = reduce(max, getfield.(subpatterns, :width); init = zero(S))
-			max_width > W && @error(
-				"The largest subpattern width is $max_width but the width" *
-				" of the pattern is $W."
-			)
-		end
-
-		new{D, S}(L, W, piece_idx, cuts_are_vertical, subpatterns)
+		max_width = reduce(max, getfield.(subpatterns, :width); init = zero(S))
+		max_width > W && @error(
+			"The largest subpattern width is $max_width but the width" *
+			" of the pattern is $W."
+		)
 	end
+
+	CutPattern{D, S}(L, W, piece_idx, cuts_are_vertical, subpatterns)
 end
 
 """

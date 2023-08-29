@@ -1,0 +1,116 @@
+args = ["G2KP", "Classic_G2KP", "PPG2KP", "GLPK", "./instance.txt"]
+p_args = Dict{String, Any}("CPLEX-seed" => 1, "PPG2KP-verbose" => false, "save-model" => "", "PPG2KP-no-redundant-cut" => false, "relax2lp" => false, "PPG2KP-pricing-beta" => 0.25, "PPG2KP-no-furini-symmbreak" => false, "PPG2KP-heuristic-seed" => 1, "Gurobi-LP-method" => -1, "CPLEX-no-tricks" => false, "Cbc-seed" => 1, "Gurobi-threads" => 1, "NoSolver-no-output" => false, "PPG2KP-quiet" => false, "use-native-save-model-if-possible" => false, "PPG2KP-ignore-2th-dim" => false, "Gurobi-seed" => 1, "GLPK-raw-parameters" => "Pair{String, Any}[]", "PPG2KP-building-time-limit" => 3.1536e7, "instance_path" => "./instance.txt", "PPG2KP-hybridize-with-restricted" => false, "PPG2KP-ignore-d" => false, "Cbc-threads" => 1, "PPG2KP-aggressive-hybridization" => false, "Cbc-time-limit" => 3.1536e7, "format" => "Classic_G2KP", "no-csv-output" => false, "CPLEX-root-relax-method" => "automatic", "CPLEX-raw-parameters" => "Pair{String, Any}[]", "problem" => "G2KP", "CPLEX-threads" => 1, "warm-jit" => "no", "PPG2KP-do-not-purge-unreachable" => false, "model" => "PPG2KP", "PPG2KP-pricing" => "none", "GLPK-no-output" => false, "PPG2KP-no-cut-position" => false, "CPLEX-no-output" => false, "do-not-solve" => false, "solver" => "GLPK", "round-up" => 1.0, "CPLEX-time-limit" => 3.1536e7, "CPLEX-LP-method" => "automatic", "Gurobi-raw-parameters" => "Pair{String, Any}[]", "PPG2KP-mirror-plates" => false, "PPG2KP-pricing-alpha" => 0.2, "PPG2KP-use-c25" => false, "GLPK-time-limit" => 2097152, "round-nearest" => 1.0, "round-down" => 1.0, "PPG2KP-faithful2furini2016" => false, "Cbc-no-output" => false, "PPG2KP-Gurobi-LP-method-inside-furini-pricing" => -2, "PPG2KP-MIP-start" => "expected", "Gurobi-no-output" => false, "Gurobi-time-limit" => 3.1536e7, "PPG2KP-minimal-subset-in-iterative-pricing" => false, "PPG2KP-no-sort-in-iterative-pricing" => false, "generic-time-limit" => 3.1536e7, "PPG2KP-allow-rotation" => false, "Cbc-raw-parameters" => "Pair{String, Any}[]", "PPG2KP-round2disc" => false)
+date_now = "2023-08-29T15:08:51"
+instance_path = "./instance.txt"
+read_instance_time = 0.017676830291748047
+INSTANCE_START_MARKER_1
+L = 250
+W = 250
+n_ = 10
+n = 10
+min_l = 66
+min_w = 86
+p_ = 3.787878787878788
+GuillotineModels.Data.G2KP{Int64, Int64, Int64}(250, 250, [167, 114, 167, 83, 70, 143, 120, 66, 87, 69], [184, 118, 152, 140, 86, 166, 160, 148, 141, 165], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [30728, 13452, 25384, 11620, 6020, 23738, 19200, 9768, 12267, 11385])
+build_stop_reason = BUILT_MODEL
+build_stop_code = 0
+num_vars = 1052
+num_constrs = 3557
+build_time = 5.5188610553741455
+MARK_FINAL_GENERIC_SOLVE
+*     0: obj =  -0.000000000e+00 inf =   0.000e+00 (669)
+*   479: obj =   5.073950000e+04 inf =   1.110e-16 (0)
++   479: mip =     not found yet <=              +inf        (1; 0)
+Solution found by heuristic: 48368
++   530: mip =   4.836800000e+04 <=     tree is empty   0.0% (0; 25)
+finished_model_solve = 0.267875138
+stop_reason = MathOptInterface.OPTIMAL
+stop_code = 1
+build_and_solve_time = 5.802932024002075
+obj_value = 48368.0
+obj_bound = 48368.0
+solution = GuillotineModels.CutPattern{Int64, Int64}(250, 250, 0, false, GuillotineModels.CutPattern{Int64, Int64}[GuillotineModels.CutPattern{Int64, Int64}(83, 250, 0, true, GuillotineModels.CutPattern{Int64, Int64}[GuillotineModels.CutPattern{Int64, Int64}(83, 86, 0, false, GuillotineModels.CutPattern{Int64, Int64}[GuillotineModels.CutPattern{Int64, Int64}(70, 86, 5, false, GuillotineModels.CutPattern{Int64, Int64}[])]), GuillotineModels.CutPattern{Int64, Int64}(83, 164, 0, false, GuillotineModels.CutPattern{Int64, Int64}[GuillotineModels.CutPattern{Int64, Int64}(83, 140, 4, false, GuillotineModels.CutPattern{Int64, Int64}[])])]), GuillotineModels.CutPattern{Int64, Int64}(167, 250, 0, false, GuillotineModels.CutPattern{Int64, Int64}[GuillotineModels.CutPattern{Int64, Int64}(167, 184, 1, false, GuillotineModels.CutPattern{Int64, Int64}[])])])
+PRETTY_STR_SOLUTION_BEGIN
+P250x250{
+  P83x250[
+    P83x86{ 5p70x86 }
+    P83x164{ 4p83x140 }
+  ]
+  P167x250{ 1p167x184 }
+}
+PRETTY_STR_SOLUTION_END
+TIKZ_PRETTY_STR_SOLUTION_BEGIN
+\begin{tikzpicture}
+\draw[dashed, thick, black] (0, 0) rectangle (70, 86);
+\node[font=\LARGE] at (35.0, 43.0) {5};
+%\node[font=\LARGE] at (35.0, 43.0) {70x86};
+\draw[dashed, thick, black] (0, 0) rectangle (83, 86);
+\draw[dashed, thick, black] (0, 86) rectangle (83, 226);
+\node[font=\LARGE] at (41.5, 156.0) {4};
+%\node[font=\LARGE] at (41.5, 156.0) {83x140};
+\draw[dashed, thick, black] (0, 86) rectangle (83, 250);
+\draw[dashed, thick, black] (0, 0) rectangle (83, 250);
+\draw[dashed, thick, black] (83, 0) rectangle (250, 184);
+\node[font=\LARGE] at (166.5, 92.0) {1};
+%\node[font=\LARGE] at (166.5, 92.0) {167x184};
+\draw[dashed, thick, black] (83, 0) rectangle (250, 250);
+\draw[dashed, thick, black] (0, 0) rectangle (250, 250);
+\end{tikzpicture}
+TIKZ_PRETTY_STR_SOLUTION_END
+SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN
+P250x250{
+  P83x250[ 5p70x86 4p83x140 ]
+  1p167x184
+}
+SIMPLIFIED_PRETTY_STR_SOLUTION_END
+TIKZ_SIMPLIFIED_PRETTY_STR_SOLUTION_BEGIN
+\begin{tikzpicture}
+\draw[dashed, thick, black] (0, 0) rectangle (70, 86);
+\node[font=\LARGE] at (35.0, 43.0) {5};
+%\node[font=\LARGE] at (35.0, 43.0) {70x86};
+\draw[dashed, thick, black] (0, 86) rectangle (83, 226);
+\node[font=\LARGE] at (41.5, 156.0) {4};
+%\node[font=\LARGE] at (41.5, 156.0) {83x140};
+\draw[dashed, thick, black] (0, 0) rectangle (83, 250);
+\draw[dashed, thick, black] (83, 0) rectangle (250, 184);
+\node[font=\LARGE] at (166.5, 92.0) {1};
+%\node[font=\LARGE] at (166.5, 92.0) {167x184};
+\draw[dashed, thick, black] (0, 0) rectangle (250, 250);
+\end{tikzpicture}
+TIKZ_SIMPLIFIED_PRETTY_STR_SOLUTION_END
+solution_value = 48368
+solution_print_time = 2.3406200408935547
+total_instance_time = 10.64653992652893
+INSTANCE_CLOSE_MARKER_1
+total_file_time = 10.887673161
+[0m[1m ──────────────────────────────────────────────────────────────────[22m
+[0m[1m                                             [22m        Time          
+                                             ──────────────────────
+              Tot / % measured:                    203s / 6.28%    
+
+ Section                             ncalls     time   %tot     avg
+ ──────────────────────────────────────────────────────────────────
+ run                                      1    12.8s   100%   12.8s
+   read_build_solve_and_print             1    10.7s  83.6%   10.7s
+     build_model                          1    1.97s  15.4%   1.97s
+       _build_base_model!                 1    837ms  6.56%   837ms
+       _gen_cuts_wo                       1    689ms  5.40%   689ms
+       _handle_unreachable!               1    385ms  3.02%   385ms
+         _purge_unreachable!              1   3.47ms  0.03%  3.47ms
+         _reachable                       1   62.2μs  0.00%  62.2μs
+           _reachable_plate_types         1   57.5μs  0.00%  57.5μs
+           _reachable_carves              2   2.25μs  0.00%  1.12μs
+         _print_unreachable_plates        1    467ns  0.00%   467ns
+       VarInvIndexes                      1   75.0μs  0.00%  75.0μs
+     get_cut_pattern                      1    853ms  6.69%   853ms
+     stringfy_solutions                   1    724ms  5.68%   724ms
+     finished_model_solve                 1    268ms  2.10%   268ms
+     round_instance                       1   44.3ms  0.35%  44.3ms
+     empty_configured_model               1   24.8ms  0.19%  24.8ms
+     print_solutions                      1   2.60ms  0.02%  2.60ms
+     read_from_file                       1   38.5μs  0.00%  38.5μs
+       read_from_string                   1   12.0μs  0.00%  12.0μs
+   parse_args                             1    1.59s  12.5%   1.59s
+   warm_jit                               1   1.69μs  0.00%  1.69μs
+[0m[1m ──────────────────────────────────────────────────────────────────[22m
+

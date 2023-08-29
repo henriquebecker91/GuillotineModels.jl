@@ -26,15 +26,19 @@ const instance_str = """
 let # Makes the scope local avoiding performance loss of global scope.
 # Reads the instance and use a different integer type for
 # Demand, Size, and Profit/Area.
-instance = read_from_string(Classic_G2KP{Int8, Int16, Int32}(), instance_str)
+instance = read_from_string(Classic_G2KP{Int, Int, Int}(), instance_str)
 # Creates auxiliar data structure necessary for gen_cuts.
-sllw = SortedLinkedLW(Int8, instance.l, instance.w)
+sllw = SortedLinkedLW(Int, instance.l, instance.w)
 # The gen_cuts
 byproduct = gen_cuts(
-	Int32, instance.d, sllw, instance.L, instance.W; faithful2furini2016 = true
+	Int, instance.d, sllw, instance.L, instance.W; faithful2furini2016 = false,
+	round2disc = false
 )
 println("Each tuple in pli_lwb has length, width, and bound (i.e., max copies) of an enumerated plate.")
-@show byproduct.pli_lwb
+#@show byproduct.pli_lwb
+for (li, wi, _) in sort(byproduct.pli_lwb)
+	println("$li\t$wi")
+end
 println("Each tuple in cuts has the index of the parent plate and the indexes of both child plates (an index of zero represents the child is waste).")
 @show byproduct.cuts
 println("Below we combine the two and give all cuts in terms of size of the parent plate and size of the childs.")

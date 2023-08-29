@@ -446,8 +446,8 @@ end
 		# otherwise not, therefore a mess). This seems to be the better design,
 		# no code (even G2CSP-specific) really need to be aware of this variable.
 		@variable(model, b, integer = !build_LP_not_MIP)
-		#@objective(model, Min, sum([b])) # the sum prevents errors with GLPK
-		@objective(model, Min, b)
+		@objective(model, Min, sum([b])) # the sum prevents errors with GLPK
+		#@objective(model, Min, b)
 	end
 
 	# c1: # Either there is a limited amount of original plates available
